@@ -9,7 +9,7 @@
 // out lands exactly where you were.
 
 import { Vec } from "core";
-import { Archive, Entry, Extracted, Format, Opened, extract, openArchive } from "./archive.wac";
+import { Archive, Entry, Extracted, Format, Opened, extract, folderArchive, openArchive } from "./archive.wac";
 import { Kind, isContainer, sniff } from "./sniff.wac";
 import { Dir, Tree, buildTree, nameOf } from "./tree.wac";
 import { baseName, extOf, lower, percentKept, sortBy } from "./bytes.wac";
@@ -71,7 +71,7 @@ Level single(string name, u8[] bytes) {
     path: baseName(name), isDir: false, size: bytes.len() as i64, csize: bytes.len() as i64,
     method: "", modified: "", hasCrc: false, crc: 0, offset: 0, methodId: 0, encrypted: false,
   };
-  Archive a = Archive(Format.Stream(""), [e], bytes, "");
+  Archive a = Archive(Format.Stream(""), [e], bytes, "", u8[][]());
   Level l = levelOf(name, a);
   l.selected = 0;
   return l;
@@ -118,6 +118,40 @@ export void openRoot(Model m, string name, u8[] bytes) {
   m.levels.push(l!);
   resetView(m);
 }
+
+/** The first segment of `path`, or "" when it has none. */
+string headOf(string path) {
+  i32 cut = path.indexOf("/");
+  return cut < 0 ? "" : path.slice(0, cut);
+}
+
+/**
+ * The name a batch of folder files goes by: the one folder they all came from, or "" when they came
+ * from several — or with loose files — at once.
+ */
+export string folderName(string[] paths) {
+  if (paths.len() == 0) { return ""; }
+  string first = headOf(paths[0]);
+  for (i32 i = 1; i < paths.len(); i++) { if (headOf(paths[i]) != first) { return ""; } }
+  return first;
+}
+
+/** Start again from a folder the user handed over: its files' paths and bytes, and how many failed. */
+export void openFolder(Model m, string[] paths, u8[][] blobs, i32 failed) {
+  m.error = "";
+  string name = folderName(paths);
+  string[] inside = string[].filled(paths.len(), "");
+  for (i32 i = 0; i < paths.len(); i++) {
+    inside[i] = name == "" ? paths[i] : paths[i].slice(name.len() + 1, paths[i].len());
+  }
+  string note = failed == 0 ? "" : (failed == 1 ? "1 file could not be read" : "\{failed} files could not be read");
+  m.levels.clear();
+  m.levels.push(levelOf(name == "" ? "Dropped items" : name, folderArchive(inside, blobs, note)));
+  resetView(m);
+}
+
+/** Whether a level is a folder from disk rather than an archive. */
+export bool isFolder(Level l) { return match (l.archive.format) { Folder: true, default: false }; }
 
 /** Open the archive that entry `i` of the current level is, as a new level. */
 export void openNested(Model m, i32 i) {

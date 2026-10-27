@@ -45,7 +45,7 @@ void click(Harness h, string title) { h.doc.fire(h.doc.find("title", title), "cl
 
 export string test_landing_asks_for_a_file() {
   Harness h = started();
-  if (!showing(h, "Drop a file anywhere")) { return "landing: \{page(h).slice(0, 120)}"; }
+  if (!showing(h, "Drop a file or folder anywhere")) { return "landing: \{page(h).slice(0, 120)}"; }
   return "";
 }
 
@@ -76,5 +76,33 @@ export string test_a_filter_that_matches_nothing_says_so() {
   if (!showing(h, "Nothing here matches")) { return "empty filter: \{page(h).slice(0, 300)}"; }
   h.doc.fire(h.doc.find("placeholder", "Filter everything…"), "input", "deep");
   if (!showing(h, "deep.txt")) { return "filter did not reach below the root"; }
+  return "";
+}
+
+export string test_a_folder_arrives_file_by_file_and_opens_as_one() {
+  Harness h = started();
+  // As the host delivers a dropped folder: one file at a time, each named by its path.
+  fileArrived(h.page, true, "proj/notes.txt", "folder notes\n".toBytes(), "");
+  fileArrived(h.page, true, "proj/src/basic.zip", zipBasic(), "");
+  fileArrived(h.page, false, "proj/locked.bin", u8[](), "NotReadableError");
+  if (!showing(h, "Reading 3 files")) { return "while gathering: \{page(h).slice(0, 200)}"; }
+  settle(h);
+  if (!showing(h, "proj") || !showing(h, "notes.txt") || !showing(h, "src")) { return "folder: \{page(h).slice(0, 300)}"; }
+  if (showing(h, "locked.bin")) { return "an unreadable file was listed"; }
+  if (!showing(h, "1 file could not be read")) { return "the failure was not noted"; }
+  click(h, "notes.txt");
+  if (!showing(h, "folder notes")) { return "preview of a folder file"; }
+  click(h, "src");
+  click(h, "basic.zip");
+  if (!showing(h, "Open archive")) { return "an archive in a folder did not offer to open"; }
+  return "";
+}
+
+export string test_a_single_file_after_a_folder_still_opens_alone() {
+  Harness h = started();
+  fileArrived(h.page, true, "proj/a.txt", "a".toBytes(), "");
+  settle(h);
+  drop(h, "basic.zip", zipBasic());
+  if (!showing(h, "basic.zip") || !showing(h, "readme.txt")) { return "after a folder: \{page(h).slice(0, 300)}"; }
   return "";
 }

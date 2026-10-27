@@ -5,7 +5,7 @@ import { ElementEvent, Node, Page, html.b, html.br, html.button, html.div, html.
 import { Entry, Extracted, formatLabel } from "./archive.wac";
 import { Kind, isContainer, kindLabel } from "./sniff.wac";
 import { Dir } from "./tree.wac";
-import { Level, Model, bytesOf, iconFor, kindOf, top } from "./model.wac";
+import { Level, Model, bytesOf, iconFor, isFolder, kindOf, top } from "./model.wac";
 import { base64, baseName, grouped, hexBytes, hexOf, le16, percentKept, sizeOf } from "./bytes.wac";
 import { sha256 } from "../vendor/crypto/sha256.wac";
 
@@ -105,10 +105,10 @@ Node folderSummary(Model m, Level l) {
   i32 kept = percentKept(d.size, d.csize);
   return <div class="pane preview">
     <div class="phead">
-      <div class={l.cwd == "" ? "tile c-archive" : "tile c-folder"}>{icon(l.cwd == "" ? "archive" : "folder", "lg")}</div>
+      <div class={l.cwd == "" && !isFolder(l) ? "tile c-archive" : "tile c-folder"}>{icon(l.cwd == "" && !isFolder(l) ? "archive" : "folder", "lg")}</div>
       <div class="who">
         <div class="nm">{title}</div>
-        <div class="meta">{l.cwd == "" ? "\{formatLabel(l.archive)} archive" : "folder"}</div>
+        <div class="meta">{l.cwd == "" && !isFolder(l) ? "\{formatLabel(l.archive)} archive" : "folder"}</div>
       </div>
     </div>
     <div class="pbody">

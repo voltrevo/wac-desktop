@@ -1,7 +1,7 @@
 # Archive Explorer
 
-Drop a file on the page and look inside it. zip, tar, gzip and zstd archives open as folders, and so
-does any archive inside one, as deep as they go. Files preview as text, hex or images, and can be saved
+Drop a file or a folder on the page and look inside it. zip, tar, gzip and zstd archives open as
+folders, and so does any archive inside one, as deep as they go. Files preview as text, hex or images, and can be saved
 one at a time. Everything happens in the browser tab: the page has no network access, and nothing is
 kept once it closes.
 
@@ -27,6 +27,12 @@ It is written in [wac](https://github.com/voltrevo/wac) and builds to a single `
 | `tools/fixtures.py`, `tools/demo.py` | the test archives, and `samples/demo.zip` |
 
 ## How it behaves
+
+- **Folders** — dropped, or chosen with "Choose a folder" — open like an archive, and archives inside
+  them open as nested levels. Their files arrive one at a time with nothing marking the last, so the
+  page gathers them until 600 ms pass with no more. This needs the `web` package's host to walk dropped
+  directories and pass each file's path, which `wac.lock` pins to a local wac commit (`704c0908`, on
+  branch `web-folder-drops`) that is not on GitHub yet: `wac update` cannot fetch it from elsewhere.
 
 - **Listing is cheap and reading is lazy.** Opening a zip reads only its central directory, and an
   entry is decompressed the first time somebody looks at it. A 4,400-entry, 13 MB zip opens in about

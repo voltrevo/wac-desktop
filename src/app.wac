@@ -3,36 +3,92 @@
 // zip, tar, gzip and zstd open as folders — and so does an archive inside one of those, as deep as
 // they go. Everything happens in this tab: the page has no network, and nothing is kept once it closes.
 
+import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_SHIFT, Node, Page, Picked, Ref, Ui, html.b, html.button, html.div, html.em, html.h1, html.h2,
          html.header, html.i, html.input, html.nav, html.section, html.label, html.p, html.span, html.style } from "web";
 import { Archive, Entry } from "./archive.wac";
 import { css } from "./style.wac";
-import { Level, Model, Row, emptyModel, goTo, goUp, hasFile, iconFor, openNested, openRoot, opensAsArchive, rowsOf,
-         select, top } from "./model.wac";
+import { Level, Model, Row, emptyModel, goTo, goUp, hasFile, iconFor, isFolder, openFolder, openNested, openRoot,
+         opensAsArchive, rowsOf, select, top } from "./model.wac";
 import { icon, preview } from "./preview.wac";
 import { grouped, percentKept, sizeOf } from "./bytes.wac";
 import { Dir } from "./tree.wac";
 
-/** Each file dropped or picked, for as long as the page lives. */
+/**
+ * How long without another file before a folder counts as all here. A folder's files arrive one at a
+ * time, each when the browser has read it, and nothing says which is the last.
+ */
+static i32 QUIET = 600;
+
+/**
+ * Each file dropped or picked, for as long as the page lives.
+ *
+ * **A file named with a `/` is from a folder**, and those are gathered — along with any loose file
+ * dropped beside them — until a moment passes with no more, then opened together as one folder.
+ * The next file is asked for only once the last has been dealt with, so a loop the watchdog has to
+ * restart leaves no ticket behind to swallow the file after.
+ */
 async void files(Page page, Model m, fn<void()> bump) {
+  Vec<Picked> batch = Vec.create();
+  Ticket<Picked> next = page.nextFile();
   while (true) {
-    Picked f = await page.nextFile();
-    if (!f.ok) {
-      m.error = "\{f.name} could not be read: \{f.error}";
+    if (batch.len() == 0) {
+      await next;
+    } else {
+      Ticket<f64> quiet = page.sleep(QUIET);
+      await Ticket.any(next, quiet);
+      if (!next.settled()) {
+        openBatch(page, m, batch);
+        batch = Vec.create();
+        bump();
+        continue;
+      }
+    }
+    Picked f = next.value();
+    if (f.name.indexOf("/") >= 0 || batch.len() > 0) {
+      batch.push(f);
+      m.error = "";
+      m.busy = "Reading \{plural(batch.len(), "file")}…";
       bump();
+      next = page.nextFile();
       continue;
     }
-    m.busy = "Opening \{f.name}…";
+    if (!f.ok) {
+      m.error = "\{f.name} could not be read: \{f.error}";
+    } else {
+      m.busy = "Opening \{f.name}…";
+      bump();
+      await page.painted();
+      m.trying = "\{f.name} could not be opened: its data is damaged or truncated";
+      m.tryingInLoop = true;
+      openRoot(m, f.name, f.bytes);
+      m.trying = "";
+      m.busy = "";
+      if (hasFile(m) && m.error == "") { page.title("\{f.name} — Archive Explorer"); }
+    }
     bump();
-    await page.painted();
-    m.trying = "\{f.name} could not be opened: its data is damaged or truncated";
-    m.tryingInLoop = true;
-    openRoot(m, f.name, f.bytes);
-    m.trying = "";
-    m.busy = "";
-    if (hasFile(m) && m.error == "") { page.title("\{f.name} — Archive Explorer"); }
-    bump();
+    next = page.nextFile();
   }
+}
+
+/** A gathered folder, opened: what was read becomes the folder, and what was not is counted. */
+void openBatch(Page page, Model m, Vec<Picked> batch) {
+  i32 failed = 0;
+  for (i32 i = 0; i < batch.len(); i++) { if (!batch.get(i).ok) { failed++; } }
+  string[] paths = string[].filled(batch.len() - failed, "");
+  u8[][] blobs = u8[][].filled(batch.len() - failed, u8[]());
+  i32 k = 0;
+  for (i32 i = 0; i < batch.len(); i++) {
+    Picked f = batch.get(i);
+    if (!f.ok) { continue; }
+    paths[k] = f.name;
+    blobs[k] = f.bytes;
+    k++;
+  }
+  m.busy = "";
+  if (paths.len() == 0) { m.error = "Nothing in that folder could be read."; return; }
+  openFolder(m, paths, blobs, failed);
+  page.title("\{top(m).name} — Archive Explorer");
 }
 
 /** Open entry `i` as a nested archive, with the spinner up while it decompresses. */
@@ -55,6 +111,15 @@ Node picker(string cls, string text) {
   return <label class={cls}>{icon("upload", "")}<span class="label">{text}</span><input type="file" class="hidden"/></label>;
 }
 
+/**
+ * A folder picker. `webkitdirectory` is not among the attributes `web`'s tags name, so the input is
+ * written as a quoted tag, which takes any attribute; every current browser understands it.
+ */
+Node folderPicker(string cls, string text) {
+  return <label class={cls} title="Choose a folder">{icon("open", "")}<span class="label">{text}</span>
+    <"input" type="file" webkitdirectory="" class="hidden"/></label>;
+}
+
 Node landing(Model m) {
   return <div class="landing">
     <div class="hero">
@@ -63,11 +128,11 @@ Node landing(Model m) {
       <p class="lede">Browse zip, tar, gzip and zstd files like folders — and every archive inside them — without unpacking a thing.</p>
       <div class="drop">
         <div class="mark">{icon("archive", "")}</div>
-        <h2>Drop a file anywhere on this page</h2>
+        <h2>Drop a file or folder anywhere on this page</h2>
         <p>or pick one from your computer</p>
-        {picker("btn primary big", "Choose a file")}
+        <div class="pick">{picker("btn primary big", "Choose a file")}{folderPicker("btn big", "Choose a folder")}</div>
         <div class="chips"><span class="chip">ZIP</span><span class="chip">TAR</span><span class="chip">TAR.GZ</span>
-          <span class="chip">GZIP</span><span class="chip">ZSTD</span><span class="chip">JAR · APK · DOCX</span><span class="chip">+ any file</span></div>
+          <span class="chip">GZIP</span><span class="chip">ZSTD</span><span class="chip">JAR · APK · DOCX</span><span class="chip">+ any file or folder</span></div>
       </div>
       {m.error != "" ? <div class="error">{icon("alert", "")}<span>{m.error}</span></div> : Node.Text("")}
       <div class="fine">{icon("shield", "sm")}Nothing leaves this tab. Built in wac, compiled to WebAssembly.</div>
@@ -87,7 +152,7 @@ Node crumbs(Model m, fn<void()> bump) {
     bool here = last && l.cwd == "";
     out = push(out, <button class={here ? "crumb level here" : "crumb level"} title={l.name}
                             onclick={(ElementEvent e) => { goTo(m, d, ""); bump(); }}>
-                      <span class="ic i-archive sm c-archive"></span><span class="t">{l.name}</span></button>);
+                      <span class={isFolder(l) ? "ic i-folder sm c-folder" : "ic i-archive sm c-archive"}></span><span class="t">{l.name}</span></button>);
     if (l.cwd != "") {
       string[] parts = split(l.cwd);
       string path = "";
@@ -137,6 +202,7 @@ Node topBar(Model m, fn<void()> bump) {
     {crumbs(m, bump)}
     <div class="actions">
       {picker("btn", "Open")}
+      {folderPicker("btn", "Folder")}
       <button class="btn ghost icon" title="Close"
               onclick={(ElementEvent e) => { m.levels.clear(); m.error = ""; bump(); }}>{icon("close", "")}</button>
     </div>
@@ -227,7 +293,8 @@ Node listing(Model m, Page page, fn<void()> bump, Ref cursorRef) {
   }
 
   Dir d = l.tree.byPath.get(l.cwd) ?? l.tree.root;
-  return <section class="pane list">
+  // A folder from disk has nothing packed and no dates the browser hands over: two columns of dashes.
+  return <section class={isFolder(l) ? "pane list plain" : "pane list"}>
     <div class="toolbar">
       <label class="search">{icon("search", "sm")}
         <input placeholder={l.cwd == "" ? "Filter everything…" : "Filter this folder and below…"} value={m.filter}

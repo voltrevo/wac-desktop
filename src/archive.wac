@@ -37,7 +37,7 @@ export struct Entry {
   bool encrypted;
 }
 
-export enum Format { ZipArchive, TarArchive, Stream(string codec) }
+export enum Format { ZipArchive, TarArchive, Stream(string codec), Folder }
 
 /** An opened archive: its entries, and the bytes they are read from. */
 export struct Archive {
@@ -46,6 +46,8 @@ export struct Archive {
   u8[] data;
   /** A line about the archive as a whole — a comment, or what was skipped while listing it. */
   string note;
+  /** A folder's files, each its own bytes: an entry's `offset` is its index here. Empty otherwise. */
+  u8[][] blobs;
 }
 
 /** One entry's bytes, or why there are none. */
@@ -229,7 +231,7 @@ export Opened openZip(u8[] b) {
   if (skipped > 0) {
     note = note == "" ? "\{skipped} entries could not be read from the directory" : note;
   }
-  return Opened(Archive(Format.ZipArchive, out.toArray(), b, note), "");
+  return Opened(Archive(Format.ZipArchive, out.toArray(), b, note, u8[][]()), "");
 }
 
 Extracted noBytes(string why) { return Extracted(false, u8[](), why, false, false); }
@@ -362,7 +364,7 @@ export Opened openTar(u8[] b) {
     }
     p = next;
   }
-  return Opened(Archive(Format.TarArchive, out.toArray(), b, note), "");
+  return Opened(Archive(Format.TarArchive, out.toArray(), b, note, u8[][]()), "");
 }
 
 Extracted readTar(Archive a, const Entry e) {
@@ -412,7 +414,7 @@ Opened openStream(u8[] b, string name, string codec) {
     methodId: 0,
     encrypted: false,
   };
-  return Opened(Archive(Format.Stream(codec), [e], inner, ""), "");
+  return Opened(Archive(Format.Stream(codec), [e], inner, "", u8[][]()), "");
 }
 
 /** The bytes of `e`, which is one of `a`'s entries. */
@@ -422,10 +424,28 @@ export Extracted extract(Archive a, const Entry e) {
     ZipArchive: readZip(a, e),
     TarArchive: readTar(a, e),
     Stream(_): Extracted(true, a.data, "", false, false),
+    Folder: Extracted(true, a.blobs[e.offset], "", false, false),
   };
 }
 
 /** A label for the archive's format. */
 export string formatLabel(const Archive a) {
-  return match (a.format) { ZipArchive: "zip", TarArchive: "tar", Stream(codec): codec };
+  return match (a.format) { ZipArchive: "zip", TarArchive: "tar", Stream(codec): codec, Folder: "folder" };
+}
+
+// ── folders ─────────────────────────────────────────────────────────────────
+
+/**
+ * A folder the user handed over, as an archive: each file its own bytes, already "extracted". Paths are
+ * relative to the folder; a browser hands over files, never directories, so an empty folder is absent.
+ */
+export Archive folderArchive(string[] paths, u8[][] blobs, string note) {
+  Entry[] entries = Entry[].filled(paths.len(), Entry { path: "", isDir: false, size: 0, csize: 0, method: "",
+    modified: "", hasCrc: false, crc: 0, offset: 0, methodId: 0, encrypted: false });
+  for (i32 i = 0; i < paths.len(); i++) {
+    i64 n = blobs[i].len() as i64;
+    entries[i] = Entry { path: cleanPath(paths[i]), isDir: false, size: n, csize: n, method: "", modified: "",
+                         hasCrc: false, crc: 0, offset: i, methodId: 0, encrypted: false };
+  }
+  return Archive(Format.Folder, entries, u8[](), note, blobs);
 }
