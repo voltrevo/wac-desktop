@@ -1,0 +1,96 @@
+// Folders, from a flat list of paths.
+//
+// A zip need not list its directories at all — `a/b/c.txt` alone implies `a` and `a/b` — and a tar
+// may list them in any order, or twice. So folders are made from paths rather than read from entries,
+// and an entry that *is* a directory only contributes its date.
+
+import { Map, Vec, hashString, stringEq } from "core";
+import { Entry } from "./archive.wac";
+
+export struct Dir {
+  string name;
+  /** The folder's path inside the archive; "" for the root. */
+  string path;
+  Vec<Dir> dirs;
+  /** Indexes into the archive's entries. */
+  Vec<i32> files;
+  /** Totals over everything below, for the listing and the statistics. */
+  i64 size;
+  i64 csize;
+  i32 fileCount;
+  i32 dirCount;
+  string modified;
+  Dir? parent;
+}
+
+export struct Tree {
+  Dir root;
+  Map<string, Dir> byPath;
+  i32 files;
+  i32 dirs;
+}
+
+Dir newDir(string name, string path, Dir? parent) {
+  return Dir(name, path, Vec.create(), Vec.create(), 0, 0, 0, 0, "", parent);
+}
+
+/** The folder at `path`, made — along with every folder above it — if it is not there yet. */
+Dir dirAt(Tree t, string path) {
+  Dir? have = t.byPath.get(path);
+  if (have is not null) { return have!; }
+  i32 cut = -1;
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { cut = i; break; } }
+  Dir parent = cut < 0 ? t.root : dirAt(t, path.slice(0, cut));
+  Dir d = newDir(cut < 0 ? path : path.slice(cut + 1, path.len()), path, parent);
+  parent.dirs.push(d);
+  t.byPath.set(path, d);
+  t.dirs++;
+  return d;
+}
+
+/** The folder tree of `entries`. */
+export Tree buildTree(Entry[] entries) {
+  Dir root = newDir("", "", null);
+  Tree t = Tree(root, Map.create(hashString, stringEq), 0, 0);
+  t.byPath.set("", root);
+  for (i32 i = 0; i < entries.len(); i++) {
+    Entry e = entries[i];
+    if (e.isDir) {
+      Dir d = dirAt(t, e.path);
+      d.modified = e.modified;
+      continue;
+    }
+    i32 cut = -1;
+    u8[] b = e.path.toBytes();
+    for (i32 k = b.len() - 1; k >= 0; k--) { if (b[k] == '/') { cut = k; break; } }
+    Dir d = cut < 0 ? root : dirAt(t, e.path.slice(0, cut));
+    d.files.push(i);
+    t.files++;
+    // Every folder above it counts it.
+    Dir? up = d;
+    while (up is not null) {
+      Dir u = up!;
+      u.fileCount++;
+      if (e.size > 0) { u.size = u.size + e.size; }
+      if (e.csize > 0) { u.csize = u.csize + e.csize; }
+      up = u.parent;
+    }
+  }
+  countDirs(root);
+  return t;
+}
+
+i32 countDirs(Dir d) {
+  i32 n = 0;
+  for (i32 i = 0; i < d.dirs.len(); i++) { n += 1 + countDirs(d.dirs.get(i)); }
+  d.dirCount = n;
+  return n;
+}
+
+/** The last path segment of `path`. */
+export string nameOf(string path) {
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { return path.slice(i + 1, path.len()); } }
+  return path;
+}

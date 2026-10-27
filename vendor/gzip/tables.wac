@@ -1,0 +1,62 @@
+// DEFLATE length and distance code tables (RFC 1951 section 3.2.5).
+//
+// A match is emitted as a length symbol (257..285) plus extra bits, then a
+// distance symbol (0..29) plus extra bits. Each symbol covers a range of
+// values; the extra bits say where in the range. These are the range bases and
+// widths, transcribed from the RFC's tables.
+//
+// They live in a struct built once per call, and **the reason given for that has expired.** This said
+// "wac has no top-level constants"; it has them, including arrays — `const i32[] LEN_BASE = […]`
+// at file scope compiles, and is hoisted rather than rebuilt: 200,000 reads of a 29-entry top-level
+// const measured 0 ms against 6 ms for 200,000 constructions of the equivalent struct.
+//
+// **Measured before changing anything, and then not changed.** `Tables.create()` has three call sites
+// — `gzip.wac:192` and `deflate.wac:235` and `:349` — one per compress or decompress, and the struct is
+// threaded through as a parameter after that. So the cost the workaround carries is about thirty
+// nanoseconds per gzip operation, and rewriting four tables to save it would be churn. Threading it
+// explicitly is arguably the better shape anyway: nothing here reads a table it was not handed.
+//
+// What was wrong was the *reason*, and a false constraint in a comment is worth more than the thirty
+// nanoseconds: the next person to need a table at file scope reads this and believes they cannot.
+
+export struct Tables {
+  i32[] lenBase;    // 29 entries: lengths 3..258 for symbols 257..285
+  i32[] lenExtra;
+  i32[] distBase;   // 30 entries: distances 1..32768 for symbols 0..29
+  i32[] distExtra;
+
+  Tables create() {
+    return Tables(
+      [
+            3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,
+            131,163,195,227,258
+      ] as i32[],
+      [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0] as i32[],
+      [
+            1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,
+            1025,1537,2049,3073,4097,6145,8193,12289,16385,24577
+      ] as i32[],
+      [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13] as i32[]
+    );
+  }
+
+  // Index of the symbol covering `len` (3..258). Symbol number is 257 + index.
+  // Walking down from the top finds the last base <= len; symbol 285 is the
+  // special single-value entry for 258, which is why it is checked first.
+  i32 lenIndex(const this, i32 len) {
+    i32 i = 28;
+    while (i > 0 && this.lenBase[i] > len) {
+      i--;
+    }
+    return i;
+  }
+
+  // Index of the symbol covering `dist` (1..32768). Symbol number is the index.
+  i32 distIndex(const this, i32 dist) {
+    i32 i = 29;
+    while (i > 0 && this.distBase[i] > dist) {
+      i--;
+    }
+    return i;
+  }
+}

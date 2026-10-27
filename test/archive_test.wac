@@ -1,0 +1,108 @@
+// The format layer against archives Python's zipfile and tarfile wrote: what is listed, and what comes
+// back out. A test answers "" when it holds, and what it saw when it does not.
+
+import { Archive, Entry, Extracted, Opened, extract, openArchive, unixTime } from "../src/archive.wac";
+import { Kind, kindLabel, sniff } from "../src/sniff.wac";
+import { Dir, Tree, buildTree } from "../src/tree.wac";
+import { base64, grouped, sizeOf } from "../src/bytes.wac";
+import { tarBasic, tarGz, tarPax, zipBasic, zipCp437, zipPrefixed } from "./fixtures.wac";
+
+Archive opened(u8[] b, string name) {
+  Opened o = openArchive(b, sniff(b, name), name);
+  if (o.archive is null) { trap; }
+  return o.archive!;
+}
+
+Entry? find(Archive a, string path) {
+  for (i32 i = 0; i < a.entries.len(); i++) { if (a.entries[i].path == path) { return a.entries[i]; } }
+  return null;
+}
+
+string text(Archive a, string path) {
+  Entry? e = find(a, path);
+  if (e is null) { return "<missing \{path}>"; }
+  Extracted x = extract(a, e!);
+  if (!x.ok) { return "<\{x.error}>"; }
+  return string.fromBytes(x.bytes);
+}
+
+export string test_sniffs_by_content_not_name() {
+  if (kindLabel(sniff(zipBasic(), "x.bin"), "x.bin") != "zip archive") { return "zip"; }
+  if (kindLabel(sniff(tarBasic(), "x"), "x") != "tar archive") { return "tar"; }
+  if (kindLabel(sniff(tarGz(), "a.tgz"), "a.tgz") != "gzip") { return "gzip"; }
+  if (kindLabel(sniff([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0], "a"), "a") != "PNG image") { return "png"; }
+  if (kindLabel(sniff("plain words\n".toBytes(), "notes.md"), "notes.md") != "md text") { return "text"; }
+  if (kindLabel(sniff([0, 1, 2, 3], "blob"), "blob") != "binary") { return "binary"; }
+  return "";
+}
+
+export string test_zip_lists_and_extracts_stored_and_deflated() {
+  Archive a = opened(zipBasic(), "basic.zip");
+  if (a.entries.len() != 5) { return "entries: \{a.entries.len()}"; }
+  if (text(a, "readme.txt") != "hello zip\n") { return "stored: \{text(a, "readme.txt")}"; }
+  string deep = text(a, "src/lib/deep.txt");
+  if (deep.len() != 360 || deep.slice(0, 9) != "deflated ") { return "deflated: \{deep.slice(0, 20)}"; }
+  Entry d = find(a, "src/lib/deep.txt")!;
+  if (d.method != "deflate" || d.size != 360 || d.csize >= d.size) { return "deflate entry: \{d.method} \{d.size} \{d.csize}"; }
+  if (d.modified != "2023-01-09 08:30") { return "date: \{d.modified}"; }
+  Extracted x = extract(a, d);
+  if (!x.crcChecked || !x.crcOk) { return "crc was not checked or did not match"; }
+  if (find(a, "café.txt") is null) { return "utf-8 name"; }
+  if (!find(a, "empty")!.isDir) { return "directory entry"; }
+  if (a.note != "a comment") { return "comment: \{a.note}"; }
+  return "";
+}
+
+export string test_zip_name_without_utf8_flag_is_cp437() {
+  Archive a = opened(zipCp437(), "old.zip");
+  if (a.entries[0].path != "é") { return "name: \{a.entries[0].path}"; }
+  return "";
+}
+
+export string test_zip_with_a_stub_in_front_still_opens() {
+  Archive a = opened(zipPrefixed(), "setup.zip");
+  if (text(a, "src/main.c") != "int main(void) { return 0; }\n") { return "shifted read: \{text(a, "src/main.c")}"; }
+  return "";
+}
+
+export string test_tar_long_names_and_dates() {
+  Archive a = opened(tarBasic(), "pkg.tar");
+  if (text(a, "pkg/a.txt") != "alpha\n") { return "a.txt: \{text(a, "pkg/a.txt")}"; }
+  string longPath = "pkg/" + "longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong" + ".txt";
+  if (text(a, longPath) != "a long name\n") { return "gnu long name: \{a.entries.len()} entries"; }
+  if (find(a, "pkg")!.modified != "2024-03-02 14:05") { return "mtime: \{find(a, "pkg")!.modified}"; }
+  Archive p = opened(tarPax(), "pax.tar");
+  string paxPath = "dir/" + "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp" + ".bin";
+  if (text(p, paxPath) != "pax body") { return "pax path: \{p.entries[0].path}"; }
+  return "";
+}
+
+export string test_tgz_is_a_stream_holding_a_tar() {
+  Archive g = opened(tarGz(), "pkg.tgz");
+  if (g.entries.len() != 1 || g.entries[0].path != "pkg.tar") { return "inner: \{g.entries[0].path}"; }
+  Extracted inner = extract(g, g.entries[0]);
+  Archive t = opened(inner.bytes, "pkg.tar");
+  if (text(t, "pkg/a.txt") != "alpha\n") { return "nested read"; }
+  return "";
+}
+
+export string test_tree_makes_the_folders_a_zip_left_out() {
+  Archive a = opened(zipBasic(), "basic.zip");
+  Tree t = buildTree(a.entries);
+  if (t.root.files.len() != 2) { return "root files: \{t.root.files.len()}"; }
+  Dir? lib = t.byPath.get("src/lib");
+  if (lib is null) { return "src/lib was not made"; }
+  if (t.byPath.get("src")!.fileCount != 2) { return "src counts \{t.byPath.get("src")!.fileCount}"; }
+  if (t.root.dirCount != 3) { return "dirs: \{t.root.dirCount}"; }
+  return "";
+}
+
+export string test_formatting() {
+  if (sizeOf(912) != "912 B") { return sizeOf(912); }
+  if (sizeOf(14540) != "14.2 KB") { return sizeOf(14540); }
+  if (sizeOf(3250000) != "3.1 MB") { return sizeOf(3250000); }
+  if (grouped(1234567) != "1,234,567") { return grouped(1234567); }
+  if (base64("hello".toBytes()) != "aGVsbG8=") { return base64("hello".toBytes()); }
+  if (unixTime(0x65E3320C) != "2024-03-02 14:05") { return unixTime(0x65E3320C); }
+  return "";
+}

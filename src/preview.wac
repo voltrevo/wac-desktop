@@ -1,0 +1,260 @@
+// The right-hand pane: what the selected file is, shown the way its bytes suggest.
+
+import { Buf } from "core";
+import { ElementEvent, Node, Page, html.b, html.br, html.button, html.div, html.h3, html.img, html.p, html.pre, html.span } from "web";
+import { Entry, Extracted, formatLabel } from "./archive.wac";
+import { Kind, isContainer, kindLabel } from "./sniff.wac";
+import { Dir } from "./tree.wac";
+import { Level, Model, bytesOf, iconFor, kindOf, top } from "./model.wac";
+import { base64, baseName, grouped, hexBytes, hexOf, le16, percentKept, sizeOf } from "./bytes.wac";
+import { sha256 } from "../vendor/crypto/sha256.wac";
+
+static i32 TEXT_LIMIT = 262144;
+static i32 LINE_LIMIT = 6000;
+static i32 HASH_LIMIT = 33554432;
+
+/** An icon, as the stylesheet draws them. */
+export Node icon(string name, string extra) {
+  return <span class={"ic i-\{name} \{extra}"}></span>;
+}
+
+/** The icon class and colour for a kind the bytes decided. */
+string iconOfKind(const Kind k, string name) {
+  return match (k) {
+    Zip: "archive", Gzip: "archive", Zstd: "archive", Tar: "archive",
+    Image(_): "image",
+    Text: iconFor(name) == "code" ? "code" : "text",
+    Binary: "binary",
+  };
+}
+
+/** The tabs a kind offers, in order; the first is where a preview opens. */
+string[] tabsFor(const Kind k) {
+  return match (k) {
+    Image(_): ["image", "hex", "info"],
+    Text: ["text", "hex", "info"],
+    Binary: ["hex", "info"],
+    default: ["contents", "hex", "info"],
+  };
+}
+
+string tabLabel(string t) {
+  if (t == "image") { return "Preview"; }
+  if (t == "text") { return "Text"; }
+  if (t == "hex") { return "Hex"; }
+  if (t == "contents") { return "Archive"; }
+  return "Info";
+}
+
+/** The pane. */
+export Node preview(Model m, Page page, fn<void()> bump, fn<void(i32)> openNested) {
+  Level l = top(m);
+  if (l.selected < 0) { return folderSummary(m, l); }
+  i32 i = l.selected;
+  Entry e = l.archive.entries[i];
+  string name = baseName(e.path);
+  m.trying = "\{name} could not be decompressed: the archive is damaged";
+  m.tryingInLoop = false;
+  Extracted x = bytesOf(l, i);
+  m.trying = "";
+  Kind k = kindOf(l, i);
+  string ic = x.ok ? iconOfKind(k, name) : iconFor(name);
+  string[] tabs = x.ok ? tabsFor(k) : ["info"];
+  string tab = tabs[0];
+  for (i32 t = 0; t < tabs.len(); t++) { if (tabs[t] == m.tab) { tab = m.tab; } }
+
+  Node[] tabNodes = Node[].filled(tabs.len(), Node.Text(""));
+  for (i32 t = 0; t < tabs.len(); t++) {
+    string id = tabs[t];
+    tabNodes[t] = <button class={id == tab ? "tab on" : "tab"} key={id}
+                         onclick={(ElementEvent ev) => { m.tab = id; bump(); }}>{tabLabel(id)}</button>;
+  }
+
+  Node body = Node.Text("");
+  if (!x.ok && tab != "info") { body = problem(x.error); }
+  else if (tab == "text") { body = textView(x.bytes); }
+  else if (tab == "hex") { body = hexView(m, x.bytes, bump); }
+  else if (tab == "image") { body = imageView(k, x.bytes); }
+  else if (tab == "contents") { body = nestedCard(k, name, x.bytes, () => { openNested(i); }); }
+  else { body = infoView(l, i, e, x, k); }
+
+  return <div class="pane preview">
+    <div class="phead">
+      <div class={"tile c-\{ic}"}>{icon(ic, "lg")}</div>
+      <div class="who">
+        <div class="nm" title={e.path}>{name}</div>
+        <div class="meta num">{x.ok ? kindLabel(k, name) : "unreadable"} · {sizeOf(e.size)}</div>
+      </div>
+      {x.ok ? <button class="btn" title="Save this file"
+                      onclick={(ElementEvent ev) => { page.download(name, x.bytes); }}>{icon("download", "sm")}<span class="label">Save</span></button>
+            : Node.Text("")}
+    </div>
+    <div class="tabs">{tabNodes}</div>
+    <div class="pbody" key={"\{i}:\{tab}"}>{body}</div>
+  </div>;
+}
+
+Node problem(string why) {
+  return <div class="placeholder"><div>{icon("alert", "")}<div>This file can't be shown: {why}.</div></div></div>;
+}
+
+/** Nothing selected: what the folder holds, and the archive's own note. */
+Node folderSummary(Model m, Level l) {
+  Dir d = l.tree.byPath.get(l.cwd) ?? l.tree.root;
+  string title = l.cwd == "" ? l.name : d.name;
+  i32 kept = percentKept(d.size, d.csize);
+  return <div class="pane preview">
+    <div class="phead">
+      <div class={l.cwd == "" ? "tile c-archive" : "tile c-folder"}>{icon(l.cwd == "" ? "archive" : "folder", "lg")}</div>
+      <div class="who">
+        <div class="nm">{title}</div>
+        <div class="meta">{l.cwd == "" ? "\{formatLabel(l.archive)} archive" : "folder"}</div>
+      </div>
+    </div>
+    <div class="pbody">
+      <div class="info anim">
+        <div class="card kv">
+          <div class="k">Files</div><div class="num">{grouped(d.fileCount as i64)}</div>
+          <div class="k">Folders</div><div class="num">{grouped(d.dirCount as i64)}</div>
+          <div class="k">Size</div><div class="num">{sizeOf(d.size)} <span class="digest">({grouped(d.size)} bytes)</span></div>
+          <div class="k">Packed</div><div class="num">{sizeOf(d.csize)} <span class="digest">— {kept}% of the original</span></div>
+          {l.archive.note != "" && l.cwd == "" ? <><div class="k">Note</div><div>{l.archive.note}</div></> : Node.Text("")}
+        </div>
+        <div class="placeholder" style="height:auto;padding:32px 0">
+          <div>{icon("layers", "")}<div>Select a file to preview it.<br/>Use the arrow keys to move, Enter to open.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+/** Text, with line numbers in a gutter that stays put while the text scrolls sideways. */
+Node textView(u8[] bytes) {
+  bool cut = bytes.len() > TEXT_LIMIT;
+  i32 n = cut ? TEXT_LIMIT : bytes.len();
+  // Stop at a line boundary when cutting, and count lines while we are at it.
+  i32 lines = 1;
+  i32 end = n;
+  for (i32 i = 0; i < n; i++) {
+    if (bytes[i] == '\n') {
+      if (lines == LINE_LIMIT) { end = i; cut = true; break; }
+      lines++;
+    }
+  }
+  if (end > 0 && end == bytes.len() && bytes[end - 1] == '\n') { lines--; }
+  u8[] shown = u8[].filled(end, 0);
+  for (i32 i = 0; i < end; i++) { shown[i] = bytes[i]; }
+  Buf gut = Buf.create();
+  for (i32 i = 1; i <= lines; i++) { gut.pushDecimal(i); gut.push('\n'); }
+  return <div>
+    {cut ? <div class="note">{icon("alert", "sm")}Showing the first {grouped(lines as i64)} lines — save the file to see all of it.</div> : Node.Text("")}
+    <div class="code mono anim">
+      <pre class="gut">{gut.toStr()}</pre>
+      <pre class="src">{string.toUtf8(shown)}</pre>
+    </div>
+  </div>;
+}
+
+/** Sixteen bytes a row: offset, the bytes, and the bytes as ASCII. */
+Node hexView(Model m, u8[] bytes, fn<void()> bump) {
+  i32 rows = (bytes.len() + 15) / 16;
+  i32 shown = rows < m.hexRows ? rows : m.hexRows;
+  Node[] out = Node[].filled(shown, Node.Text(""));
+  for (i32 r = 0; r < shown; r++) {
+    i32 at = r * 16;
+    Buf h = Buf.create();
+    Buf a = Buf.create();
+    for (i32 k = 0; k < 16; k++) {
+      if (k == 8) { h.push(' '); }
+      if (at + k < bytes.len()) {
+        u8 c = bytes[at + k];
+        h.pushStr(hexOf(c as i64, 2));
+        a.push(c >= 32 && c < 127 ? c : '.');
+      } else {
+        h.pushStr("  ");
+      }
+      h.push(' ');
+    }
+    out[r] = <div class="hexrow"><span class="o">{hexOf(at as i64, 8)}</span><span class="h">{h.toStr()}</span><span class="a">{a.toStr()}</span></div>;
+  }
+  return <div class="anim">
+    <div class="hex mono">{out}</div>
+    {shown < rows
+      ? <button class="btn more" onclick={(ElementEvent ev) => { m.hexRows = m.hexRows * 4; bump(); }}>
+          Show more · {grouped(((rows - shown) as i64) * 16)} bytes left</button>
+      : Node.Text("")}
+  </div>;
+}
+
+/** Width and height, for the formats that say so in a fixed place. */
+string dimensions(const Kind k, u8[] b) {
+  return match (k) {
+    Image(mime): mime == "image/png" && b.len() > 24
+      ? "\{be32(b, 16)} × \{be32(b, 20)}"
+      : (mime == "image/gif" && b.len() > 10 ? "\{le16(b, 6)} × \{le16(b, 8)}" : ""),
+    default: "",
+  };
+}
+
+i32 be32(u8[] b, i32 at) {
+  return ((b[at] as i32) << 24) | ((b[at + 1] as i32) << 16) | ((b[at + 2] as i32) << 8) | (b[at + 3] as i32);
+}
+
+Node imageView(const Kind k, u8[] bytes) {
+  string mime = match (k) { Image(m): m, default: "application/octet-stream" };
+  string dims = dimensions(k, bytes);
+  return <div class="imgwrap anim">
+    <div style="text-align:center">
+      <img src={"data:\{mime};base64,\{base64(bytes)}"} alt="preview"/>
+      {dims != "" ? <div class="digest num" style="margin-top:14px">{dims} pixels</div> : Node.Text("")}
+    </div>
+  </div>;
+}
+
+string label(const Kind k) {
+  return match (k) {
+    Zip: "A zip archive", Tar: "A tar archive", Gzip: "A gzip-compressed file", Zstd: "A zstd-compressed file",
+    default: "A file",
+  };
+}
+
+Node nestedCard(const Kind k, string name, u8[] bytes, fn<void()> open) {
+  return <div class="nested anim">
+    <div class="tile c-archive">{icon("archive", "")}</div>
+    <h3>{name}</h3>
+    <p>{label(k)} · {sizeOf(bytes.len() as i64)}<br/>Open it to browse what's inside; the breadcrumbs lead back out.</p>
+    <button class="btn primary big" onclick={(ElementEvent ev) => { open(); }}>{icon("open", "")}Open archive</button>
+  </div>;
+}
+
+Node infoView(Level l, i32 i, Entry e, Extracted x, const Kind k) {
+  string digest = l.digests[i];
+  if (digest == "" && x.ok && x.bytes.len() <= HASH_LIMIT) {
+    digest = hexBytes(sha256(x.bytes));
+    l.digests[i] = digest;
+  }
+  Node crc = Node.Text("not recorded");
+  if (e.hasCrc) {
+    string rec = hexOf(e.crc as i64, 8);
+    if (x.crcChecked && x.crcOk) {
+      crc = <span><span class="okay">{icon("check", "sm")}verified</span> <span class="mono digest">{rec}</span></span>;
+    } else if (x.crcChecked) {
+      crc = <span><span class="bad">{icon("alert", "sm")}mismatch — the data is damaged</span> <span class="mono digest">{rec}</span></span>;
+    } else {
+      crc = <span class="mono digest">{rec}</span>;
+    }
+  }
+  return <div class="info anim">
+    <div class="card kv">
+      <div class="k">Path</div><div class="mono" style="font-size:12.5px">{e.path}</div>
+      <div class="k">Type</div><div>{x.ok ? kindLabel(k, e.path) : "—"}</div>
+      <div class="k">Size</div><div class="num">{sizeOf(e.size)} <span class="digest">({grouped(e.size)} bytes)</span></div>
+      <div class="k">Stored as</div><div class="num">{sizeOf(e.csize)}{e.method != "" ? " · \{e.method}" : ""} <span class="digest">— {percentKept(e.size, e.csize)}% of the original</span></div>
+      <div class="k">Modified</div><div class="num">{e.modified != "" ? e.modified : "—"}</div>
+      <div class="k">CRC-32</div><div>{crc}</div>
+      <div class="k">SHA-256</div><div class="mono digest">{digest != "" ? digest : (x.ok ? "too large to hash here" : "—")}</div>
+      {e.encrypted ? <><div class="k">Encrypted</div><div><span class="bad">{icon("lock", "sm")}yes</span></div></> : Node.Text("")}
+    </div>
+    {!x.ok ? <div class="note">{icon("alert", "sm")}{x.error}</div> : Node.Text("")}
+  </div>;
+}

@@ -1,0 +1,119 @@
+// What a file is, from its first bytes rather than its name. A name is a hint the user chose; the
+// bytes are what will be parsed, so they decide — the name only breaks ties the bytes cannot.
+
+import { extOf, hasAt, upper } from "./bytes.wac";
+
+/** What the explorer knows how to do with a file. */
+export enum Kind {
+  Zip,
+  Gzip,
+  Zstd,
+  Tar,
+  Image(string mime),
+  Text,
+  Binary,
+}
+
+/** A short label for the kind, as the listing shows it. */
+export string kindLabel(const Kind k, string name) {
+  string ext = extOf(name);
+  return match (k) {
+    Zip: "zip archive",
+    Gzip: "gzip",
+    Zstd: "zstd",
+    Tar: "tar archive",
+    Image(mime): "\{imageName(mime)} image",
+    Text: ext == "" ? "text" : "\{ext} text",
+    Binary: ext == "" ? "binary" : "\{ext} file",
+  };
+}
+
+/** `image/svg+xml` as `SVG`, `image/x-icon` as `ICO`. */
+string imageName(string mime) {
+  string sub = mime.slice(6, mime.len());
+  if (sub == "svg+xml") { return "SVG"; }
+  if (sub == "x-icon") { return "ICO"; }
+  return upper(sub);
+}
+
+/** Whether the kind is one the explorer can open as a folder. */
+export bool isContainer(const Kind k) {
+  return match (k) { Zip: true, Gzip: true, Zstd: true, Tar: true, default: false };
+}
+
+/** A tar header's checksum is right: the sum of its bytes, with the checksum field read as spaces. */
+export bool tarHeaderAt(const u8[] b, i32 at) {
+  if (at + 512 > b.len()) { return false; }
+  i64 want = 0;
+  bool any = false;
+  for (i32 i = 148; i < 156; i++) {
+    u8 c = b[at + i];
+    if (c >= '0' && c <= '7') { want = want * 8 + ((c - '0') as i64); any = true; }
+    else if (c != ' ' && c != 0) { return false; }
+  }
+  if (!any) { return false; }
+  i64 sum = 0;
+  for (i32 i = 0; i < 512; i++) {
+    sum += (i >= 148 && i < 156) ? 32 : (b[at + i] as i64);
+  }
+  return sum == want;
+}
+
+/** Whether the first `limit` bytes read as text: well-formed UTF-8 with almost no control bytes. */
+export bool looksLikeText(const u8[] b) {
+  i32 n = b.len() < 65536 ? b.len() : 65536;
+  if (n == 0) { return true; }
+  i32 controls = 0;
+  for (i32 i = 0; i < n; i++) {
+    u8 c = b[i];
+    if (c == 0) { return false; }
+    if (c < 32 && c != 9 && c != 10 && c != 13 && c != 12) { controls++; }
+  }
+  if (controls * 100 > n) { return false; }
+  // A cut in the middle of a character is the window's doing, not the file's: back up to a boundary.
+  i32 end = n;
+  if (n < b.len()) {
+    while (end > 0 && end > n - 4 && (b[end - 1] & 0xC0) == 0x80) { end--; }
+    if (end > 0 && b[end - 1] >= 0xC0) { end--; }
+  }
+  u8[] head = u8[].filled(end, 0);
+  for (i32 i = 0; i < end; i++) { head[i] = b[i]; }
+  return string.isUtf8(head);
+}
+
+/** The kind of `b`, which was called `name`. */
+export Kind sniff(const u8[] b, string name) {
+  if (hasAt(b, 0, [0x50, 0x4B, 0x03, 0x04]) || hasAt(b, 0, [0x50, 0x4B, 0x05, 0x06])) { return Kind.Zip; }
+  if (hasAt(b, 0, [0x1F, 0x8B, 0x08])) { return Kind.Gzip; }
+  if (hasAt(b, 0, [0x28, 0xB5, 0x2F, 0xFD])) { return Kind.Zstd; }
+  if (hasAt(b, 257, "ustar".toBytes()) || tarHeaderAt(b, 0)) { return Kind.Tar; }
+  if (hasAt(b, 0, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) { return Kind.Image("image/png"); }
+  if (hasAt(b, 0, [0xFF, 0xD8, 0xFF])) { return Kind.Image("image/jpeg"); }
+  if (hasAt(b, 0, "GIF87a".toBytes()) || hasAt(b, 0, "GIF89a".toBytes())) { return Kind.Image("image/gif"); }
+  if (hasAt(b, 0, "RIFF".toBytes()) && hasAt(b, 8, "WEBP".toBytes())) { return Kind.Image("image/webp"); }
+  if (hasAt(b, 0, "BM".toBytes()) && b.len() > 26 && extOf(name) == "bmp") { return Kind.Image("image/bmp"); }
+  if (hasAt(b, 0, [0x00, 0x00, 0x01, 0x00]) && extOf(name) == "ico") { return Kind.Image("image/x-icon"); }
+  if (hasAt(b, 4, "ftypavif".toBytes())) { return Kind.Image("image/avif"); }
+  // A self-extracting or otherwise prefixed zip starts with something else and ends with the directory.
+  string ext = extOf(name);
+  if (ext == "zip" || ext == "jar" || ext == "apk" || ext == "docx" || ext == "xlsx" || ext == "pptx"
+      || ext == "epub" || ext == "odt" || ext == "whl" || ext == "xpi" || ext == "vsix") {
+    if (endOfDirectory(b) >= 0) { return Kind.Zip; }
+  }
+  if (looksLikeText(b)) {
+    if (ext == "svg") { return Kind.Image("image/svg+xml"); }
+    return Kind.Text;
+  }
+  return Kind.Binary;
+}
+
+/** Where the zip end-of-central-directory record starts, searching back over a comment; -1 if none. */
+export i32 endOfDirectory(const u8[] b) {
+  i32 last = b.len() - 22;
+  i32 stop = last - 65535;
+  if (stop < 0) { stop = 0; }
+  for (i32 at = last; at >= stop; at--) {
+    if (b[at] == 0x50 && hasAt(b, at, [0x50, 0x4B, 0x05, 0x06])) { return at; }
+  }
+  return -1;
+}

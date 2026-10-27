@@ -1,0 +1,431 @@
+// An archive as a flat list of entries, and how to get one entry's bytes back out.
+//
+// **Listing is cheap and reading is lazy.** Opening a zip reads only its central directory — a few
+// bytes per entry — and nothing is decompressed until somebody looks at a file. A 20,000-entry
+// archive lists as fast as it can be scanned, and a file is inflated the first time it is opened.
+//
+// gzip and zstd are compressed *streams*, not archives: one file inside, with no directory. They are
+// decompressed when opened, and an archive of one entry is what they become; if that entry is itself
+// a tar, the tar is what the user wanted, and `open` goes straight through to it.
+
+import { Buf, Vec } from "core";
+import { endOfDirectory, Kind, sniff, tarHeaderAt } from "./sniff.wac";
+import { baseName, endsWith, hasAt, le16, le32, le64, sliceOf } from "./bytes.wac";
+import { inflateAt } from "../vendor/gzip/inflate.wac";
+import { crc32 } from "../vendor/gzip/crc32.wac";
+import { decompress } from "../vendor/zstd/frame.wac";
+import { gunzipBytes } from "../vendor/gzip/inflate.wac";
+
+/** One file or directory in an archive. */
+export struct Entry {
+  /** The path inside the archive, `/`-separated, with no leading or trailing slash. */
+  string path;
+  bool isDir;
+  /** The size once extracted, and as stored; -1 when the archive does not say. */
+  i64 size;
+  i64 csize;
+  /** `deflate`, `stored`, … — or "" for a format with no per-entry compression. */
+  string method;
+  /** When it was last modified, as `2024-03-02 14:05`, or "". */
+  string modified;
+  /** The CRC-32 the archive recorded, when it records one. */
+  bool hasCrc;
+  u32 crc;
+  /** Where its data or its local header starts, in the archive's bytes. */
+  i32 offset;
+  i32 methodId;
+  bool encrypted;
+}
+
+export enum Format { ZipArchive, TarArchive, Stream(string codec) }
+
+/** An opened archive: its entries, and the bytes they are read from. */
+export struct Archive {
+  Format format;
+  Entry[] entries;
+  u8[] data;
+  /** A line about the archive as a whole — a comment, or what was skipped while listing it. */
+  string note;
+}
+
+/** One entry's bytes, or why there are none. */
+export struct Extracted {
+  bool ok;
+  u8[] bytes;
+  string error;
+  /** Whether a recorded CRC-32 was checked, and whether it matched. */
+  bool crcChecked;
+  bool crcOk;
+}
+
+/** An archive that could not be opened, and why. */
+export struct Opened {
+  Archive? archive;
+  string error;
+}
+
+Opened failed(string why) { return Opened(null, why); }
+
+/** Open `data`, which sniffed as `kind` and was called `name`. */
+export Opened openArchive(u8[] data, Kind kind, string name) {
+  return match (kind) {
+    Zip: openZip(data),
+    Tar: openTar(data),
+    Gzip: openStream(data, name, "gzip"),
+    Zstd: openStream(data, name, "zstd"),
+    default: failed("this is not an archive"),
+  };
+}
+
+// ── zip ─────────────────────────────────────────────────────────────────────
+
+/** Code page 437's upper half, which is what a zip name without the UTF-8 flag is written in. */
+static i32[] CP437 = [
+  0xC7, 0xFC, 0xE9, 0xE2, 0xE4, 0xE0, 0xE5, 0xE7, 0xEA, 0xEB, 0xE8, 0xEF, 0xEE, 0xEC, 0xC4, 0xC5,
+  0xC9, 0xE6, 0xC6, 0xF4, 0xF6, 0xF2, 0xFB, 0xF9, 0xFF, 0xD6, 0xDC, 0xA2, 0xA3, 0xA5, 0x20A7, 0x192,
+  0xE1, 0xED, 0xF3, 0xFA, 0xF1, 0xD1, 0xAA, 0xBA, 0xBF, 0x2310, 0xAC, 0xBD, 0xBC, 0xA1, 0xAB, 0xBB,
+  0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556, 0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510,
+  0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F, 0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567,
+  0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, 0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580,
+  0x3B1, 0xDF, 0x393, 0x3C0, 0x3A3, 0x3C3, 0xB5, 0x3C4, 0x3A6, 0x398, 0x3A9, 0x3B4, 0x221E, 0x3C6, 0x3B5, 0x2229,
+  0x2261, 0xB1, 0x2265, 0x2264, 0x2320, 0x2321, 0xF7, 0x2248, 0xB0, 0x2219, 0xB7, 0x221A, 0x207F, 0xB2, 0x25A0, 0xA0,
+];
+
+/**
+ * A zip name as text. The UTF-8 flag says what it is; without it the spec says code page 437 — but
+ * most tools that skip the flag wrote UTF-8 anyway, so a name that is valid UTF-8 is taken as such.
+ */
+string zipName(u8[] raw, bool utf8) {
+  if (utf8 || string.isUtf8(raw)) { return string.fromBytes(raw); }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < raw.len(); i++) {
+    if (raw[i] < 0x80) { out.push(raw[i]); } else { out.pushCodepoint(CP437[(raw[i] as i32) - 0x80]); }
+  }
+  return out.toStr();
+}
+
+/** `2024-03-02 14:05` from an MS-DOS date and time; "" for the zero date. */
+string dosTime(i32 date, i32 time) {
+  if (date <= 0) { return ""; }
+  i32 y = 1980 + (date >> 9);
+  i32 mo = (date >> 5) & 15;
+  i32 d = date & 31;
+  i32 h = time >> 11;
+  i32 mi = (time >> 5) & 63;
+  return "\{y}-\{two(mo)}-\{two(d)} \{two(h)}:\{two(mi)}";
+}
+
+string two(i32 n) { return n < 10 ? "0\{n}" : "\{n}"; }
+
+/** A path made safe to show and to split: backslashes as slashes, no leading `/` or `./`. */
+export string cleanPath(string p) {
+  u8[] b = p.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\\') { b[i] = '/'; } }
+  string s = string.fromBytes(b);
+  while (true) {
+    if (s.len() > 0 && s[0] == "/") { s = s.slice(1, s.len()); }
+    else if (s.len() > 1 && s.slice(0, 2) == "./") { s = s.slice(2, s.len()); }
+    else { break; }
+  }
+  while (s.len() > 0 && s[s.len() - 1] == "/") { s = s.slice(0, s.len() - 1); }
+  return s;
+}
+
+string methodName(i32 m) {
+  switch (m) {
+    case 0: { return "stored"; }
+    case 8: { return "deflate"; }
+    case 9: { return "deflate64"; }
+    case 12: { return "bzip2"; }
+    case 14: { return "lzma"; }
+    case 93: { return "zstd"; }
+    case 95: { return "xz"; }
+    case 99: { return "aes"; }
+    default: { return "method \{m}"; }
+  }
+}
+
+/** The zip64 values an extra field carries, for the fields the central record saturated. */
+void zip64Extra(u8[] b, i32 at, i32 len, Entry e, bool wantSize, bool wantCsize, bool wantOffset) {
+  i32 p = at;
+  i32 end = at + len;
+  while (p + 4 <= end) {
+    i32 id = le16(b, p);
+    i32 sz = le16(b, p + 2);
+    if (id == 1) {
+      i32 q = p + 4;
+      if (wantSize) { e.size = le64(b, q); q += 8; }
+      if (wantCsize) { e.csize = le64(b, q); q += 8; }
+      if (wantOffset) {
+        i64 off = le64(b, q);
+        e.offset = off >= 0 && off < 0x7FFFFFFF ? off as! i32 : -1;
+      }
+      return;
+    }
+    p += 4 + sz;
+  }
+}
+
+export Opened openZip(u8[] b) {
+  i32 eocd = endOfDirectory(b);
+  if (eocd < 0) { return failed("no zip directory was found at the end of the file — it may be truncated"); }
+  i64 count = le16(b, eocd + 10) as i64;
+  i64 cdOffset = le32(b, eocd + 16);
+  i32 commentLen = le16(b, eocd + 20);
+  string note = commentLen > 0 ? zipName(sliceOf(b, eocd + 22, eocd + 22 + commentLen), false) : "";
+
+  // zip64: the locator sits just before the classic record and points at the real one.
+  if (eocd >= 20 && hasAt(b, eocd - 20, [0x50, 0x4B, 0x06, 0x07])) {
+    i64 z = le64(b, eocd - 12);
+    if (z >= 0 && z < (b.len() as i64) && hasAt(b, z as! i32, [0x50, 0x4B, 0x06, 0x06])) {
+      i32 zi = z as! i32;
+      count = le64(b, zi + 32);
+      cdOffset = le64(b, zi + 48);
+    }
+  }
+  // Bytes in front of the archive (a self-extractor's stub) shift every offset by the same amount.
+  i64 cdSize = le32(b, eocd + 12);
+  i64 shift = 0;
+  if (cdOffset >= 0 && cdSize >= 0 && cdOffset + cdSize < (eocd as i64)) { shift = (eocd as i64) - cdSize - cdOffset; }
+  if (cdOffset < 0 || cdOffset + shift >= (b.len() as i64)) { return failed("the zip directory points outside the file"); }
+
+  Vec<Entry> out = Vec.create();
+  i32 p = (cdOffset + shift) as! i32;
+  i32 skipped = 0;
+  for (i64 n = 0; n < count; n++) {
+    if (!hasAt(b, p, [0x50, 0x4B, 0x01, 0x02])) { skipped = (count - n) as! i32; break; }
+    i32 flags = le16(b, p + 8);
+    i32 method = le16(b, p + 10);
+    i32 time = le16(b, p + 12);
+    i32 date = le16(b, p + 14);
+    i64 crc = le32(b, p + 16);
+    i64 csize = le32(b, p + 20);
+    i64 size = le32(b, p + 24);
+    i32 nameLen = le16(b, p + 28);
+    i32 extraLen = le16(b, p + 30);
+    i32 commentLen2 = le16(b, p + 32);
+    i64 local = le32(b, p + 42);
+    string raw = zipName(sliceOf(b, p + 46, p + 46 + nameLen), (flags & 0x800) != 0);
+    Entry e = Entry {
+      path: cleanPath(raw),
+      isDir: endsWith(raw, "/") || endsWith(raw, "\\"),
+      size: size,
+      csize: csize,
+      method: methodName(method),
+      modified: dosTime(date, time),
+      hasCrc: true,
+      crc: crc as@ u32,
+      offset: local >= 0 && local + shift < 0x7FFFFFFF ? (local + shift) as! i32 : -1,
+      methodId: method,
+      encrypted: (flags & 1) != 0,
+    };
+    if (size == 0xFFFFFFFF || csize == 0xFFFFFFFF || local == 0xFFFFFFFF) {
+      zip64Extra(b, p + 46 + nameLen, extraLen, e, size == 0xFFFFFFFF, csize == 0xFFFFFFFF, local == 0xFFFFFFFF);
+      if (local == 0xFFFFFFFF && e.offset >= 0) { e.offset = e.offset + (shift as! i32); }
+    }
+    if (e.path != "") { out.push(e); }
+    p += 46 + nameLen + extraLen + commentLen2;
+  }
+  if (skipped > 0) {
+    note = note == "" ? "\{skipped} entries could not be read from the directory" : note;
+  }
+  return Opened(Archive(Format.ZipArchive, out.toArray(), b, note), "");
+}
+
+Extracted noBytes(string why) { return Extracted(false, u8[](), why, false, false); }
+
+Extracted readZip(Archive a, const Entry e) {
+  u8[] b = a.data;
+  if (e.encrypted) { return noBytes("this file is encrypted, and the explorer does not ask for passwords"); }
+  if (e.offset < 0 || !hasAt(b, e.offset, [0x50, 0x4B, 0x03, 0x04])) {
+    return noBytes("its local header is missing — the archive may be damaged");
+  }
+  i32 start = e.offset + 30 + le16(b, e.offset + 26) + le16(b, e.offset + 28);
+  if (e.csize < 0 || (start as i64) + e.csize > (b.len() as i64)) {
+    return noBytes("its data runs past the end of the file — the archive may be truncated");
+  }
+  u8[] bytes = u8[]();
+  if (e.methodId == 0) {
+    bytes = sliceOf(b, start, start + (e.csize as! i32));
+  } else if (e.methodId == 8) {
+    bytes = inflateAt(b, start).bytes;
+  } else {
+    return noBytes("it is compressed with \{e.method}, which the explorer cannot decompress yet");
+  }
+  bool ok = crc32(bytes) == e.crc;
+  return Extracted(true, bytes, "", true, ok);
+}
+
+// ── tar ─────────────────────────────────────────────────────────────────────
+
+/** A NUL- or space-terminated field as text. */
+string field(const u8[] b, i32 at, i32 len) {
+  i32 end = at;
+  while (end < at + len && b[end] != 0) { end++; }
+  return zipName(sliceOf(b, at, end), false);
+}
+
+/** An octal number field — or, with the high bit set, GNU's base-256 form for large sizes. */
+i64 octal(const u8[] b, i32 at, i32 len) {
+  if ((b[at] & 0x80) != 0) {
+    i64 v = 0;
+    for (i32 i = 1; i < len; i++) { v = (v << 8) | (b[at + i] as i64); }
+    return v;
+  }
+  i64 v = 0;
+  for (i32 i = at; i < at + len; i++) {
+    u8 c = b[i];
+    if (c >= '0' && c <= '7') { v = v * 8 + ((c - '0') as i64); }
+    else if (c == 0 || c == ' ') { if (v > 0) { break; } }
+  }
+  return v;
+}
+
+/** `2024-03-02 14:05` from Unix seconds, in UTC. */
+export string unixTime(i64 secs) {
+  if (secs <= 0) { return ""; }
+  i64 days = secs / 86400;
+  i64 rem = secs % 86400;
+  // Howard Hinnant's civil-from-days.
+  i64 z = days + 719468;
+  i64 era = z / 146097;
+  i64 doe = z - era * 146097;
+  i64 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  i64 y = yoe + era * 400;
+  i64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  i64 mp = (5 * doy + 2) / 153;
+  i64 d = doy - (153 * mp + 2) / 5 + 1;
+  i64 m = mp < 10 ? mp + 3 : mp - 9;
+  if (m <= 2) { y = y + 1; }
+  return "\{y}-\{two(m as! i32)}-\{two(d as! i32)} \{two((rem / 3600) as! i32)}:\{two(((rem / 60) % 60) as! i32)}";
+}
+
+/** A pax header's `path=` record, if it has one. */
+string paxPath(const u8[] b, i32 at, i32 len) {
+  i32 p = at;
+  while (p < at + len) {
+    i32 sp = p;
+    i32 n = 0;
+    while (sp < at + len && b[sp] >= '0' && b[sp] <= '9') { n = n * 10 + ((b[sp] - '0') as i32); sp++; }
+    if (n <= 0) { return ""; }
+    string rec = string.fromBytes(sliceOf(b, sp + 1, p + n - 1));
+    if (rec.len() > 5 && rec.slice(0, 5) == "path=") { return rec.slice(5, rec.len()); }
+    p += n;
+  }
+  return "";
+}
+
+export Opened openTar(u8[] b) {
+  Vec<Entry> out = Vec.create();
+  i32 p = 0;
+  string longName = "";
+  string note = "";
+  while (p + 512 <= b.len()) {
+    if (b[p] == 0 && !tarHeaderAt(b, p)) { break; }       // the zero blocks that end an archive
+    if (!tarHeaderAt(b, p)) { note = "a damaged header stopped the listing early"; break; }
+    string name = field(b, p, 100);
+    string prefix = hasAt(b, p + 257, "ustar".toBytes()) ? field(b, p + 345, 155) : "";
+    if (prefix != "") { name = prefix + "/" + name; }
+    i64 size = octal(b, p + 124, 12);
+    i64 mtime = octal(b, p + 136, 12);
+    u8 type = b[p + 156];
+    i32 data = p + 512;
+    if ((data as i64) + size > (b.len() as i64)) { note = "the archive is truncated; the last file is cut short"; }
+    i32 sz = size > 0x7FFFFFFF ? 0x7FFFFFFF : size as! i32;
+    i32 next = data + (sz + 511) / 512 * 512;
+    if (next < data) { break; }
+    if (type == 'L') {                                    // GNU: the next entry's long name
+      longName = field(b, data, sz < b.len() - data ? sz : b.len() - data);
+    } else if (type == 'x') {                             // pax: per-entry attributes
+      string pp = paxPath(b, data, sz < b.len() - data ? sz : b.len() - data);
+      if (pp != "") { longName = pp; }
+    } else if (type == 'g' || type == 'K') {
+      // global pax attributes and GNU long link names change nothing we show
+    } else {
+      if (longName != "") { name = longName; longName = ""; }
+      bool dir = type == '5' || endsWith(name, "/");
+      bool link = type == '1' || type == '2';
+      Entry e = Entry {
+        path: cleanPath(name),
+        isDir: dir,
+        size: dir ? 0 : size,
+        csize: dir ? 0 : size,
+        method: link ? "link" : "",
+        modified: unixTime(mtime),
+        hasCrc: false,
+        crc: 0,
+        offset: data,
+        methodId: link ? -1 : 0,
+        encrypted: false,
+      };
+      if (e.path != "") { out.push(e); }
+    }
+    p = next;
+  }
+  return Opened(Archive(Format.TarArchive, out.toArray(), b, note), "");
+}
+
+Extracted readTar(Archive a, const Entry e) {
+  if (e.methodId == -1) { return noBytes("it is a link, which has no contents of its own"); }
+  i32 end = (e.offset as i64) + e.size > (a.data.len() as i64) ? a.data.len() : e.offset + (e.size as! i32);
+  return Extracted(true, sliceOf(a.data, e.offset, end), "", false, false);
+}
+
+// ── gzip and zstd ───────────────────────────────────────────────────────────
+
+/** What a compressed stream decompresses to: the name with its extension gone. */
+string innerName(string name, string codec) {
+  string base = baseName(name);
+  if (endsWith(base, ".tgz")) { return base.slice(0, base.len() - 4) + ".tar"; }
+  if (endsWith(base, ".tzst")) { return base.slice(0, base.len() - 5) + ".tar"; }
+  string ext = codec == "gzip" ? ".gz" : ".zst";
+  if (endsWith(base, ext)) { return base.slice(0, base.len() - ext.len()); }
+  if (codec == "zstd" && endsWith(base, ".zstd")) { return base.slice(0, base.len() - 5); }
+  return base + ".out";
+}
+
+/** The name gzip recorded in its header, when it recorded one. */
+string gzipName(const u8[] b) {
+  if (b.len() < 10 || (b[3] & 8) == 0) { return ""; }
+  i32 p = 10;
+  if ((b[3] & 4) != 0) { p += 2 + le16(b, 10); }
+  i32 s = p;
+  while (p < b.len() && b[p] != 0) { p++; }
+  return p < b.len() ? string.fromBytes(sliceOf(b, s, p)) : "";
+}
+
+Opened openStream(u8[] b, string name, string codec) {
+  u8[] inner = codec == "gzip" ? gunzipBytes(b) : decompress(b);
+  string recorded = codec == "gzip" ? gzipName(b) : "";
+  string inName = recorded != "" && string.isUtf8(recorded.toBytes()) ? cleanPath(recorded) : innerName(name, codec);
+  i64 size = inner.len() as i64;
+  Entry e = Entry {
+    path: baseName(inName),
+    isDir: false,
+    size: size,
+    csize: b.len() as i64,
+    method: codec,
+    modified: codec == "gzip" ? unixTime(le32(b, 4)) : "",
+    hasCrc: false,
+    crc: 0,
+    offset: 0,
+    methodId: 0,
+    encrypted: false,
+  };
+  return Opened(Archive(Format.Stream(codec), [e], inner, ""), "");
+}
+
+/** The bytes of `e`, which is one of `a`'s entries. */
+export Extracted extract(Archive a, const Entry e) {
+  if (e.isDir) { return noBytes("it is a folder"); }
+  return match (a.format) {
+    ZipArchive: readZip(a, e),
+    TarArchive: readTar(a, e),
+    Stream(_): Extracted(true, a.data, "", false, false),
+  };
+}
+
+/** A label for the archive's format. */
+export string formatLabel(const Archive a) {
+  return match (a.format) { ZipArchive: "zip", TarArchive: "tar", Stream(codec): codec };
+}

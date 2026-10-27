@@ -1,0 +1,315 @@
+// What the explorer holds, and every change to it.
+//
+// **One model, mutated in place, and a counter that says it changed.** The view is a function of the
+// model; a handler changes the model and bumps the counter, and the page renders again. The model is
+// never compared, so a 20,000-entry archive costs nothing to keep and nothing to copy.
+//
+// A dropped archive is the first **level**. Opening an archive inside it pushes another, and the
+// breadcrumbs are the stack: each level keeps its own folder, selection and cache, so stepping back
+// out lands exactly where you were.
+
+import { Vec } from "core";
+import { Archive, Entry, Extracted, Format, Opened, extract, openArchive } from "./archive.wac";
+import { Kind, isContainer, sniff } from "./sniff.wac";
+import { Dir, Tree, buildTree, nameOf } from "./tree.wac";
+import { baseName, extOf, lower, percentKept, sortBy } from "./bytes.wac";
+
+export struct Level {
+  /** What the breadcrumb calls it: the file's name. */
+  string name;
+  Archive archive;
+  Tree tree;
+  /** Each entry's bytes, once somebody has looked at them. */
+  Extracted?[] cache;
+  /** Each entry's SHA-256, once computed. */
+  string[] digests;
+  string cwd;
+  /** The entry being previewed, or -1. */
+  i32 selected;
+  /** Where the keyboard is, as an index into the rows the listing shows. */
+  i32 cursor;
+}
+
+export struct Model {
+  Vec<Level> levels;
+  string filter;
+  /** 0 name, 1 size, 2 ratio, 3 modified. */
+  i32 sortKey;
+  bool desc;
+  /** The preview tab asked for; "" lets the file's kind decide. */
+  string tab;
+  /** How many rows of hex to show, and how many listing rows. */
+  i32 hexRows;
+  i32 listRows;
+  string error;
+  string busy;
+  /** Set by a key press, so the next render moves focus to the cursor row. */
+  bool focusCursor;
+  /**
+   * What is being decompressed right now, and what to say if it never finishes. wac cannot catch a
+   * trap, and the decompressors trap on damaged data — but a page's work runs on one thread, so a
+   * timer that finds this still set knows the work died rather than that it is still going.
+   */
+  string trying;
+  /** Whether what died was the loop that receives files, which then has to be started again. */
+  bool tryingInLoop;
+}
+
+export Model emptyModel() {
+  return Model(Vec.create(), "", 0, false, "", 256, 400, "", "", false, "", false);
+}
+
+export Level top(Model m) { return m.levels.get(m.levels.len() - 1); }
+
+export bool hasFile(Model m) { return m.levels.len() > 0; }
+
+// ── Opening ─────────────────────────────────────────────────────────────────
+
+/** A level for a file that is not an archive: one entry, itself, already selected. */
+Level single(string name, u8[] bytes) {
+  Entry e = Entry {
+    path: baseName(name), isDir: false, size: bytes.len() as i64, csize: bytes.len() as i64,
+    method: "", modified: "", hasCrc: false, crc: 0, offset: 0, methodId: 0, encrypted: false,
+  };
+  Archive a = Archive(Format.Stream(""), [e], bytes, "");
+  Level l = levelOf(name, a);
+  l.selected = 0;
+  return l;
+}
+
+Level levelOf(string name, Archive a) {
+  i32 n = a.entries.len();
+  return Level(name, a, buildTree(a.entries), Extracted?[].defaulted(n), string[].filled(n, ""), "", -1, 0);
+}
+
+/**
+ * The level `bytes` opens as, or why it does not open.
+ *
+ * A compressed stream holding a tar goes straight through to the tar: `x.tar.gz` is a folder to
+ * everyone who has ever made one, and a level holding one file called `x.tar` would be a detour.
+ */
+export Level? levelFor(Model m, string name, u8[] bytes) {
+  Kind k = sniff(bytes, name);
+  if (!isContainer(k)) { return single(name, bytes); }
+  Opened o = openArchive(bytes, k, name);
+  if (o.archive is null) { m.error = "\{name} could not be opened: \{o.error}"; return null; }
+  Archive a = o.archive!;
+  bool stream = match (a.format) { Stream(_): true, default: false };
+  if (stream && a.entries.len() == 1) {
+    Kind inner = sniff(a.data, a.entries[0].path);
+    bool tar = match (inner) { Tar: true, default: false };
+    if (tar) {
+      Opened t = openArchive(a.data, inner, a.entries[0].path);
+      if (t.archive is not null) { return levelOf(name, t.archive!); }
+    }
+    Level l = levelOf(name, a);
+    l.selected = 0;
+    return l;
+  }
+  return levelOf(name, a);
+}
+
+/** Start again from a file the user handed over. */
+export void openRoot(Model m, string name, u8[] bytes) {
+  m.error = "";
+  Level? l = levelFor(m, name, bytes);
+  if (l is null) { return; }
+  m.levels.clear();
+  m.levels.push(l!);
+  resetView(m);
+}
+
+/** Open the archive that entry `i` of the current level is, as a new level. */
+export void openNested(Model m, i32 i) {
+  Level cur = top(m);
+  Extracted x = bytesOf(cur, i);
+  if (!x.ok) { m.error = x.error; return; }
+  Level? l = levelFor(m, baseName(cur.archive.entries[i].path), x.bytes);
+  if (l is null) { return; }
+  m.levels.push(l!);
+  resetView(m);
+}
+
+void resetView(Model m) {
+  m.filter = "";
+  m.tab = "";
+  m.hexRows = 256;
+  m.listRows = 400;
+}
+
+/** The bytes of entry `i`, extracted the first time and remembered after. */
+export Extracted bytesOf(Level l, i32 i) {
+  Extracted? have = l.cache[i];
+  if (have is not null) { return have!; }
+  // Recorded as damaged first: if extracting traps, this is what every later look finds.
+  l.cache[i] = Extracted(false, u8[](), "its data could not be decompressed — the archive is damaged", false, false);
+  Extracted x = extract(l.archive, l.archive.entries[i]);
+  l.cache[i] = x;
+  return x;
+}
+
+/** What entry `i` is, judged by its bytes. */
+export Kind kindOf(Level l, i32 i) {
+  Extracted x = bytesOf(l, i);
+  return x.ok ? sniff(x.bytes, l.archive.entries[i].path) : Kind.Binary;
+}
+
+/** Whether entry `i` can be opened as an archive in its own right. */
+export bool opensAsArchive(Level l, i32 i) { return isContainer(kindOf(l, i)); }
+
+// ── Navigating ──────────────────────────────────────────────────────────────
+
+/** Go to folder `path` of level `depth`, dropping any levels opened inside it. */
+export void goTo(Model m, i32 depth, string path) {
+  while (m.levels.len() > depth + 1) { m.levels.pop(); }
+  m.error = "";
+  Level l = top(m);
+  if (l.cwd != path) { l.selected = -1; l.cursor = 0; }
+  l.cwd = path;
+  m.filter = "";
+  m.listRows = 400;
+}
+
+/** One step out: the parent folder, or the archive this one was opened from. */
+export void goUp(Model m) {
+  Level l = top(m);
+  if (l.cwd != "") {
+    u8[] b = l.cwd.toBytes();
+    string parent = "";
+    for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { parent = l.cwd.slice(0, i); break; } }
+    string from = l.cwd;
+    goTo(m, m.levels.len() - 1, parent);
+    // Land on the folder we came out of, so up-then-down is a no-op.
+    Row[] rows = rowsOf(m);
+    Level now = top(m);
+    for (i32 k = 0; k < rows.len(); k++) {
+      if ((rows[k].dir is not null) && rows[k].dir!.path == from) { now.cursor = k; }
+    }
+  } else if (m.levels.len() > 1) {
+    m.levels.pop();
+  }
+}
+
+export void select(Model m, i32 entry, i32 row) {
+  Level l = top(m);
+  if (l.selected != entry) { m.error = ""; }
+  if (l.selected != entry) { m.tab = ""; m.hexRows = 256; }
+  l.selected = entry;
+  l.cursor = row;
+}
+
+// ── The rows the listing shows ──────────────────────────────────────────────
+
+export struct Row {
+  Dir? dir;
+  i32 entry;
+  string name;
+  string lname;
+  /** The folder it is in, relative to the current one — shown when a filter reaches below. */
+  string where;
+  i64 size;
+  i64 csize;
+  string modified;
+}
+
+Row dirRow(Dir d, string where) {
+  return Row(d, -1, d.name, lower(d.name), where, d.size, d.csize, d.modified);
+}
+
+Row fileRow(Level l, i32 i, string where) {
+  Entry e = l.archive.entries[i];
+  string n = nameOf(e.path);
+  return Row(null, i, n, lower(n), where, e.size, e.csize, e.modified);
+}
+
+/** Below `d`, every folder and file whose name contains `q`, into `out`. */
+void search(Level l, Dir d, string q, string base, Vec<Row> out) {
+  for (i32 i = 0; i < d.dirs.len(); i++) {
+    Dir c = d.dirs.get(i);
+    string where = relative(c.path, base);
+    if (lower(c.name).indexOf(q) >= 0) { out.push(dirRow(c, parentOf(where))); }
+    search(l, c, q, base, out);
+  }
+  for (i32 i = 0; i < d.files.len(); i++) {
+    i32 e = d.files.get(i);
+    string n = nameOf(l.archive.entries[e].path);
+    if (lower(n).indexOf(q) >= 0) { out.push(fileRow(l, e, relative(d.path, base))); }
+  }
+}
+
+string relative(string path, string base) {
+  if (base == "") { return path; }
+  return path.len() > base.len() ? path.slice(base.len() + 1, path.len()) : "";
+}
+
+string parentOf(string path) {
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { return path.slice(0, i); } }
+  return "";
+}
+
+/** The rows for the current folder and filter, sorted — folders first, always. */
+export Row[] rowsOf(Model m) {
+  Level l = top(m);
+  Dir d = l.tree.byPath.get(l.cwd) ?? l.tree.root;
+  Vec<Row> out = Vec.create();
+  string q = lower(m.filter);
+  if (q != "") {
+    search(l, d, q, l.cwd, out);
+  } else {
+    for (i32 i = 0; i < d.dirs.len(); i++) { out.push(dirRow(d.dirs.get(i), "")); }
+    for (i32 i = 0; i < d.files.len(); i++) { out.push(fileRow(l, d.files.get(i), "")); }
+  }
+  Row[] rows = out.toArray();
+  i32[] idx = i32[].filled(rows.len(), 0);
+  for (i32 i = 0; i < idx.len(); i++) { idx[i] = i; }
+  i32 key = m.sortKey;
+  bool desc = m.desc;
+  sortBy(idx, (i32 a, i32 b) => before(rows[a], rows[b], key, desc));
+  Row[] sorted = Row[].filled(rows.len(), Row(null, -1, "", "", "", 0, 0, ""));
+  for (i32 i = 0; i < idx.len(); i++) { sorted[i] = rows[idx[i]]; }
+  return sorted;
+}
+
+bool before(Row a, Row b, i32 key, bool desc) {
+  bool ad = a.dir is not null;
+  bool bd = b.dir is not null;
+  if (ad != bd) { return ad; }
+  i32 c = 0;
+  if (key == 1) { c = a.size < b.size ? -1 : (a.size > b.size ? 1 : 0); }
+  else if (key == 2) {
+    i32 ra = percentKept(a.size, a.csize);
+    i32 rb = percentKept(b.size, b.csize);
+    c = ra < rb ? -1 : (ra > rb ? 1 : 0);
+  } else if (key == 3) { c = a.modified < b.modified ? -1 : (a.modified > b.modified ? 1 : 0); }
+  if (c == 0) { c = a.lname < b.lname ? -1 : (a.lname > b.lname ? 1 : 0); }
+  return desc ? c > 0 : c < 0;
+}
+
+// ── Icons ───────────────────────────────────────────────────────────────────
+
+/** The icon and colour a file gets in the listing, from its name — the listing extracts nothing. */
+export string iconFor(string name) {
+  string ext = extOf(name);
+  string[] archives = ["zip", "jar", "apk", "whl", "tar", "gz", "tgz", "zst", "zstd", "tzst", "xpi", "epub",
+                       "docx", "xlsx", "pptx", "odt", "ods", "vsix", "nupkg", "crx"];
+  string[] images = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
+  string[] code = ["c", "h", "cc", "cpp", "hpp", "rs", "go", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "java",
+                   "kt", "rb", "php", "swift", "wac", "sh", "bash", "zsh", "json", "json5", "toml", "yaml", "yml",
+                   "xml", "html", "htm", "css", "scss", "sql", "lua", "zig", "cs", "fs", "ex", "exs", "hs", "ml",
+                   "sol", "vue", "svelte", "gradle", "cmake", "mk", "lock"];
+  string[] texts = ["txt", "md", "markdown", "rst", "csv", "tsv", "log", "ini", "cfg", "conf", "env", "tex", "org",
+                    "properties", "gitignore", "editorconfig", "license", "readme"];
+  if (has(archives, ext)) { return "archive"; }
+  if (has(images, ext)) { return "image"; }
+  if (has(code, ext)) { return "code"; }
+  if (has(texts, ext)) { return "text"; }
+  string up = lower(baseName(name));
+  if (up == "license" || up == "readme" || up == "makefile" || up == "dockerfile" || up == "changelog" || up == "authors") { return "text"; }
+  return "binary";
+}
+
+bool has(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}
