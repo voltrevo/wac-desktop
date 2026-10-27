@@ -20,6 +20,15 @@ import { Dir } from "./tree.wac";
  */
 static i32 QUIET = 600;
 
+/** What to do instead, when dropping a folder cannot work; the error shows a button for it. */
+static string FOLDER_HINT = "Use Choose a folder instead, or serve the page (wac task serve).";
+
+/** An error, with a folder picker beside it when the error says to use one. */
+Node errorBox(Model m, string style) {
+  return <div class="error" style={style}>{icon("alert", "")}<span>{m.error}</span>
+    {m.error.indexOf(FOLDER_HINT) >= 0 ? folderPicker("btn", "Choose a folder") : Node.Text("")}</div>;
+}
+
 /** How long a file on its own waits to see whether others were dropped with it. */
 static i32 GRACE = 200;
 
@@ -65,7 +74,9 @@ async void files(Page page, Model m, fn<void()> bump) {
 async void openOne(Page page, Model m, fn<void()> bump, Picked f) {
   if (!f.ok) {
     m.busy = "";
-    m.error = "\{f.name} could not be read: \{f.error}";
+    m.error = f.error.indexOf("dropped folder") >= 0
+      ? "This browser won't let a page opened from a file read a dropped folder. \{FOLDER_HINT}"
+      : "\{f.name} could not be read: \{f.error}";
     bump();
     return;
   }
@@ -140,7 +151,7 @@ Node landing(Model m) {
         <div class="chips"><span class="chip">ZIP</span><span class="chip">TAR</span><span class="chip">TAR.GZ</span>
           <span class="chip">GZIP</span><span class="chip">ZSTD</span><span class="chip">JAR · APK · DOCX</span><span class="chip">+ any file or folder</span></div>
       </div>
-      {m.error != "" ? <div class="error">{icon("alert", "")}<span>{m.error}</span></div> : Node.Text("")}
+      {m.error != "" ? errorBox(m, "") : Node.Text("")}
       <div class="fine">{icon("shield", "sm")}Nothing leaves this tab. Built in wac, compiled to WebAssembly.</div>
     </div>
   </div>;
@@ -385,8 +396,8 @@ Node app(Ui ui, Page page) {
         {preview(m, page, bump, (i32 i) => { nested(page, m, bump, i); })}
       </div>
     </div>
-    {m.error != "" ? <div class="error" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);margin:0;z-index:5">
-                       {icon("alert", "")}<span>{m.error}</span></div> : Node.Text("")}
+    {m.error != "" ? errorBox(m, "position:fixed;bottom:18px;left:50%;transform:translateX(-50%);margin:0;z-index:5")
+                   : Node.Text("")}
     {busy}
   </div>;
 }

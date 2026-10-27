@@ -116,7 +116,7 @@ Node folderSummary(Model m, Level l) {
           <div class="k">Files</div><div class="num">{grouped(d.fileCount as i64)}</div>
           <div class="k">Folders</div><div class="num">{grouped(d.dirCount as i64)}</div>
           <div class="k">Size</div><div class="num">{sizeOf(d.size)} <span class="digest">({grouped(d.size)} bytes)</span></div>
-          <div class="k">Packed</div><div class="num">{sizeOf(d.csize)} <span class="digest">— {kept}% of the original</span></div>
+          {isFolder(l) ? Node.Text("") : <><div class="k">Packed</div><div class="num">{sizeOf(d.csize)} <span class="digest">— {kept}% of the original</span></div></>}
           {l.archive.note != "" && l.cwd == "" ? <><div class="k">Note</div><div>{l.archive.note}</div></> : Node.Text("")}
         </div>
         <div class="placeholder" style="height:auto;padding:32px 0">

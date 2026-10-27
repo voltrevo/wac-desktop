@@ -32,7 +32,7 @@ It is written in [wac](https://github.com/voltrevo/wac) and builds to a single `
   them open as nested levels. Things dropped together open together: a folder and a loose file, or
   several archives, become one "Dropped items" folder. Their files arrive one at a time with nothing marking the last, so the
   page gathers them until 600 ms pass with no more. This needs the `web` package's host to walk dropped
-  directories and pass each file's path, which `wac.lock` pins to a local wac commit (`f7ff0795`, on
+  directories and pass each file's path, which `wac.lock` pins to a local wac commit (`71bdb1fd`, on
   branch `web-folder-drops`) that is not on GitHub yet: `wac update` cannot fetch it from elsewhere.
 
 - **Listing is cheap and reading is lazy.** Opening a zip reads only its central directory, and an
