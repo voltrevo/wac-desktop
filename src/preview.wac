@@ -54,7 +54,6 @@ export Node preview(Model m, Page page, fn<void()> bump, fn<void(i32)> openNeste
   Entry e = l.archive.entries[i];
   string name = baseName(e.path);
   m.trying = "\{name} could not be decompressed: the archive is damaged";
-  m.tryingInLoop = false;
   Extracted x = bytesOf(l, i);
   m.trying = "";
   Kind k = kindOf(l, i);

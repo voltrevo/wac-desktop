@@ -106,3 +106,19 @@ export string test_a_single_file_after_a_folder_still_opens_alone() {
   if (!showing(h, "basic.zip") || !showing(h, "readme.txt")) { return "after a folder: \{page(h).slice(0, 300)}"; }
   return "";
 }
+
+export string test_files_dropped_together_open_together() {
+  Harness h = started();
+  // A folder and a loose file, dropped at once: the loose file tends to arrive first.
+  fileArrived(h.page, true, "notes.txt", "loose\n".toBytes(), "");
+  fileArrived(h.page, true, "proj/a.txt", "a".toBytes(), "");
+  settle(h);
+  if (!showing(h, "Dropped items") || !showing(h, "notes.txt") || !showing(h, "proj")) { return "together: \{page(h).slice(0, 300)}"; }
+  // Two archives at once are a folder of two archives.
+  Harness g = started();
+  fileArrived(g.page, true, "one.zip", zipBasic(), "");
+  fileArrived(g.page, true, "two.tgz", tarGz(), "");
+  settle(g);
+  if (!showing(g, "Dropped items") || !showing(g, "one.zip") || !showing(g, "two.tgz")) { return "two archives: \{page(g).slice(0, 300)}"; }
+  return "";
+}

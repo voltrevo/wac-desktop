@@ -51,12 +51,10 @@ export struct Model {
    * timer that finds this still set knows the work died rather than that it is still going.
    */
   string trying;
-  /** Whether what died was the loop that receives files, which then has to be started again. */
-  bool tryingInLoop;
 }
 
 export Model emptyModel() {
-  return Model(Vec.create(), "", 0, false, "", 256, 400, "", "", false, "", false);
+  return Model(Vec.create(), "", 0, false, "", 256, 400, "", "", false, "");
 }
 
 export Level top(Model m) { return m.levels.get(m.levels.len() - 1); }

@@ -20,13 +20,19 @@ import { Dir } from "./tree.wac";
  */
 static i32 QUIET = 600;
 
+/** How long a file on its own waits to see whether others were dropped with it. */
+static i32 GRACE = 200;
+
 /**
  * Each file dropped or picked, for as long as the page lives.
  *
- * **A file named with a `/` is from a folder**, and those are gathered — along with any loose file
- * dropped beside them — until a moment passes with no more, then opened together as one folder.
- * The next file is asked for only once the last has been dealt with, so a loop the watchdog has to
- * restart leaves no ticket behind to swallow the file after.
+ * **Files that arrive together open together.** A file named with a `/` is from a folder, and is
+ * gathered until a moment passes with no more; a file on its own waits a shorter moment, and if
+ * anything follows it — a folder dropped beside it, or more files — they all open as one folder.
+ *
+ * **This loop only gathers.** Opening can trap on a damaged file, and a loop that died while asking for
+ * the next file would leave its request first in the page's queue, to swallow whatever came next. So
+ * the opening is a task of its own, started and not awaited: when it dies, this goes on.
  */
 async void files(Page page, Model m, fn<void()> bump) {
   Vec<Picked> batch = Vec.create();
@@ -35,40 +41,41 @@ async void files(Page page, Model m, fn<void()> bump) {
     if (batch.len() == 0) {
       await next;
     } else {
-      Ticket<f64> quiet = page.sleep(QUIET);
+      bool alone = batch.len() == 1 && batch.get(0).name.indexOf("/") < 0;
+      Ticket<f64> quiet = page.sleep(alone ? GRACE : QUIET);
       await Ticket.any(next, quiet);
       if (!next.settled()) {
-        openBatch(page, m, batch);
+        Vec<Picked> done = batch;
         batch = Vec.create();
-        bump();
+        if (alone) { openOne(page, m, bump, done.get(0)); } else { openBatch(page, m, done); bump(); }
         continue;
       }
     }
     Picked f = next.value();
-    if (f.name.indexOf("/") >= 0 || batch.len() > 0) {
-      batch.push(f);
-      m.error = "";
-      m.busy = "Reading \{plural(batch.len(), "file")}…";
-      bump();
-      next = page.nextFile();
-      continue;
-    }
-    if (!f.ok) {
-      m.error = "\{f.name} could not be read: \{f.error}";
-    } else {
-      m.busy = "Opening \{f.name}…";
-      bump();
-      await page.painted();
-      m.trying = "\{f.name} could not be opened: its data is damaged or truncated";
-      m.tryingInLoop = true;
-      openRoot(m, f.name, f.bytes);
-      m.trying = "";
-      m.busy = "";
-      if (hasFile(m) && m.error == "") { page.title("\{f.name} — Archive Explorer"); }
-    }
-    bump();
     next = page.nextFile();
+    batch.push(f);
+    m.error = "";
+    bool loneSoFar = batch.len() == 1 && f.name.indexOf("/") < 0;
+    m.busy = loneSoFar ? "Opening \{f.name}…" : "Reading \{plural(batch.len(), "file")}…";
+    bump();
   }
+}
+
+/** One file on its own: an archive to open, or a file to show. */
+async void openOne(Page page, Model m, fn<void()> bump, Picked f) {
+  if (!f.ok) {
+    m.busy = "";
+    m.error = "\{f.name} could not be read: \{f.error}";
+    bump();
+    return;
+  }
+  await page.painted();
+  m.trying = "\{f.name} could not be opened: its data is damaged or truncated";
+  openRoot(m, f.name, f.bytes);
+  m.trying = "";
+  m.busy = "";
+  if (hasFile(m) && m.error == "") { page.title("\{f.name} — Archive Explorer"); }
+  bump();
 }
 
 /** A gathered folder, opened: what was read becomes the folder, and what was not is counted. */
@@ -98,7 +105,6 @@ async void nested(Page page, Model m, fn<void()> bump, i32 i) {
   await page.painted();
   m.error = "";
   m.trying = "\{top(m).archive.entries[i].path} could not be opened: its data is damaged";
-  m.tryingInLoop = false;
   openNested(m, i);
   m.trying = "";
   m.busy = "";
@@ -346,13 +352,12 @@ Node app(Ui ui, Page page) {
     return () => { };
   });
   // The watchdog: work that is still "in progress" when a timer gets to run has trapped. Say so, and
-  // render again — what trapped was a render, or the loop that receives files, which starts again.
+  // render again.
   ui.every(400, () => {
     if (m.trying == "") { return; }
     m.error = m.trying;
     m.trying = "";
     m.busy = "";
-    if (m.tryingInLoop) { m.tryingInLoop = false; files(page, m, bump); }
     bump();
   });
   // After a key moved the cursor, focus follows it — which also scrolls it into view.

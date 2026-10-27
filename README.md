@@ -29,9 +29,10 @@ It is written in [wac](https://github.com/voltrevo/wac) and builds to a single `
 ## How it behaves
 
 - **Folders** — dropped, or chosen with "Choose a folder" — open like an archive, and archives inside
-  them open as nested levels. Their files arrive one at a time with nothing marking the last, so the
+  them open as nested levels. Things dropped together open together: a folder and a loose file, or
+  several archives, become one "Dropped items" folder. Their files arrive one at a time with nothing marking the last, so the
   page gathers them until 600 ms pass with no more. This needs the `web` package's host to walk dropped
-  directories and pass each file's path, which `wac.lock` pins to a local wac commit (`704c0908`, on
+  directories and pass each file's path, which `wac.lock` pins to a local wac commit (`f7ff0795`, on
   branch `web-folder-drops`) that is not on GitHub yet: `wac update` cannot fetch it from elsewhere.
 
 - **Listing is cheap and reading is lazy.** Opening a zip reads only its central directory, and an
@@ -42,7 +43,8 @@ It is written in [wac](https://github.com/voltrevo/wac) and builds to a single `
 - **The filter searches everything below the current folder**, and shows where each match lives.
 - **Damaged archives:** the vendored decompressors `trap` on bad data, and wac cannot catch a trap. The
   page runs on one thread, so a timer that finds work still marked in progress knows it died; it shows
-  an error, records the entry as damaged, and restarts the file loop if that was what trapped.
+  an error and records the entry as damaged. The loop that receives files never opens anything itself,
+  so a trap cannot take it down.
 
 ## Not yet
 
