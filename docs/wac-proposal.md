@@ -4,10 +4,10 @@ The desktop is a tactical, DOM-only experiment, built in wac as an outside consu
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
 `Session`. This note lists what it needs from wac, most important first.
 
-**Status at the wac commit the project pins (2026-10-28):** items 1, 2, 3 and 4 are merged, and so is 7 —
-the terminal has `wac`. The project has no patches and no vendored code — it imports wac's packages as
+**Status at the wac commit the project pins (2026-10-28):** items 1 to 5 are merged, and so is 7 — the
+terminal has `wac`, and from a page opened as a file too. The project has no patches and no vendored code — it imports wac's packages as
 `import { json.parse } from "wac"`. From item 6, modifier keys in `prevent`, decoders that return errors,
-and the LICENSE are merged too. Item 5 is decision 3 of upstream design/system/0015, agreed and not built.
+and the LICENSE are merged too.
 Still open: the reader's time zone, reproducible names (`0368c`), `wac update`, and the box gaps.
 
 ## 1. Folder drops in `web` (merged)
@@ -83,7 +83,12 @@ grants. `spawn` would choose between the page copy and the generic worker by wha
 This probably overlaps with the more ambitious desktop in the wac repository, so it belongs in wac
 rather than in this project's patches.
 
-## 5. Spawn from the page, so `file://` gets processes
+## 5. Spawn from the page, so `file://` gets processes (merged)
+
+**Merged 2026-10-28** as design/system/0015 decision 3: the page's own thread starts every child, for whichever
+worker asks, and hands parent and child the two ends of a `MessageChannel`. The terminal no longer runs box's
+programs inside the shell's worker on `file://`, and `^C` stops a program that never yields. What follows is the
+request as it was written.
 
 A page opened from a file has an opaque origin. A worker there may not start workers of its own:
 *"Failed to construct 'Worker': Script at 'blob:null/…' cannot be accessed from origin 'null'"*.
@@ -152,7 +157,7 @@ The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has no
 | 2 | Growable instantiation table | `wacc` | merged (`63edaad6b`) |
 | 3 | `from "wac"` | repo root | merged (`lib.wac`); the project's `vendor/` is gone |
 | 4 | Run a given module (`spawn` bytes, `load`) | `web` host | merged (design/system/0015 steps 2 and 3) |
-| 5 | Spawn via the page on `file://` | `web` host | agreed upstream (0015 decision 3), not built |
+| 5 | Spawn via the page on `file://` | `web` host | merged (0015 decision 3) |
 | 6 | Modifier keys in `prevent` | `web` | merged; used for Ctrl+S, Ctrl+L, Ctrl+A |
 | 6 | Decoders return errors | `gzip`, `zstd` | merged; used |
 | 6 | LICENSE | repo root | merged (MIT) |

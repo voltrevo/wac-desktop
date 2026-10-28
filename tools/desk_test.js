@@ -258,14 +258,30 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   let mem = await qrun('ls; echo in memory > mem.txt; cat mem.txt | wc -c');
   check(mem.includes('Welcome.md') && mem.includes('demo.zip') && /\n10\n?$/.test(mem), 'from file:// the shell runs on the same in-memory disk', mem.slice(-80));
   check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).includes('mem.txt'), 'and what it writes appears on the desktop', null);
-  // A page from a file may not start workers from its workers, so `wac` cannot run here — and says so, with the
-  // terminal still alive after it.
-  await q.locator('.win.focus .tcmd').fill('wac help; echo after $?'); await q.locator('.win.focus .tcmd').press('Enter');
-  await q.waitForFunction(() => /after \d+/.test(document.querySelector('.win.focus .tout')?.textContent ?? ''), null, { timeout: 30000 }).catch(() => {});
-  await q.waitForTimeout(500);
+  // From a file too, programs are processes — the page's own thread starts them — so `wac` runs, and ^C stops a
+  // program that never ends.
+  const qUntil = async (line, want, ms) => {
+    await q.locator('.win.focus .tcmd').fill(line); await q.locator('.win.focus .tcmd').press('Enter');
+    const end = Date.now() + ms;
+    let seen = '';
+    while (Date.now() < end) {
+      seen = await q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
+      if (want.test(seen)) break;
+      await q.waitForTimeout(250);
+    }
+    return seen;
+  };
+  mem = await qUntil("printf 'export i32 main() { return 4; }\\n' > four.wac; wac check four.wac", /four\.wac: \d+ file/, 60000);
+  check(mem.includes('four.wac: 1 file(s), no diagnostics'), 'from file://, wac runs in the terminal', mem.slice(-160));
+  mem = await qUntil("printf '%s\\n' 'export i32 main() {' '  i32 n = 0;' '  while (true) { n = n + 1; }' '  return n;' '}' > spin.wac; wac build spin.wac -o spin", /spin\.wasm: \d+ bytes/, 60000);
+  // A loop that never asks anything: only ending its worker stops it.
+  await q.locator('.win.focus .tcmd').fill('./spin.wasm'); await q.locator('.win.focus .tcmd').press('Enter');
+  await q.waitForTimeout(1500);
   mem = await q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
-  check(mem.includes('sh: wac: a page opened from a file cannot start a program from a worker') && mem.includes('after 126'),
-        'from file://, wac says it cannot start, and the terminal carries on', mem.slice(-200));
+  check(/\$ \.\/spin\.wasm\n?$/.test(mem), 'from file://, a program wac built runs as a process', mem.slice(-160));
+  await q.locator('.win.focus .tcmd').press('Control+c');
+  mem = await qUntil('echo back after the stop', /\nback after the stop\n?$/, 15000);
+  check(/\nback after the stop\n?$/.test(mem), 'and ^C stops a program that never yields', mem.slice(-160));
   await q.locator('.tbwin', { hasText: 'demo.zip' }).click(); await q.waitForTimeout(300);
   await q.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await q.waitForTimeout(300);
   check(!(await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'a slow press on Close closes', null);

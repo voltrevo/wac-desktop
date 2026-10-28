@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned to one wac commit,
-[`001db0fc`](https://github.com/voltrevo/wac/commit/001db0fc5825f87b9da89605b16823fa00fe3ab5).** The `wac`
+[`563d8828`](https://github.com/voltrevo/wac/commit/563d8828c36a5fd49fcb17346c5bf370188233c1).** The `wac`
 command should be built from that commit, and `wac.json5` names it as the `ref` of every wac dependency —
 `wac` itself (its packages, as `import { json.parse } from "wac"`), `web` and `webbuild` — with `wac.lock`
 agreeing. To change it, change all three refs and the lock together, and rebuild `wac` from the new
@@ -25,7 +25,7 @@ git clone https://github.com/voltrevo/wac ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout 001db0fc5825f87b9da89605b16823fa00fe3ab5
+git -C ~/src/wac checkout 563d8828c36a5fd49fcb17346c5bf370188233c1
 ```
 
 ```bash
@@ -58,9 +58,9 @@ the browser's Origin Private File System, and the taskbar says *Saved in this br
 window layout come back after a reload.
 
 **Opened from a file** (`file://`), the browser refuses it that storage outright, so the same desktop runs
-on memory and says *Not saved*: everything works, and nothing outlives the tab. One difference: a page
-from a file may not start workers from its workers, so the terminal runs programs inside the shell's own
-worker rather than as processes of their own — they run the same, but `^C` cannot stop one that loops.
+on memory and says *Not saved*: everything works, and nothing outlives the tab. Programs are processes
+there too: a page from a file may not start workers from its workers, but wac's page has its own thread start
+every one, so `wac` runs and `^C` stops a program that loops.
 
 On GitHub Pages, storage belongs to the origin — `you.github.io` — which every project site of that account
 shares, so their pages can see each other's files.
@@ -99,8 +99,7 @@ shares, so their pages can see each other's files.
 - **`wac` is in the terminal too**, in `/usr/bin`: `wac check`, `build`, `run` and `test` work on the desktop's
   disk, and a program `wac build` writes runs by its path (`./hello.wasm`). It is the `wac` command itself,
   built from the commit the project pins, and runs as any program on the disk would — the page starts the
-  module in a worker of its own. Not from a page opened as a file, which may not start workers from its
-  workers; there it says so.
+  module in a worker of its own — from a page opened as a file too.
 - **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 

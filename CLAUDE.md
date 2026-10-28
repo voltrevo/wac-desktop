@@ -23,13 +23,13 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `001db0fc`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
+wac is pinned to one commit, `563d8828`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
 `wac` command itself (bootstrapped from that commit — see README). Change them together.
 
     wac task build && wac task test && wac task test:desk && wac task test:drops
 
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (36 unit tests, 67 desktop checks, 18 drop cases). The build also
+  All of them pass at the latest commit (36 unit tests, 69 desktop checks, 18 drop cases). The build also
   compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time.
 - `wac update` could not reach GitHub from the container this was made in ("network access not
   granted"). `sh tools/use-local-wac.sh <wac clone>` fills the package cache from a clone instead.
@@ -59,9 +59,8 @@ wac is pinned to one commit, `001db0fc`, everywhere: the three refs in `wac.json
 
 ## Open threads
 
-- `docs/wac-proposal.md`: what is still wanted from wac — chiefly spawning on `file://` (upstream
-  design/system/0015 decision 3, agreed and not built). Until then neither box's programs as processes
-  nor `wac` run from a page opened as a file.
+- `docs/wac-proposal.md`: what is still wanted from wac — the reader's time zone, reproducible names, and
+  the box gaps. Everything the desktop asked of design/system/0015 is built, `file://` included.
 - **`wac` in the terminal** runs programs that import `std` and `core`. One importing a git dependency
   needs that dependency in a package cache on the page's disk, which nothing provides yet.
 - **Shelved by the owner:** building apps as separate modules. The direction discussed was a process

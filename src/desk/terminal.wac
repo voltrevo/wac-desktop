@@ -133,10 +133,6 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
     Session s = Session.startOn(page.sys, d.fs.fs, d.fs.table, "sh");
     s.sh.cwd = w.arg == "" ? "/" : "/" + w.arg;
     s.sh.setVar("WACPATH", WACPATH());
-    // A page opened from a file has an opaque origin, and a worker there may not start workers of its
-    // own: box's programs then run inside the shell's worker instead of as processes of their own. They
-    // still run; what is lost is `^C` for one that runs long, since nothing else runs while it does.
-    if (!d.fs.persistent) { s.sh.externalSpawnable = false; }
     s.say("wac's shell, on this desktop's disk. Try ls, cat, grep, find or sha256sum; help lists the rest.\nopen <file> shows a file in a window.\n\n");
     return Term(s, Vec.create());
   });
