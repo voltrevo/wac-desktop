@@ -1,7 +1,7 @@
 From 71bdb1fdce3f6bf3c0ba851f9f441784d96da0fb Mon Sep 17 00:00:00 2001
 From: Andrew Morris <andrew.morris@ethereum.org>
 Date: Tue, 27 Oct 2026 23:43:24 +0000
-Subject: [PATCH 3/4] web: fall back from a refused handle to the entry API;
+Subject: [PATCH 3/5] web: fall back from a refused handle to the entry API;
  say when a dropped folder cannot be listed
 
 A handle the browser refuses (as in a sandboxed frame) now falls back to the drop's

@@ -9,8 +9,8 @@
 
 import { Buf, Vec } from "core";
 import { Vfs } from "./vfs.wac";
-import { JsonValue } from "../../vendor/json/src/value.wac";
-import { parse } from "../../vendor/json/src/json.wac";
+import { JsonValue } from "../../vendor/wac/packages/json/src/value.wac";
+import { parse } from "../../vendor/wac/packages/json/src/json.wac";
 
 export struct Win {
   i32 id;
@@ -93,7 +93,7 @@ export Win? find(Desk d, i32 id) {
 export Win open(Desk d, string app, string arg, string title, string icon) {
   for (i32 i = 0; i < d.wins.len(); i++) {
     Win w = d.wins.get(i);
-    if (w.app == app && w.arg == arg && app != "files") { focus(d, w.id); return w; }
+    if (w.app == app && w.arg == arg && app != "files" && app != "terminal") { focus(d, w.id); return w; }
   }
   // Each new window steps down and right from the last, and wraps before it walks off a laptop screen.
   i32 n = d.wins.len() % 8;

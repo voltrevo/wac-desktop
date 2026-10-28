@@ -1,0 +1,92 @@
+// GHASH — the universal hash under AES-GCM (NIST SP 800-38D §6.4).
+//
+// Arithmetic in GF(2^128) modulo x^128 + x^7 + x^2 + x + 1, in the bit order the
+// standard uses: the *most* significant bit of the first byte is the coefficient
+// of x^0. That reversal is why the reduction constant appears as 0xE1... at the
+// top of the high word rather than 0x87 at the bottom of the low word, and it is
+// the single easiest thing to get backwards here.
+//
+// A 128-bit value is two u64s, big-endian: v[0] is the first eight bytes.
+
+import { beWord64, storeBE64 } from "./layout.wac";
+
+/** All ones, which a 0/1 bit multiplies up to. The mask, without a subtraction that has to wrap. */
+static u64 ALL_ONES = 0xFFFFFFFFFFFFFFFF;
+
+/**
+ * z = x * y in GF(2^128).
+ *
+ * Shift-and-add over the 128 bits of x, most significant first — **adding on every bit and masking
+ * the addend**, and reducing on every step with the constant masked by the bit that fell off.
+ *
+ * It branched on both until 2026-08-20, and this file's own header called that out as "exactly what a
+ * table-driven or carry-less-multiply implementation exists to remove" — which is true of the *cost*
+ * and was the wrong reason to leave it. `ghash(h, data)` calls this with `y` as H, the GCM
+ * authentication key, and `x` as the accumulator, which is a function of H. So both branches leaked
+ * H, and **a leaked GHASH key is tag forgery** rather than a read of the plaintext: an attacker who
+ * knows H can authenticate a message they wrote. `packages/crypto/tools/ct.wac` put the first
+ * divergence between two H values at the reduction's `if`.
+ *
+ * The mask is `bit * ALL_ONES` rather than `0 - bit`: `bit` is 0 or 1, wac's `>>` on `u64` is logical
+ * so there is no sign to extend, and a multiply says what it means without relying on unsigned
+ * subtraction wrapping.
+ *
+ * This does not make AES-GCM constant-time — `aes.wac` indexes its S-box with key-derived bytes and
+ * says so — but it removes one of the two, and it lets the tracer see past a point it used to stop
+ * at.
+ */
+void gfMul(u64[] x, u64[] y, u64[] z) {
+  u64 vhi = y[0];
+  u64 vlo = y[1];
+  u64 zhi = 0;
+  u64 zlo = 0;
+
+  for (i32 i = 0; i < 128; i++) {
+    u64 bit = 0;
+    if (i < 64) { bit = (x[0] >> ((63 - i) as! u64)) & 1; }
+    else        { bit = (x[1] >> ((127 - i) as! u64)) & 1; }
+    u64 addMask = bit * ALL_ONES;
+    zhi ^= vhi & addMask;
+    zlo ^= vlo & addMask;
+
+    // V >>= 1 across both words, then reduce — always, with the constant masked by the bit that
+    // fell off the bottom.
+    u64 lsb = vlo & 1;
+    vlo = (vlo >> 1) | (vhi << 63);
+    vhi = vhi >> 1;
+    vhi ^= 0xE100000000000000 & (lsb * ALL_ONES);
+  }
+
+  z[0] = zhi;
+  z[1] = zlo;
+}
+
+/**
+ * GHASH_H(data), 16 bytes. `data` must be a whole number of blocks — GCM pads
+ * its inputs itself, and silently zero-filling here would hide a caller's bug.
+ */
+export u8[] ghash(u8[] h, u8[] data) {
+  if (h.len() != 16) { trap; }
+  if (data.len() % 16 != 0) { trap; }
+
+  u64[] hv = [beWord64(h, 0), beWord64(h, 8)];
+  u64[] y = [0, 0];
+  u64[] blk = u64[].filled(2, 0);
+  u64[] tmp = u64[].filled(2, 0);
+
+  i32 n = data.len();
+  for (i32 pos = 0; pos < n; pos += 16) {
+    blk[0] = beWord64(data, pos);
+    blk[1] = beWord64(data, pos + 8);
+    y[0] ^= blk[0];
+    y[1] ^= blk[1];
+    gfMul(y, hv, tmp);
+    y[0] = tmp[0];
+    y[1] = tmp[1];
+  }
+
+  u8[] out = u8[].filled(16, 0);
+  storeBE64(y[0], out, 0);
+  storeBE64(y[1], out, 8);
+  return out;
+}

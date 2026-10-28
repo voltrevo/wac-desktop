@@ -1,0 +1,182 @@
+// Terminal: wac's own shell, in a window, on the desktop's disk.
+//
+// **The shell is box's `Session`** — `packages/sh` with box's sixty-odd programs, `/bin`, `/proc` and
+// `/dev`, history and scrollback — and it imports no page, so a window is only its presentation: the
+// screen, a prompt and the line being typed. It runs over the desktop's own `Fs`, which is the same disk
+// Files shows, so `ls /Desktop` lists the desktop and `echo hi > /Desktop/x` puts an icon on it. Every
+// terminal is `Session.startOn` that one `Fs`: one system, many shells, one process table.
+//
+// The window keeps scrolled to the bottom without being told to — a page cannot set `scrollTop` — by
+// stacking its contents from the bottom up (`column-reverse`), which a browser keeps pinned to the end.
+//
+// Adapted from wac's `packages/box/example/desk.wac`: a line runs as a task of its own, so the window
+// keeps typing while it runs; what is typed meanwhile waits its turn; `^C` stops it; and while it runs the
+// window redraws on a timer, so output appears as it arrives.
+
+import { Vec } from "core";
+import { ElementEvent, MOD_CTRL, Node, Page, Ref, State, Ui, html.div, html.input, html.pre, html.span } from "web";
+import { Session } from "../../vendor/wac/packages/box/src/lib/session.wac";
+import { Desk, Win, close } from "./wm.wac";
+import { Got, Info, join, leafOf, parentOf } from "./vfs.wac";
+import { openPath } from "./files.wac";
+
+/** How often a terminal with a command running is redrawn, in milliseconds. */
+static i32 REDRAW_MS = 100;
+
+/** What a terminal window holds between renders. */
+struct Term {
+  Session s;
+  /** Lines typed while a command ran, to run after it, as a terminal keeps them. */
+  Vec<string> ahead;
+}
+
+/** A path as the shell means it, resolved against its working directory: absolute, `.` and `..` gone. */
+string absolute(string cwd, string p) {
+  string all = p.len() > 0 && p[0] == "/" ? p : (cwd == "/" ? "/" + p : cwd + "/" + p);
+  Vec<string> parts = Vec.create();
+  u8[] b = all.toBytes();
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '/') {
+      string part = all.slice(start, i);
+      if (part == "..") { parts.pop(); } else if (part != "." && part != "") { parts.push(part); }
+      start = i + 1;
+    }
+  }
+  string out = "";
+  for (i32 i = 0; i < parts.len(); i++) { out = out + "/" + parts.get(i); }
+  return out == "" ? "/" : out;
+}
+
+/** The desktop's own command: `open [path]` shows a file or folder in a window, as a double-click does. */
+async bool openCommand(Desk d, Term t, string line) {
+  string arg = line.len() > 4 ? line.slice(5, line.len()) : "";
+  while (arg.len() > 0 && arg[0] == " ") { arg = arg.slice(1, arg.len()); }
+  if (arg.len() > 1 && (arg[0] == "\"" || arg[0] == "'") && arg.slice(arg.len() - 1, arg.len()) == arg[0]) {
+    arg = arg.slice(1, arg.len() - 1);
+  }
+  string path = absolute(t.s.sh.cwd, arg == "" ? "." : arg);
+  string rel = path == "/" ? "" : path.slice(1, path.len());
+  t.s.say("\{t.s.prompt()} \{line}\n");
+  Got<Info> st = await d.fs.stat(rel);
+  if (!st.ok) { t.s.say("open: \{arg}: no such file or folder\n[exit 1]\n"); return false; }
+  openPath(d, rel, st.value.isDir);
+  return true;
+}
+
+/** Run `line`, then whatever was typed while it ran, in order. */
+async void run(Desk d, Win w, Term t, string line, State<bool> busy, fn<void()> bumpDesk) {
+  busy.set(true);
+  string next = line;
+  while (true) {
+    string trimmed = next;
+    while (trimmed.len() > 0 && trimmed[0] == " ") { trimmed = trimmed.slice(1, trimmed.len()); }
+    if (trimmed == "open" || (trimmed.len() > 5 && trimmed.slice(0, 5) == "open ")) {
+      await openCommand(d, t, trimmed);
+    } else {
+      await t.s.feedLine(next);
+    }
+    if (t.s.over() || t.ahead.len() == 0) { break; }
+    next = t.ahead.remove(0);
+  }
+  busy.set(false);
+  // A command may have changed the disk: every window showing it looks again.
+  d.fsRev++;
+  if (t.s.over()) { close(d, w.id); }
+  bumpDesk();
+}
+
+/** Complete the last word of `draft` as a path, as far as the names that start with it agree. */
+async void complete(Desk d, Term t, State<string> draft) {
+  string line = draft.get();
+  i32 cut = line.len();
+  while (cut > 0 && line.slice(cut - 1, cut) != " ") { cut--; }
+  string word = line.slice(cut, line.len());
+  i32 slash = -1;
+  u8[] b = word.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { slash = i; break; } }
+  string dirPart = slash >= 0 ? word.slice(0, slash + 1) : "";
+  string prefix = slash >= 0 ? word.slice(slash + 1, word.len()) : word;
+  string dir = absolute(t.s.sh.cwd, dirPart == "" ? "." : dirPart);
+  Got<string[]> names = await d.fs.list(dir == "/" ? "" : dir.slice(1, dir.len()));
+  if (!names.ok) { return; }
+  Vec<string> hits = Vec.create();
+  for (i32 i = 0; i < names.value.len(); i++) {
+    string n = names.value[i];
+    if (n.len() >= prefix.len() && n.slice(0, prefix.len()) == prefix) { hits.push(n); }
+  }
+  if (hits.len() == 0) { return; }
+  string common = hits.get(0);
+  for (i32 i = 1; i < hits.len(); i++) {
+    string h = hits.get(i);
+    i32 k = 0;
+    while (k < common.len() && k < h.len() && common.slice(k, k + 1) == h.slice(k, k + 1)) { k++; }
+    common = common.slice(0, k);
+  }
+  string done = common;
+  if (hits.len() == 1) {
+    Got<Info> st = await d.fs.stat(join(dir == "/" ? "" : dir.slice(1, dir.len()), common));
+    done = st.ok && st.value.isDir ? common + "/" : common + " ";
+  } else if (common == prefix) {
+    // Nothing more they agree on: show the choices, as a shell does on a second Tab.
+    string listed = "";
+    for (i32 i = 0; i < hits.len(); i++) { listed = listed + hits.get(i) + "  "; }
+    t.s.say("\{t.s.prompt()} \{line}\n\{listed}\n");
+  }
+  draft.set(line.slice(0, cut) + dirPart + done);
+}
+
+/** A terminal window's contents. */
+export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  Term t = ui.memo<Term>("", () => {
+    Session s = Session.startOn(page.sys.core, page.sys.cli, d.fs.fs, "sh");
+    s.sh.cwd = w.arg == "" ? "/" : "/" + w.arg;
+    // A page opened from a file has an opaque origin, and a worker there may not start workers of its
+    // own: box's programs then run inside the shell's worker instead of as processes of their own. They
+    // still run; what is lost is `^C` for one that runs long, since nothing else runs while it does.
+    if (!d.fs.persistent) { s.sh.externalSpawnable = false; }
+    s.say("wac's shell, on this desktop's disk. Try ls, cat, grep, find or sha256sum; help lists the rest.\nopen <file> shows a file in a window.\n\n");
+    return Term(s, Vec.create());
+  });
+  auto draft = ui.state("");
+  auto busy = ui.state(false);
+  auto tick = ui.state(0);
+  Ref field = ui.ref();
+  ui.effect(busy.get() ? "running" : "idle", () => {
+    if (!busy.get()) { return () => { }; }
+    return ui.every(REDRAW_MS, () => { tick.update((i32 n) => n + 1); });
+  });
+  // The window's folder is where the shell is, so a reload opens it there again.
+  string here = t.s.sh.cwd == "/" ? "" : t.s.sh.cwd.slice(1, t.s.sh.cwd.len());
+  if (!busy.get() && w.arg != here) { w.arg = here; d.dirty = true; }
+  fn<void()> focusField = () => { if (field.element() is not null) { field.element()!.focus(); } };
+  ui.effect("", () => { focusField(); return () => { }; });
+  return <div class="term" onclick={(ElementEvent e) => { focusField(); }}>
+    <div class="tscroll">
+      <div class="tinner mono">
+        <pre class="tout">{t.s.showing()}</pre>
+        <div class="tline">
+          <span class="tps">{busy.get() ? "" : t.s.prompt()}</span>
+          <input class="tcmd mono" ref={field} autocomplete="off" spellcheck="false" value={draft.get()}
+                 prevent="Tab ArrowUp ArrowDown"
+                 oninput={(ElementEvent e) => { draft.set(e.value); }}
+                 onkeydown={(ElementEvent e) => {
+                   bool intr = (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C");
+                   if (busy.get()) {
+                     if (intr) { t.s.stop(); while (t.ahead.len() > 0) { t.ahead.pop(); } }
+                     else if (e.value == "Enter") { t.ahead.push(draft.get()); draft.set(""); }
+                     return;
+                   }
+                   if (e.value == "ArrowUp" || e.value == "ArrowDown") { draft.set(t.s.recall(e.value == "ArrowUp")); return; }
+                   if (e.value == "Tab") { complete(d, t, draft); return; }
+                   if (intr) { t.s.interrupt(draft.get()); draft.set(""); return; }
+                   if (e.value != "Enter") { return; }
+                   string line = draft.get();
+                   draft.set("");
+                   run(d, w, t, line, busy, bumpDesk);
+                 }}/>
+        </div>
+      </div>
+    </div>
+  </div>;
+}

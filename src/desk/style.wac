@@ -92,8 +92,8 @@ export string deskCss() {
               background: var(--surface); color: var(--text); outline: 0; min-width: 0; width: 100%; }
     .viewer { display: flex; flex-direction: column; height: 100%; }
     .viewer > .pane.preview { flex: 1; min-height: 0; }
-    /* The window's title already names the file: its preview keeps only what it is, and the download. */
-    .viewer .phead { padding: 8px 14px; } .viewer .phead .tile, .viewer .phead .nm { display: none; }
+    /* The window's title names the file and the toolbar says what it is: the preview's own header goes. */
+    .viewer .phead { display: none; }
     .editor { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
     .etools { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     .etools .btn { height: 30px; font-size: 12.5px; padding: 0 10px; }
@@ -104,6 +104,17 @@ export string deskCss() {
     .estate.dirty { color: var(--warn); font-weight: 600; }
     .etext { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: 0; padding: 16px 18px; background: var(--surface);
              color: var(--text); font-size: 13px; line-height: 1.6; tab-size: 4; }
+    /* ── terminal ── */
+    .term { height: 100%; display: flex; flex-direction: column; background: #12131a; color: #e3e6ef; cursor: text; }
+    /* Stacked from the bottom up, so the browser keeps the newest output in view without being told. */
+    .tscroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column-reverse; padding: 12px 14px 10px; }
+    .tinner { font-size: 13px; line-height: 1.5; }
+    .tout { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    .tline { display: flex; align-items: baseline; gap: 8px; }
+    .tps { color: #8d88ff; font-weight: 600; white-space: nowrap; }
+    .tcmd { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0; background: transparent; color: #f2f4fa; font-size: 13px; line-height: 1.5; caret-color: #8d88ff; }
+    .c-terminal { color: var(--text); }
+
     @container (max-width: 640px) {
       .files .main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
       .files .pane.list { border-right: 0; border-bottom: 1px solid var(--line); }

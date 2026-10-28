@@ -2,8 +2,9 @@
 
 import { ElementEvent, Node, Page, Ui, html.button, html.div, html.input, html.span, html.textarea } from "web";
 import { Got, join, leafOf, parentOf, freeName } from "./vfs.wac";
-import { Desk, Win } from "./wm.wac";
-import { Model, emptyModel, hasFile, openRoot } from "../model.wac";
+import { Desk, Win, open } from "./wm.wac";
+import { Model, Level, emptyModel, hasFile, iconFor, kindOf, openRoot, top } from "../model.wac";
+import { Kind, kindLabel } from "../sniff.wac";
 import { icon, preview } from "../preview.wac";
 import { sizeOf } from "../bytes.wac";
 
@@ -44,7 +45,18 @@ export Node ViewerApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 
   if (s.error != "") { return <div class="placeholder"><div>{icon("alert", "")}<div>{s.error}</div></div></div>; }
   Model? m = s.m;
   if ((m is null) || !hasFile(m!)) { return <div class="placeholder"><div>Loading…</div></div>; }
-  return <div class="viewer">{preview(m!, page, bump, (i32 i) => { })}</div>;
+  Level l = top(m!);
+  string name = leafOf(w.arg);
+  Kind k = kindOf(l, 0);
+  bool text = match (k) { Text: true, default: false };
+  return <div class="viewer">
+    <div class="etools">
+      <span class="epath" title={w.arg}>{kindLabel(k, name)} · {sizeOf(l.archive.entries[0].size)}</span>
+      {text ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { open(d, "editor", w.arg, name, "edit"); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button> : Node.Text("")}
+      <button class="btn" title="Download a copy" onclick={(ElementEvent e) => { page.download(name, l.archive.data); }}>{icon("download", "sm")}<span class="label">Download</span></button>
+    </div>
+    {preview(m!, page, bump, (i32 i) => { })}
+  </div>;
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────

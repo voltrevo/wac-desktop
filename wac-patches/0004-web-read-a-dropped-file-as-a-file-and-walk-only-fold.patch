@@ -1,7 +1,7 @@
 From 0597a1e538287905fdc20412df699298a66ebf39 Mon Sep 17 00:00:00 2001
 From: Andrew Morris <andrew.morris@ethereum.org>
 Date: Wed, 28 Oct 2026 00:13:52 +0000
-Subject: [PATCH 4/4] web: read a dropped file as a file, and walk only folders
+Subject: [PATCH 4/5] web: read a dropped file as a file, and walk only folders
 
 Every dropped item went through the entry API, and some browsers (Brave, Firefox,
 Safari: those without FileSystemHandle) cannot read even a lone file that way on a

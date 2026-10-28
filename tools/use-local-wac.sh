@@ -11,7 +11,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 repo=${1:?usage: use-local-wac.sh <path to a clone of voltrevo/wac>}
 commit=$(sed -n 's/.*"commit": "\([0-9a-f]\{40\}\)".*/\1/p' "$root/wac.lock" | head -n 1)
 [ -n "$commit" ] || { echo "use-local-wac.sh: no commit in wac.lock" >&2; exit 1; }
-git -C "$repo" fetch -q "$root/wac-patches/web-folder-drops.git.bundle" "web-folder-drops:web-folder-drops"
+git -C "$repo" fetch -q "$root/wac-patches/wac-desktop.git.bundle" "+wac-desktop:refs/wac-patches/wac-desktop"
 git -C "$repo" cat-file -e "$commit^{commit}" || { echo "use-local-wac.sh: $commit is not in the bundle" >&2; exit 1; }
 dest="${WAC_HOME:-$HOME/.wac}/cache/git/https%3A%2F%2Fgithub.com%2Fvoltrevo%2Fwac/$commit"
 if [ ! -f "$dest/pack.pack" ]; then

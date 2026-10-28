@@ -15,7 +15,7 @@ import { Dir, Tree, buildTree, nameOf } from "./tree.wac";
 import { baseName, extOf, lower, percentKept, sortBy } from "./bytes.wac";
 import { Map, hashString, stringEq } from "core";
 import { Node } from "web";
-import { JsonValue } from "../vendor/json/src/value.wac";
+import { JsonValue } from "../vendor/wac/packages/json/src/value.wac";
 import { Folding } from "./jsonview.wac";
 
 /**

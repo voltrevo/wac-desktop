@@ -7,11 +7,14 @@
 
 import { Ticket, Vec } from "core";
 import { ElementEvent, Node, Page, Picked, Ui, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
-import { Vfs, Got, Info, cliVfs, freeName, join, leafOf, memoryVfs, parentOf, usable } from "./vfs.wac";
+import { Vfs, Got, Info, filesystem, freeName, join, leafOf, parentOf, usable, vfsOf } from "./vfs.wac";
+import { Fs, mountSystem } from "../../vendor/wac/packages/fs/src/fs.wac";
+import { boxNames } from "../../vendor/wac/packages/box/src/shrun.wac";
 import { Desk, Drag, Win, SESSION, close, endDrag, find, focus, dragTo, hintRight, minimise, newDesk, open, restore,
          sessionOf, startMove, startResize, taskbarClick, toggleMax } from "./wm.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
 import { EditorApp, ViewerApp } from "./apps.wac";
+import { TerminalApp } from "./terminal.wac";
 import { deskCss } from "./style.wac";
 import { demoZip, welcomeMd } from "./seed.wac";
 import { css } from "../style.wac";
@@ -26,7 +29,14 @@ static i32 GRACE = 200;
 
 /** Choose the disk, give a new one something to start with, and bring the last session back. */
 async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
-  if (await usable(page.sys.cli)) { d.fs = cliVfs(page.sys.cli); }
+  // One filesystem for every window: the browser's storage if it is offered, memory if not, with the
+  // system a shell expects mounted on it — `/bin` with box's programs, `/dev`, `/proc`.
+  bool persistent = await usable(page.sys.cli);
+  Fs system = filesystem(page.sys.cli, persistent, page.sys.core.nowMillis().wait());
+  Vec<string> argv = Vec.create();
+  argv.push("desktop");
+  mountSystem(system, page.sys.core.randomBytes, argv, Vec.fromArray(boxNames()));
+  d.fs = vfsOf(system, persistent);
   Vfs fs = d.fs;
   await fs.mkdir("Desktop");
   Got<u8[]> saved = await fs.read(SESSION);
@@ -179,6 +189,7 @@ Node DesktopIcons(Ui ui, Desk d, fn<void()> bumpDesk, i32 fsRev) {
 
 Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
   if (w.app == "files") { return <FilesApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
+  if (w.app == "terminal") { return <TerminalApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "editor") { return <EditorApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   return <ViewerApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>;
 }
@@ -230,6 +241,7 @@ Node launcher(Desk d, fn<void()> bump) {
     <div class="lhead">Apps</div>
     {launcherItem("home", "Files", "Your home folder", () => { open(d, "files", "", "Home", "home"); bump(); })}
     {launcherItem("folder", "Desktop", "The files on your desktop", () => { open(d, "files", "Desktop", "Desktop", "folder"); bump(); })}
+    {launcherItem("terminal", "Terminal", "A shell on this desktop's disk", () => { open(d, "terminal", "Desktop", "Terminal", "terminal"); bump(); })}
     {launcherItem("edit", "Text editor", "A new text file", () => { open(d, "editor", "", "Untitled", "edit"); bump(); })}
     {launcherItem("text", "Welcome", "What this is, and what to try", () => { open(d, "viewer", "Desktop/Welcome.md", "Welcome.md", "text"); bump(); })}
     <div class="lfoot">{d.fs.persistent ? "Files are kept in this browser." : "Opened from a file: nothing is kept after the tab closes."}</div>
@@ -277,7 +289,8 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump) {
 // ── the desktop ─────────────────────────────────────────────────────────────
 
 export Node Desktop(Ui ui, Page page) {
-  Desk d = ui.memo<Desk>("", () => newDesk(memoryVfs(() => page.sys.core.nowMillis().wait())));
+  // A disk to stand on until `start` has chosen the real one, a moment later.
+  Desk d = ui.memo<Desk>("", () => newDesk(vfsOf(Fs.inMemory(0), false)));
   auto version = ui.state(0);
   auto ready = ui.state(false);
   fn<void()> bump = () => { version.update((i32 v) => v + 1); };

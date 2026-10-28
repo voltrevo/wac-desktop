@@ -74,6 +74,26 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(200);
   check((await p.textContent('.win.focus .tt')) === 'Makefile', 'and the taskbar brings it back', await p.textContent('.win.focus .tt'));
 
+  // A terminal in the Files window's folder: the same disk, seen from the shell.
+  await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(300);
+  await p.locator('.win.focus .ftop button', { hasText: 'Terminal' }).click(); await settle(800);
+  const run = async (line, wait = 1500) => { await p.locator('.win.focus .tcmd').fill(line); await p.locator('.win.focus .tcmd').press('Enter'); await settle(wait); return p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => ''); };
+  let out = await run('pwd');
+  check(out.trim().endsWith('/Desktop/demo/wordcount'), 'a terminal opened from Files starts in its folder', out.trim().split('\n').pop());
+  out = await run('cat Makefile');
+  check(out.includes('# edited\nall: wordcount'), 'and sees what the Editor saved', out.slice(-80));
+  out = await run('grep -c word src/main.c; seq 1 100 | wc -l');
+  check(/\n4\n100\n?$/.test(out.replace(/\/Desktop[^$]*\$ [^\n]*\n/g, '\n').replace(/\n+/g, '\n') + ''), 'box programs and pipes run', out.slice(-60));
+  await run('echo made by the shell > shell.txt');
+  await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(800);
+  check((await texts('.win.focus .row .t')).includes('shell.txt'), 'and what the shell writes appears in Files', await texts('.win.focus .row .t'));
+  await p.locator('.tbwin', { hasText: 'Terminal' }).click(); await settle(300);
+  await run('open README.md', 1200);
+  check((await texts('.win .tt')).includes('README.md'), '`open` shows a file in a window', await texts('.win .tt'));
+  check(!!(await p.$('.win.focus .md')), 'a Markdown file opens rendered, in the Viewer', null);
+  await p.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await settle(300);
+  await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(300);
+
   // The window's own buttons, pressed at a person's speed: a press on a title bar must not become a drag
   // that swallows the click (it did — Playwright's instant clicks hid it).
   const press = (title) => p.locator(`.win.focus .wbtn[title=${title}]`).click({ delay: 150 });
@@ -124,6 +144,13 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await q.waitForTimeout(1200);
   check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);
 
+  // The shell on the in-memory disk: the same files Files shows, and its programs still run.
+  await q.locator('.tblaunch').click(); await q.locator('.litem', { hasText: 'Terminal' }).click(); await q.waitForTimeout(800);
+  const qrun = async (line) => { await q.locator('.win.focus .tcmd').fill(line); await q.locator('.win.focus .tcmd').press('Enter'); await q.waitForTimeout(1500); return q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => ''); };
+  let mem = await qrun('ls; echo in memory > mem.txt; cat mem.txt | wc -c');
+  check(mem.includes('Welcome.md') && mem.includes('demo.zip') && /\n10\n?$/.test(mem), 'from file:// the shell runs on the same in-memory disk', mem.slice(-80));
+  check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).includes('mem.txt'), 'and what it writes appears on the desktop', null);
+  await q.locator('.tbwin', { hasText: 'demo.zip' }).click(); await q.waitForTimeout(300);
   await q.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await q.waitForTimeout(300);
   check(!(await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'a slow press on Close closes', null);
 

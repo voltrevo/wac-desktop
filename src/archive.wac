@@ -11,10 +11,10 @@
 import { Buf, Vec } from "core";
 import { endOfDirectory, Kind, sniff, tarHeaderAt } from "./sniff.wac";
 import { baseName, endsWith, hasAt, le16, le32, le64, sliceOf } from "./bytes.wac";
-import { inflateAt } from "../vendor/gzip/inflate.wac";
-import { crc32 } from "../vendor/gzip/crc32.wac";
-import { decompress } from "../vendor/zstd/frame.wac";
-import { gunzipBytes } from "../vendor/gzip/inflate.wac";
+import { inflateAt } from "../vendor/wac/packages/gzip/src/inflate.wac";
+import { crc32 } from "../vendor/wac/packages/gzip/src/crc32.wac";
+import { decompress } from "../vendor/wac/packages/zstd/src/frame.wac";
+import { gunzipBytes } from "../vendor/wac/packages/gzip/src/inflate.wac";
 
 /** One file or directory in an archive. */
 export struct Entry {

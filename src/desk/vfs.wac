@@ -1,15 +1,17 @@
-// The desktop's disk: one interface, two backings.
+// The desktop's disk: wac's own filesystem, `packages/fs`'s `Fs`, shared with every terminal.
 //
-// **The browser's storage when it will have us, memory when it will not.** A page served over http gets the
-// Origin Private File System through `page.sys`, and what is written there is still there after a reload.
-// A page opened from a `file://` URL is refused it — Chromium answers a SecurityError — so the same desktop
-// runs on memory instead, and says so: everything works, and nothing survives the tab.
+// **One filesystem, two backings.** A page served over http gets the browser's Origin Private File System
+// through `page.sys`, and `Fs.onHost` puts its root there — what is written survives a reload. A page
+// opened from a `file://` URL is refused that storage (Chromium answers a SecurityError), so the same
+// desktop runs on `Fs.inMemory` instead, and says so. Either way it is one `Fs`: Files writes a file and
+// a terminal's `ls` sees it, because they are asking the same filesystem rather than two that agree.
 //
-// Paths are relative to the root of the disk, `/`-separated, with no leading slash: "" is the root,
-// "Desktop/notes.md" a file. Errors are the host's own sentence, since a person is who reads them.
+// The apps see it through `Vfs`, which takes paths relative to the root — "" is the root,
+// "Desktop/notes.md" a file — and answers with the host's own sentence on failure.
 
-import { Map, Ticket, Vec, hashString, stringEq } from "core";
-import { Cli, FileResult, Change, Stat } from "std";
+import { Ticket, Vec } from "core";
+import { Cli, Core, FileResult, Change, Stat } from "std";
+import { Fs } from "../../vendor/wac/packages/fs/src/fs.wac";
 
 export struct Info {
   bool isDir;
@@ -28,6 +30,8 @@ export struct Got<T> {
 export struct Vfs {
   /** Whether what is written here outlives the tab. */
   bool persistent;
+  /** The filesystem underneath, which a terminal's shell is handed too. */
+  Fs fs;
   fn<Ticket<Got<u8[]>>(string)> read;
   fn<Ticket<Got<bool>>(string, u8[])> write;
   fn<Ticket<Got<Info>>(string)> stat;
@@ -38,12 +42,6 @@ export struct Vfs {
   /** Remove a file, or a folder and everything in it. */
   fn<Ticket<Got<bool>>(string)> remove;
   fn<Ticket<Got<bool>>(string, string)> rename;
-}
-
-Ticket<T> done<T>(T v) {
-  Ticket<T> t;
-  t.resolve(v);
-  return t;
 }
 
 /** The folder part of a path: "a/b" for "a/b/c", "" for "c". */
@@ -63,52 +61,56 @@ export string leafOf(string path) {
 /** `name` inside `dir`. */
 export string join(string dir, string name) { return dir == "" ? name : dir + "/" + name; }
 
-// ── the browser's storage ──────────────────────────────────────────────────
+// ── over wac's filesystem ──────────────────────────────────────────────────
 
-async Got<u8[]> cliRead(Cli cli, string p) {
-  FileResult f = await cli.readFile(p).ticket();
+/** `p`, relative to the root, as `Fs` wants it: absolute. */
+string abs(string p) { return "/" + p; }
+
+async Got<u8[]> fsRead(Fs fs, string p) {
+  FileResult f = await fs.readFile(abs(p));
   return Got(f.ok, f.bytes, f.error);
 }
 
-async Got<bool> cliChange(Ticket<Change> pending) {
-  Change c = await pending;
-  return Got(c.ok(), c.ok(), c.message);
-}
-
 /** Write a file, making the folders above it first: the browser's storage will not write into nothing. */
-async Got<bool> cliWrite(Cli cli, string p, u8[] b) {
+async Got<bool> fsWrite(Fs fs, string p, u8[] b) {
   string dir = parentOf(p);
   if (dir != "") {
-    Change made = await cli.mkdir(dir, true).ticket();
+    Change made = await fs.mkdir(abs(dir), true);
     if (!made.ok()) { return Got(false, false, made.message); }
   }
-  Change c = await cli.writeFile(p, b).ticket();
+  Change c = await fs.writeFile(abs(p), b);
   return Got(c.ok(), c.ok(), c.message);
 }
 
-async Got<Info> cliStat(Cli cli, string p) {
-  Stat s = await cli.stat(p).ticket();
+async Got<Info> fsStat(Fs fs, string p) {
+  Stat s = await fs.stat(abs(p));
   if (!s.exists) { return Got(false, Info(false, 0, 0), "\{p}: no such file or folder"); }
   return Got(true, Info(s.isDir, s.size, s.modifiedMillis), "");
 }
 
-async Got<string[]> cliList(Cli cli, string p) {
-  string[]? names = await cli.readDir(p).ticket();
+async Got<string[]> fsList(Fs fs, string p) {
+  string[]? names = await fs.readDir(abs(p));
   if (names is null) { return Got(false, string[](), "\{p}: could not be listed"); }
   return Got(true, names!, "");
 }
 
-/** The browser's storage, through the page's system. */
-export Vfs cliVfs(Cli cli) {
+async Got<bool> fsChange(Ticket<Change> pending) {
+  Change c = await pending;
+  return Got(c.ok(), c.ok(), c.message);
+}
+
+/** The apps' view of `fs`. */
+export Vfs vfsOf(Fs fs, bool persistent) {
   return Vfs(
-    true,
-    (string p) => cliRead(cli, p),
-    (string p, u8[] b) => cliWrite(cli, p, b),
-    (string p) => cliStat(cli, p),
-    (string p) => cliList(cli, p),
-    (string p) => cliChange(cli.mkdir(p, true).ticket()),
-    (string p) => cliChange(cli.remove(p, true).ticket()),
-    (string a, string b) => cliChange(cli.rename(a, b).ticket()),
+    persistent,
+    fs,
+    (string p) => fsRead(fs, p),
+    (string p, u8[] b) => fsWrite(fs, p, b),
+    (string p) => fsStat(fs, p),
+    (string p) => fsList(fs, p),
+    (string p) => fsChange(fs.mkdir(abs(p), true)),
+    (string p) => fsChange(fs.remove(abs(p), true)),
+    (string a, string b) => fsChange(fs.rename(abs(a), abs(b))),
   );
 }
 
@@ -118,86 +120,9 @@ export async bool usable(Cli cli) {
   return c.ok();
 }
 
-// ── memory ──────────────────────────────────────────────────────────────────
-
-struct MemNode {
-  bool isDir;
-  u8[] bytes;
-  i64 modified;
-}
-
-struct Mem {
-  Map<string, MemNode> nodes;
-  fn<i64()> now;
-}
-
-void ensureDir(Mem m, string p) {
-  if (p == "" || m.nodes.has(p)) { return; }
-  ensureDir(m, parentOf(p));
-  m.nodes.set(p, MemNode(true, u8[](), m.now()));
-}
-
-bool inside(string p, string dir) { return p.len() > dir.len() && p.slice(0, dir.len() + 1) == dir + "/"; }
-
-/** A disk that lives in memory, for a page the browser will not give storage to. */
-export Vfs memoryVfs(fn<i64()> now) {
-  Mem m = Mem(Map.create(hashString, stringEq), now);
-  return Vfs(
-    false,
-    (string p) => {
-      MemNode? n = m.nodes.get(p);
-      if (n is null) { return done(Got<u8[]>(false, u8[](), "\{p}: no such file")); }
-      if (n!.isDir) { return done(Got<u8[]>(false, u8[](), "\{p} is a folder")); }
-      return done(Got<u8[]>(true, n!.bytes, ""));
-    },
-    (string p, u8[] b) => {
-      MemNode? n = m.nodes.get(p);
-      if ((n is not null) && n!.isDir) { return done(Got<bool>(false, false, "\{p} is a folder")); }
-      ensureDir(m, parentOf(p));
-      m.nodes.set(p, MemNode(false, b, m.now()));
-      return done(Got<bool>(true, true, ""));
-    },
-    (string p) => {
-      if (p == "") { return done(Got<Info>(true, Info(true, 0, 0), "")); }
-      MemNode? n = m.nodes.get(p);
-      if (n is null) { return done(Got<Info>(false, Info(false, 0, 0), "\{p}: no such file or folder")); }
-      return done(Got<Info>(true, Info(n!.isDir, n!.bytes.len() as i64, n!.modified), ""));
-    },
-    (string p) => {
-      if (p != "") {
-        MemNode? n = m.nodes.get(p);
-        if ((n is null) || !n!.isDir) { return done(Got<string[]>(false, string[](), "\{p}: no such folder")); }
-      }
-      Vec<string> out = Vec.create();
-      string[] keys = m.nodes.keys();
-      for (i32 i = 0; i < keys.len(); i++) {
-        if (parentOf(keys[i]) == p && keys[i] != p) { out.push(leafOf(keys[i])); }
-      }
-      return done(Got<string[]>(true, out.toArray(), ""));
-    },
-    (string p) => { ensureDir(m, p); return done(Got<bool>(true, true, "")); },
-    (string p) => {
-      if (!m.nodes.has(p)) { return done(Got<bool>(false, false, "\{p}: no such file or folder")); }
-      string[] keys = m.nodes.keys();
-      for (i32 i = 0; i < keys.len(); i++) { if (keys[i] == p || inside(keys[i], p)) { m.nodes.remove(keys[i]); } }
-      return done(Got<bool>(true, true, ""));
-    },
-    (string a, string b) => {
-      if (!m.nodes.has(a)) { return done(Got<bool>(false, false, "\{a}: no such file or folder")); }
-      if (m.nodes.has(b)) { return done(Got<bool>(false, false, "\{leafOf(b)} already exists")); }
-      ensureDir(m, parentOf(b));
-      string[] keys = m.nodes.keys();
-      for (i32 i = 0; i < keys.len(); i++) {
-        string k = keys[i];
-        if (k == a || inside(k, a)) {
-          MemNode n = m.nodes.get(k)!;
-          m.nodes.remove(k);
-          m.nodes.set(b + k.slice(a.len(), k.len()), n);
-        }
-      }
-      return done(Got<bool>(true, true, ""));
-    },
-  );
+/** The desktop's filesystem: on the browser's storage when it will have us, in memory when it will not. */
+export Fs filesystem(Cli cli, bool persistent, i64 now) {
+  return persistent ? Fs.onHost(cli, now) : Fs.inMemory(now);
 }
 
 // ── whole-folder operations ────────────────────────────────────────────────

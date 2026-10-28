@@ -2,7 +2,8 @@
 
 import { Ticket } from "core";
 import { Runner } from "web";
-import { Vfs, Got, Info, copyTree, freeName, memoryVfs } from "../src/desk/vfs.wac";
+import { Vfs, Got, Info, copyTree, freeName, vfsOf } from "../src/desk/vfs.wac";
+import { Fs } from "../vendor/wac/packages/fs/src/fs.wac";
 import { Desk, Win, close, dragTo, endDrag, find, focus, hintRight, minimise, newDesk, open, restore, sessionOf,
          startMove, startResize, taskbarClick, toggleMax } from "../src/desk/wm.wac";
 
@@ -36,13 +37,13 @@ async string diskScenario(Vfs fs) {
   return "";
 }
 
-export string test_the_memory_disk_behaves_like_a_disk() {
+export string test_the_disk_behaves_like_a_disk() {
   Runner r = Runner.create();
   schedule r.take;
-  return run(r, diskScenario(memoryVfs(() => 0 as i64)));
+  return run(r, diskScenario(vfsOf(Fs.inMemory(0), false)));
 }
 
-Desk desk() { return newDesk(memoryVfs(() => 0 as i64)); }
+Desk desk() { return newDesk(vfsOf(Fs.inMemory(0), false)); }
 
 export string test_windows_open_cascaded_and_stack() {
   Desk d = desk();

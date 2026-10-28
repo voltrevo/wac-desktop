@@ -1,7 +1,7 @@
 From f7ff079535afc61e7299ca53064820a848074b70 Mon Sep 17 00:00:00 2001
 From: Andrew Morris <andrew.morris@ethereum.org>
 Date: Tue, 27 Oct 2026 23:36:49 +0000
-Subject: [PATCH 2/4] web: read a dropped folder through a handle where the
+Subject: [PATCH 2/5] web: read a dropped folder through a handle where the
  browser has one
 
 readEntries fails with an EncodingError on a page opened from a file:// URL, which

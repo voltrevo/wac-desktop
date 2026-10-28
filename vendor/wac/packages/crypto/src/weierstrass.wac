@@ -1,0 +1,425 @@
+// Short Weierstrass curves y^2 = x^3 - 3x + b over a NIST prime field.
+//
+// P-256 and P-384 differ in their prime, their b, their order and their base point, and
+// in nothing else — same equation, same a = -3, same coordinates, same formulas. So the
+// curve arithmetic lives here once and `p256.wac` and `p384.wac` are the constants plus
+// a named API. The field module picks its prime from the limb count, so this code never
+// needs to know which curve it is on.
+//
+// Jacobian coordinates throughout: (X, Y, Z) stands for the affine (X/Z^2, Y/Z^3), which
+// turns the inversion in every point addition into one inversion at the very end.
+
+import {
+  fpZero, fpOne, fpSmall, fpCopy, fpAdd, fpSub, fpMul, fpSquare, fpInvert,
+  fpIsZeroBit, fpEqualsBit, fpSelect,
+  fpIsZero, fpEquals, fpToBytes, fpFromBytes, fpInRange,
+} from "./fieldp.wac";
+import {
+  ScOrder, scOrder, scnFromBytes, scnToBytes, scnAdd, scnMont, scnEnter, scnLeave,
+  scnInvert, scnReduce, scnIsZero,
+} from "./scalarn.wac";
+
+/**
+ * A curve's constants.
+ *
+ * `order` and the coordinates are all the same length — 32 bytes for P-256, 48 for P-384
+ * — which is true of both curves here and is what lets the sizes below be derived from
+ * `order.len()` rather than passed around.
+ */
+export struct Curve {
+  i64[] b;
+  u8[] order;
+  u8[] gx;
+  u8[] gy;
+}
+
+/** A point in Jacobian coordinates. Z = 0 is the point at infinity. */
+export struct Jac {
+  i64[] x;
+  i64[] y;
+  i64[] z;
+}
+
+i32 limbCount(Curve c) { return c.b.len(); }
+i32 byteLen(Curve c) { return c.order.len(); }
+
+export Jac jacInfinity(Curve c) {
+  i32 n = limbCount(c);
+  return Jac(fpOne(n), fpOne(n), fpZero(n));
+}
+
+export bool jacIsInfinity(Jac p) { return fpIsZero(p.z); }
+
+Jac jacFromAffine(Curve c, i64[] x, i64[] y) {
+  return Jac(fpCopy(x), fpCopy(y), fpOne(limbCount(c)));
+}
+
+export Jac curveBase(Curve c) {
+  return jacFromAffine(c, fpFromBytes(c.gx), fpFromBytes(c.gy));
+}
+
+/**
+ * 2P, by the a = -3 doubling formula.
+ *
+ * The curve's `a` being exactly -3 is not a coincidence; NIST chose it for every curve in
+ * the family because it makes `3(X - Z^2)(X + Z^2)` stand in for the general
+ * `3X^2 + aZ^4`, saving two squarings per doubling. Using the general formula here would
+ * be correct and slower.
+ */
+export Jac jacDouble(Curve c, Jac p) {
+  // **No guard for the identity, and none is needed**: `z3` below is `2YZ`, which is zero whenever `Z`
+  // is, so the formula answers the identity for the identity on its own. The guard that used to be here
+  // was an optimisation, and an optimisation that branches on the point — which in `jacMul` is the
+  // accumulator, and therefore on the secret scalar. `issues/system/0210`.
+  i32 n = limbCount(c);
+  i64[] zz = fpSquare(p.z);
+  i64[] m = fpMul(fpSmall(n, 3), fpMul(fpSub(p.x, zz), fpAdd(p.x, zz)));   // 3(X-Z^2)(X+Z^2)
+  i64[] yy = fpSquare(p.y);
+  i64[] s = fpMul(fpSmall(n, 4), fpMul(p.x, yy));                          // 4XY^2
+  i64[] x3 = fpSub(fpSquare(m), fpAdd(s, s));
+  i64[] y3 = fpSub(fpMul(m, fpSub(s, x3)), fpMul(fpSmall(n, 8), fpSquare(yy)));
+  i64[] z3 = fpMul(fpAdd(p.y, p.y), p.z);
+  return Jac(x3, y3, z3);
+}
+
+/**
+ * P + Q.
+ *
+ * The exceptional cases are what make this longer than it looks: either operand may be
+ * the identity, the two may be equal — in which case the general formula divides by zero
+ * and doubling is meant — and they may be negations of each other, giving the identity.
+ * Getting any of these wrong produces a scalar multiplication that is right for almost
+ * every input, which is the worst kind of wrong.
+ */
+export Jac jacAdd(Curve c, Jac p, Jac q) {
+  i64[] z1z1 = fpSquare(p.z);
+  i64[] z2z2 = fpSquare(q.z);
+  i64[] u1 = fpMul(p.x, z2z2);
+  i64[] u2 = fpMul(q.x, z1z1);
+  i64[] s1 = fpMul(p.y, fpMul(q.z, z2z2));
+  i64[] s2 = fpMul(q.y, fpMul(p.z, z1z1));
+
+  i64[] h = fpSub(u2, u1);
+  i64[] r = fpSub(s2, s1);
+  i64[] hh = fpSquare(h);
+  i64[] hhh = fpMul(h, hh);
+  i64[] u1hh = fpMul(u1, hh);
+  i64[] x3 = fpSub(fpSub(fpSquare(r), hhh), fpAdd(u1hh, u1hh));
+  i64[] y3 = fpSub(fpMul(r, fpSub(u1hh, x3)), fpMul(s1, hhh));
+  i64[] z3 = fpMul(fpMul(p.z, q.z), h);
+  Jac general = Jac(x3, y3, z3);
+
+  // **Every exceptional case is computed and then selected, rather than branched to.** The four `if`s
+  // that used to stand here each tested a value derived from `p`, and in `jacMul` `p` is the
+  // accumulator — so each was a branch on the secret scalar. `issues/system/0210`.
+  //
+  // Two of the four need nothing but the general formula. When `u1 == u2` and `s1 != s2` the points are
+  // negations, `h` is zero, and `z3 = Z1·Z2·h` is zero — the identity, which is the right answer. When
+  // either operand is the identity its `Z` is zero, so `z3` is zero again — the identity, which is the
+  // *wrong* answer and is what the last two selects put right.
+  //
+  // The doubling case has to be computed separately, because the general formula divides by `h` in
+  // effect and `h` is zero there. So `jacDouble(c, p)` runs on every call. That is the cost: a
+  // scalar multiplication is now a double and an add-carrying-a-double per bit rather than a double and
+  // half an add.
+  Jac doubled = jacDouble(c, p);
+  i32 sameX = fpEqualsBit(u1, u2);
+  i32 sameY = fpEqualsBit(s1, s2);
+
+  Jac out = jacSelect(general, doubled, sameX & sameY);
+  // `q` when `q` is not the identity and `p` is — and `p` last, so that two identities answer the
+  // identity rather than whichever was tested first.
+  out = jacSelect(out, p, fpIsZeroBit(q.z));
+  out = jacSelect(out, q, fpIsZeroBit(p.z));
+  return out;
+}
+
+/**
+ * `pick` ? `b` : `a`, coordinate by coordinate and with no branch.
+ *
+ * Every limb of both points is read whichever is chosen. A select that copied only the winner would
+ * move the leak from the control flow into the memory trace, which `packages/crypto/tools/ct.wac`
+ * records as
+ * well and which is the harder one to see.
+ */
+Jac jacSelect(Jac a, Jac b, i32 pick) {
+  return Jac(fpSelect(a.x, b.x, pick), fpSelect(a.y, b.y, pick), fpSelect(a.z, b.z, pick));
+}
+
+/** scalar * P, most significant bit first. `scalar` is big-endian, `byteLen` long. */
+export Jac jacMul(Curve c, const u8[] scalar, Jac p) {
+  Jac acc = jacInfinity(c);
+  i32 bits = 8 * byteLen(c);
+  for (i32 i = 0; i < bits; i++) {
+    acc = jacDouble(c, acc);
+    i32 bit = ((scalar[i / 8] as i32) >> (7 - (i % 8))) & 1;
+    // **Add on every bit and keep the answer only when the bit is set.** `if (bit == 1)` made the work
+    // — and the time — a function of the scalar's Hamming weight and of *which* bits were set;
+    // `packages/crypto/tools/ct.wac` put the first divergence between two P-256 keys at this line and
+    // at no
+    // other. The scalar here is the private key in `curvePublicKey` and `curveEcdh`, and the **nonce**
+    // in ECDSA signing, where a partial leak recovers the key rather than merely revealing it.
+    // `issues/system/0210`.
+    //
+    // `ed25519.wac`'s `ptMul` has always been written this way, which is why one of the pair leaked and
+    // the other did not — and is most of why `issues/system/0209` finds ed25519 five times slower.
+    acc = jacSelect(acc, jacAdd(c, acc, p), bit);
+  }
+  return acc;
+}
+
+/** The affine coordinates of a point, as x ++ y. Traps on the identity, which has none. */
+export u8[] jacToAffine(Curve c, Jac p) {
+  if (jacIsInfinity(p)) { trap; }
+  i32 len = byteLen(c);
+  i64[] zi = fpInvert(p.z);
+  i64[] zi2 = fpSquare(zi);
+  i64[] zi3 = fpMul(zi2, zi);
+  u8[] x = fpToBytes(fpMul(p.x, zi2));
+  u8[] y = fpToBytes(fpMul(p.y, zi3));
+  u8[] out = u8[].filled(2 * len, 0);
+  for (i32 i = 0; i < len; i++) { out[i] = x[i]; out[len + i] = y[i]; }
+  return out;
+}
+
+/** Whether an affine point satisfies the curve equation. */
+bool onCurve(Curve c, i64[] x, i64[] y) {
+  i32 n = limbCount(c);
+  i64[] lhs = fpSquare(y);
+  i64[] rhs = fpAdd(fpSub(fpMul(fpSquare(x), x), fpMul(fpSmall(n, 3), x)), c.b);
+  return fpEquals(lhs, rhs);
+}
+
+/**
+ * Decode an uncompressed point: 0x04 followed by x and y.
+ *
+ * Every check here matters. A point off the curve, or with a coordinate at or above p,
+ * lets an attacker run the scalar multiplication in a group they chose — which for ECDH
+ * leaks the private key a few bits at a time. This is the invalid-curve attack, and
+ * skipping the validation is how implementations fall to it.
+ */
+export Jac curveDecode(Curve c, u8[] s) {
+  if (!curveDecodes(c, s)) { trap; }
+  i32 len = byteLen(c);
+  u8[] xb = u8[].filled(len, 0);
+  u8[] yb = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
+  return jacFromAffine(c, fpFromBytes(xb), fpFromBytes(yb));
+}
+
+/**
+ * Every check `curveDecode` makes, asked as a question instead of enforced as a trap.
+ *
+ * **Because a `bool` verifier must answer, and a trap is not an answer.** `p256Verify`,
+ * `p256VerifyDigest`, `p384Verify` and `p384VerifyDigest` return `bool` and take a public key from
+ * whoever sent the signature; the signature's own shape and the scalar ranges were treated as
+ * ordinary verification failures, and then the *key* went to `curveDecode`, whose failures trap.
+ * A 65-byte key with no `0x04` prefix took a verifier down instead of being rejected. GitHub 14.
+ *
+ * The rules live here and `curveDecode` calls them, rather than being written twice: two copies of
+ * an invalid-curve check are two chances to fix one and not the other, and this is the check that
+ * stands between ECDH and an attacker-chosen group.
+ *
+ * ECDH keeps the trap, deliberately. There the point comes from a key exchange this side chose to
+ * enter and a malformed one is a protocol error worth stopping on; a verifier is handed untrusted
+ * bytes by definition and its whole contract is to say yes or no about them.
+ */
+export bool curveDecodes(Curve c, u8[] s) {
+  i32 len = byteLen(c);
+  if (s.len() != 1 + 2 * len) { return false; }
+  if (s[0] != 4) { return false; }
+  u8[] xb = u8[].filled(len, 0);
+  u8[] yb = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
+  if (!fpInRange(xb)) { return false; }
+  if (!fpInRange(yb)) { return false; }
+  // No separate check for (0, 0): the curve equation already rejects it, since 0 = b is
+  // false for both curves' b. An explicit one was here and coverage showed it could not
+  // be reached — the range check above always fires first.
+  return onCurve(c, fpFromBytes(xb), fpFromBytes(yb));
+}
+
+/** Encode a point uncompressed: 0x04 ++ x ++ y. */
+export u8[] curveEncode(Curve c, Jac p) {
+  u8[] xy = jacToAffine(c, p);
+  u8[] out = u8[].filled(1 + xy.len(), 0);
+  out[0] = 4;
+  out.copyFrom(xy, 0, 1, xy.len());
+  return out;
+}
+
+// ── Scalars, modulo the group order n ─────────────────────────────────────────
+
+/**
+ * Compare two equal-length big-endian scalars: -1, 0 or 1, **reading every byte**.
+ *
+ * This used to return on the first byte that differed, which made *how many bytes it read* a
+ * function of the values — and one of the values is routinely a private key or a nonce, since
+ * `curvePublicKey` and `ecdsaSign` both call it to check the secret is below n. `issues/system/0224`.
+ *
+ * Walking from the least significant end lets each byte's verdict override the ones below it with no
+ * branch: `d >> 31` is the sign, `d | -d` has its sign bit set exactly when `d` is non-zero, and
+ * `1 - ne` is the mask that keeps the lower verdict when this byte is equal.
+ *
+ * **No measurement caught this**, which is the part worth remembering. `p256PublicKey` reported
+ * uniform over 8.19 million events while it was still here, because the two secrets `ct.wac` compares
+ * both differ from n in their *first* byte — so both runs left the old loop at i=0 and agreed. A
+ * differential is only as wide as its inputs.
+ */
+export i32 cmpBE(const u8[] a, u8[] b) {
+  i32 lt = 0;
+  i32 gt = 0;
+  for (i32 i = a.len() - 1; i >= 0; i--) {
+    i32 d = a[i] as i32 - (b[i] as i32);
+    i32 ne = ((d | (0 - d)) >> 31) & 1;
+    i32 isLt = (d >> 31) & 1;
+    lt = (lt & (1 - ne)) | isLt;
+    gt = (gt & (1 - ne)) | (ne & (1 - isLt));
+  }
+  return gt - lt;
+}
+
+export bool isZeroBE(const u8[] a) {
+  i32 acc = 0;
+  for (i32 i = 0; i < a.len(); i++) { acc = acc | a[i] as i32; }
+  return acc == 0;
+}
+
+// The byte-wise `scAdd`, `scMul`, `scInvert` and `scReduce` that used to stand here are gone —
+// `scalarn.wac` does this arithmetic on 32-bit limbs in Montgomery form. `issues/system/0224` has the
+// numbers; the short version is that a bit-serial multiply over 32-byte operands was eleven of a
+// signature's thirteen milliseconds, and making it constant-time first pushed that to twenty-five.
+//
+// `cmpBE` and `isZeroBE` stay above, because validating a scalar against n is done on the wire form
+// before anything is converted.
+
+// ── ECDH ──────────────────────────────────────────────────────────────────────
+
+/** The public key for a private scalar, uncompressed. */
+export u8[] curvePublicKey(Curve c, u8[] priv) {
+  if (priv.len() != byteLen(c)) { trap; }
+  if (isZeroBE(priv) || cmpBE(priv, c.order) >= 0) { trap; }
+  return curveEncode(c, jacMul(c, priv, curveBase(c)));
+}
+
+/**
+ * The ECDH shared secret: the x-coordinate of priv * peerPublic.
+ *
+ * `curveDecode` validates the peer's point, which is the whole defence against an
+ * invalid-curve attack — the multiplication itself cannot tell it is working in the
+ * wrong group.
+ */
+export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
+  i32 len = byteLen(c);
+  if (priv.len() != len) { trap; }
+  if (isZeroBE(priv) || cmpBE(priv, c.order) >= 0) { trap; }
+  Jac shared = jacMul(c, priv, curveDecode(c, peerPublic));
+  if (jacIsInfinity(shared)) { trap; }
+  u8[] xy = jacToAffine(c, shared);
+  u8[] out = u8[].filled(len, 0);
+  out.copyFrom(xy, 0, 0, len);
+  return out;
+}
+
+// ── ECDSA ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A digest as a scalar, by the truncation rule of SEC 1 §4.1.3.
+ *
+ * When the digest is longer than the order, the *leftmost* bits are taken — SHA-512 under
+ * P-256 keeps the first 32 bytes and discards the rest. When it is shorter it is treated
+ * as a small number, so it is right-aligned. Both orders here are a whole number of bytes
+ * (exactly 256 and 384 bits), so there is no trailing bit shift, which there would be for
+ * a curve like P-521.
+ */
+i64[] digestScalar(ScOrder o, i32 len, u8[] digest) {
+  u8[] e = u8[].filled(len, 0);
+  if (digest.len() >= len) {
+    e.copyFrom(digest, 0, 0, len);
+  } else {
+    i32 pad = len - digest.len();
+    e.copyFrom(digest, 0, pad, digest.len());
+  }
+  return scnReduce(o, scnFromBytes(e));
+}
+
+/**
+ * Verify an ECDSA signature over an already-computed digest.
+ *
+ * `sig` is r ++ s, each the order's length, which is how TLS and X.509 carry it inside a
+ * DER wrapper the caller has already unwrapped. Both must be in [1, n). Taking a digest
+ * rather than a message is what lets one curve verify against several hashes, which
+ * certificates need: ecdsa-with-SHA384 on a P-256 key is legal and does occur.
+ */
+export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
+  i32 len = byteLen(c);
+  if (sig.len() != 2 * len) { return false; }
+  u8[] r = u8[].filled(len, 0);
+  u8[] s = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { r[i] = sig[i]; s[i] = sig[len + i]; }
+  if (isZeroBE(r) || cmpBE(r, c.order) >= 0) { return false; }
+  if (isZeroBE(s) || cmpBE(s, c.order) >= 0) { return false; }
+
+  // Nothing in a verification is secret — r, s and the digest are all on the wire — so the
+  // constant-time arithmetic below buys nothing here. It is used anyway rather than kept as a
+  // second faster copy selected by whether the caller believes its operands are public, which is
+  // how a fast path ends up on a secret. `issues/system/0224`.
+  ScOrder o = scOrder(c.order);
+  i64[] e = digestScalar(o, len, digest);
+  i64[] sInv = scnInvert(o, scnEnter(o, scnFromBytes(s)));
+  u8[] u1 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, e), sInv)));
+  u8[] u2 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, scnFromBytes(r)), sInv)));
+
+  // The public key is untrusted input like everything else here, so a malformed one is `false`
+  // rather than a trap — GitHub issue 14. Asked before decoding rather than folded into it: the
+  // checks run twice on the way through, which is two field operations against the two scalar
+  // multiplications below, and it keeps one implementation of the invalid-curve rules.
+  if (!curveDecodes(c, publicKey)) { return false; }
+  Jac pub = curveDecode(c, publicKey);
+  Jac point = jacAdd(c, jacMul(c, u1, curveBase(c)), jacMul(c, u2, pub));
+  if (jacIsInfinity(point)) { return false; }
+
+  u8[] xy = jacToAffine(c, point);
+  u8[] x = u8[].filled(len, 0);
+  x.copyFrom(xy, 0, 0, len);
+  return cmpBE(scnToBytes(scnReduce(o, scnFromBytes(x))), r) == 0;
+}
+
+/**
+ * Sign a digest, with the caller supplying `k`.
+ *
+ * `k` is a parameter rather than generated here because wac has no randomness, and
+ * because a k that repeats across two signatures reveals the private key outright — so it
+ * belongs where the caller can see the responsibility. Returns r ++ s, or an empty array
+ * if this k does not work, in which case the caller must try another.
+ */
+export u8[] ecdsaSign(Curve c, const u8[] priv, u8[] digest, const u8[] k) {
+  i32 len = byteLen(c);
+  if (priv.len() != len || k.len() != len) { trap; }
+  if (isZeroBE(k) || cmpBE(k, c.order) >= 0) { return u8[](); }
+
+  ScOrder o = scOrder(c.order);
+  Jac point = jacMul(c, k, curveBase(c));
+  if (jacIsInfinity(point)) { return u8[](); }
+  u8[] xy = jacToAffine(c, point);
+  u8[] rx = u8[].filled(len, 0);
+  rx.copyFrom(xy, 0, 0, len);
+  i64[] rN = scnReduce(o, scnFromBytes(rx));
+  u8[] r = scnToBytes(rN);
+  if (scnIsZero(rN)) { return u8[](); }
+
+  // `s = (e + r*priv) / k`, every multiply in Montgomery form so that the form cancels: a product
+  // of two values in it is in it, and only the answer leaves. `priv` is reduced rather than
+  // trusted — the range check above is on `k`, not on it, and `scnEnter` needs its argument below
+  // n for the product's bound to hold.
+  i64[] e = digestScalar(o, len, digest);
+  i64[] kInv = scnInvert(o, scnEnter(o, scnFromBytes(k)));
+  i64[] rp = scnMont(o, scnEnter(o, rN), scnEnter(o, scnReduce(o, scnFromBytes(priv))));
+  i64[] sN = scnLeave(o, scnMont(o, kInv, scnAdd(o, scnEnter(o, e), rp)));
+  u8[] s = scnToBytes(sN);
+  if (scnIsZero(sN)) { return u8[](); }
+
+  u8[] out = u8[].filled(2 * len, 0);
+  for (i32 i = 0; i < len; i++) { out[i] = r[i]; out[len + i] = s[i]; }
+  return out;
+}

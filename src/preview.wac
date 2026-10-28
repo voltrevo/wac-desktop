@@ -11,11 +11,11 @@ import { Lang, highlight, langFor } from "./highlight.wac";
 import { MdHost, markdown } from "./markdown.wac";
 import { jsonTree } from "./jsonview.wac";
 import { Table, numeric, parseTable } from "./table.wac";
-import { JsonValue } from "../vendor/json/src/value.wac";
-import { parse, parseJson5 } from "../vendor/json/src/json.wac";
+import { JsonValue } from "../vendor/wac/packages/json/src/value.wac";
+import { parse, parseJson5 } from "../vendor/wac/packages/json/src/json.wac";
 import { extOf } from "./bytes.wac";
 import { base64, baseName, grouped, hexBytes, hexOf, le16, percentKept, sizeOf } from "./bytes.wac";
-import { sha256 } from "../vendor/crypto/sha256.wac";
+import { sha256 } from "../vendor/wac/packages/crypto/src/sha256.wac";
 
 static i32 TEXT_LIMIT = 262144;
 static i32 LINE_LIMIT = 6000;
