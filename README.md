@@ -3,7 +3,8 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor** and a **Terminal**, which is wac's own shell on the desktop's disk. Nothing is uploaded: the page has no network access, and its files live in the browser.
+**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, and a **Calculator**. Deleting
+moves things to a **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
 It is written in [wac](https://github.com/voltrevo/wac), uses the DOM for everything it draws, and builds
 to single HTML files. The standalone **Archive Explorer** it grew from is built alongside it.
@@ -43,6 +44,17 @@ shares, so their pages can see each other's files.
   with Open, Edit, Rename (F2) and Delete (it asks twice). New folder, and Add files from your computer.
 - **Inside an archive**, Files is the Archive Explorer — its listing, filter and previews — with the
   breadcrumbs carrying on from the disk's, and **Extract here** writing every file to a folder beside it.
+- **Moving files:** drag rows or desktop icons onto a folder row, a breadcrumb, a Files window, a desktop
+  folder, Home, the desktop or the Trash; hold Ctrl as you let go to copy instead. Ctrl-click and
+  Shift-click select several. Cut, Copy and Paste are buttons beside the selection, and Ctrl+X, Ctrl+C and
+  Ctrl+V in a listing. A window showing something that moves follows it.
+- **The Trash:** Delete (the key or the button) moves things to the Trash, with an Undo beside the note
+  that says so. The Trash — on the desktop and in the launcher — shows where each item came from and
+  when; Restore puts it back there, making its folder again if it has gone, and "Delete for good" and
+  Empty Trash ask twice. A terminal's `rm` is still a shell's, and does not use the Trash.
+- **The Calculator** takes keys or typing: brackets, `√`, `x²`, and percentages the way pocket
+  calculators do them (`200 + 10%` is 220). The answer shows as you type; finished sums stay above, and
+  a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3.
 - **Dropping files or folders** puts them in the folder of the Files window in front, or on the desktop.
 - **Windows** move by the title bar and resize from any edge or corner. Dragged to the top they maximise,
   to the left or right edge they fill that half; double-click a title bar to maximise. The taskbar brings
@@ -67,6 +79,7 @@ shares, so their pages can see each other's files.
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
 | `src/desk/vfs.wac` | the disk: wac's `Fs` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
+| `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |
 | `src/app.wac`, `src/browse.wac` | the Archive Explorer's page; its listing, breadcrumbs and keys, shared with Files |
@@ -80,6 +93,10 @@ shares, so their pages can see each other's files.
 
 ## How it is put together
 
+- **Dragging files** uses pointer events, not the browser's drag and drop, since a page cannot ask which
+  element is under a point. While a drag is on, every place that takes a drop listens for the pointer
+  moving over it; the innermost — a folder row, before its listing, before its window, before the
+  desktop — claims the move, and the desktop, last to hear of it, clears the claim for the next.
 - **What renders when.** The desktop draws window frames; each window's contents are a component handed
   the window record and two numbers — its revision, and the disk's. A drag changes neither, so dragging
   a Files window over a 4,000-row listing redraws frames and nothing in them; a save bumps the disk's, so

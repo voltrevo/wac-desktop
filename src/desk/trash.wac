@@ -1,0 +1,144 @@
+// The Trash: a folder on the disk, and a note of where each thing in it came from.
+//
+// **Deleting from Files moves, it does not delete.** What is deleted goes to `.trash` — a dot-folder, so
+// Files and the desktop do not list it among the rest — under a name free there, and a line in
+// `.trash/.origins` remembers the folder it came from and when. Restore puts it back there (beside
+// whatever has taken its name since); Empty and "Delete for good" are the only ways anything leaves the
+// disk from the desktop's own apps. A terminal's `rm` is a shell's, and means what it says.
+//
+// The note is plain text, a line per item — `name`, the folder, the time, between tabs — because names
+// cannot hold a tab or a newline here and it is cheap to read whole. A line whose item has gone (moved out
+// of the Trash by a drag, say) is dropped the next time it is written.
+
+import { Buf, Vec } from "core";
+import { Got, Vfs, join, moveInto, parentOf } from "./vfs.wac";
+
+export static string TRASH = ".trash";
+static string ORIGINS = ".trash/.origins";
+
+/** Where something in the Trash came from. */
+export struct Origin {
+  string name;
+  /** The folder it was in, "" for Home. */
+  string from;
+  /** When it was deleted, in milliseconds since the epoch. */
+  i64 when;
+}
+
+/** Whether `dir` is the Trash itself, or a folder inside it. */
+export bool inTrash(string dir) { return dir == TRASH || (dir.len() > TRASH.len() && dir.slice(0, TRASH.len() + 1) == TRASH + "/"); }
+
+export Origin[] parseOrigins(string text) {
+  Vec<Origin> out = Vec.create();
+  u8[] b = text.toBytes();
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    string line = text.slice(start, i);
+    start = i + 1;
+    i32 t1 = line.indexOf("\t");
+    if (t1 < 0) { continue; }
+    string rest = line.slice(t1 + 1, line.len());
+    i32 t2 = rest.indexOf("\t");
+    if (t2 < 0) { continue; }
+    i64 when = 0;
+    u8[] digits = rest.slice(t2 + 1, rest.len()).toBytes();
+    for (i32 k = 0; k < digits.len(); k++) {
+      if (digits[k] >= '0' && digits[k] <= '9') { when = when * 10 + ((digits[k] - '0') as i64); }
+    }
+    out.push(Origin(line.slice(0, t1), rest.slice(0, t2), when));
+  }
+  return out.toArray();
+}
+
+export string originsText(Origin[] xs) {
+  Buf b = Buf.create();
+  for (i32 i = 0; i < xs.len(); i++) { b.pushStr("\{xs[i].name}\t\{xs[i].from}\t\{xs[i].when}\n"); }
+  return string.fromBytes(b.take());
+}
+
+export async Origin[] readOrigins(Vfs fs) {
+  Got<u8[]> b = await fs.read(ORIGINS);
+  return b.ok ? parseOrigins(string.fromBytes(b.value)) : Origin[]();
+}
+
+/** Write the note, keeping only the lines whose item is still in the Trash. */
+async void writeOrigins(Vfs fs, Vec<Origin> xs) {
+  Got<string[]> there = await fs.list(TRASH);
+  Vec<Origin> keep = Vec.create();
+  for (i32 i = 0; i < xs.len(); i++) {
+    bool present = false;
+    if (there.ok) { for (i32 k = 0; k < there.value.len(); k++) { if (there.value[k] == xs.get(i).name) { present = true; } } }
+    if (present) { keep.push(xs.get(i)); }
+  }
+  await fs.write(ORIGINS, originsText(keep.toArray()).toBytes());
+}
+
+/** Where the item called `name` in the Trash came from, if the note says. */
+export Origin? originOf(Origin[] xs, string name) {
+  for (i32 i = xs.len() - 1; i >= 0; i--) { if (xs[i].name == name) { return xs[i]; } }
+  return null;
+}
+
+/** Move `paths` to the Trash; answers the names they have there, for an Undo. */
+export async Got<string[]> toTrash(Vfs fs, string[] paths, i64 now) {
+  await fs.mkdir(TRASH);
+  Vec<Origin> xs = Vec.fromArray(await readOrigins(fs));
+  Vec<string> names = Vec.create();
+  string error = "";
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (inTrash(paths[i])) { continue; }
+    Got<string> m = await moveInto(fs, paths[i], TRASH);
+    if (!m.ok) { error = m.error; continue; }
+    xs.push(Origin(m.value, parentOf(paths[i]), now));
+    names.push(m.value);
+  }
+  await writeOrigins(fs, xs);
+  return Got(error == "", names.toArray(), error);
+}
+
+/**
+ * Put the items called `names` back where they came from, making the folder again if it has gone since;
+ * answers how many went back. One whose origin is unknown goes to the desktop.
+ */
+export async Got<i32> restoreFromTrash(Vfs fs, string[] names) {
+  Vec<Origin> xs = Vec.fromArray(await readOrigins(fs));
+  i32 n = 0;
+  string error = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    Origin? o = originOf(xs.toArray(), names[i]);
+    string dir = o is not null ? o!.from : "Desktop";
+    Got<string> m = await moveInto(fs, join(TRASH, names[i]), dir);
+    if (m.ok) { n++; } else { error = m.error; }
+  }
+  await writeOrigins(fs, xs);
+  return Got(error == "", n, error);
+}
+
+/** Remove the items called `names` from the Trash, and from the disk. */
+export async Got<i32> deleteForGood(Vfs fs, string[] names) {
+  i32 n = 0;
+  string error = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    Got<bool> r = await fs.remove(join(TRASH, names[i]));
+    if (r.ok) { n++; } else { error = r.error; }
+  }
+  await writeOrigins(fs, Vec.fromArray(await readOrigins(fs)));
+  return Got(error == "", n, error);
+}
+
+/** Everything in the Trash, gone. */
+export async Got<bool> emptyTrash(Vfs fs) {
+  Got<bool> r = await fs.remove(TRASH);
+  await fs.mkdir(TRASH);
+  return r;
+}
+
+/** How many things are in the Trash. */
+export async i32 trashCount(Vfs fs) {
+  Got<string[]> names = await fs.list(TRASH);
+  if (!names.ok) { return 0; }
+  i32 n = 0;
+  for (i32 i = 0; i < names.value.len(); i++) { if (names.value[i] != ".origins") { n++; } }
+  return n;
+}

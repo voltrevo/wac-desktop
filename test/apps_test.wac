@@ -1,0 +1,174 @@
+// The Trash, moving files and the Calculator, without a browser.
+
+import { Ticket } from "core";
+import { Runner } from "web";
+import { Vfs, Got, copyInto, moveInto, vfsOf } from "../src/desk/vfs.wac";
+import { Fs } from "../vendor/wac/packages/fs/src/fs.wac";
+import { Desk, Win, canDrop, dragFilesTo, dropKey, hover, moved, newDesk, open, pressFiles } from "../src/desk/wm.wac";
+import { Origin, TRASH, deleteForGood, emptyTrash, originsText, parseOrigins, readOrigins, restoreFromTrash, toTrash,
+         trashCount } from "../src/desk/trash.wac";
+import { Answer, CalcState, calcState, errorOf, evaluate, exprOf, plain, press, pretty, shown } from "../src/desk/calc.wac";
+
+T run<T>(Runner r, Ticket<T> t) {
+  r.drain();
+  if (!t.settled()) { trap "the ticket did not settle"; }
+  return t.value();
+}
+
+Vfs disk() { return vfsOf(Fs.inMemory(0), false); }
+
+// ── moving ──────────────────────────────────────────────────────────────────
+
+async string moveScenario(Vfs fs) {
+  await fs.write("a/x.txt", "x".toBytes());
+  await fs.write("b/x.txt", "taken".toBytes());
+  await fs.write("a/sub/deep.txt", "d".toBytes());
+  // A name already taken where it lands gets a number, rather than replacing what is there.
+  Got<string> m = await moveInto(fs, "a/x.txt", "b");
+  if (!m.ok || m.value != "x 2.txt") { return "move: \{m.value} \{m.error}"; }
+  if ((await fs.stat("a/x.txt")).ok) { return "the moved file stayed"; }
+  if (string.fromBytes((await fs.read("b/x.txt")).value) != "taken") { return "the file in the way was replaced"; }
+  // A folder moves with everything in it, into a folder that did not exist.
+  Got<string> f = await moveInto(fs, "a/sub", "c/d");
+  if (!f.ok || !(await fs.read("c/d/sub/deep.txt")).ok) { return "folder move: \{f.error}"; }
+  Got<string> c = await copyInto(fs, "b", "");
+  if (!c.ok || c.value != "b 2" || !(await fs.read("b 2/x 2.txt")).ok || !(await fs.read("b/x 2.txt")).ok) { return "copy: \{c.value}"; }
+  return "";
+}
+
+export string test_moving_and_copying_never_replace_anything() {
+  Runner r = Runner.create();
+  schedule r.take;
+  return run(r, moveScenario(disk()));
+}
+
+export string test_what_may_be_dropped_where() {
+  if (!canDrop(["Desktop/a.txt"], "")) { return "a file to Home"; }
+  if (canDrop(["Desktop/a.txt"], "Desktop")) { return "a file to where it already is"; }
+  if (canDrop(["Desktop/f"], "Desktop/f")) { return "a folder into itself"; }
+  if (canDrop(["Desktop/f"], "Desktop/f/g")) { return "a folder into a folder inside it"; }
+  if (!canDrop(["Desktop/f"], "Desktop/fg")) { return "a folder into one that only starts with its name"; }
+  if (canDrop(string[](), "x")) { return "nothing"; }
+  return "";
+}
+
+export string test_a_drag_hears_from_the_innermost_place_first() {
+  Desk d = newDesk(disk());
+  pressFiles(d, ["Desktop/a.txt"]);
+  dragFilesTo(d, 10, 10, false);
+  if (dropKey(d) != "") { return "a press is not yet a drag"; }
+  dragFilesTo(d, 30, 30, false);
+  if (dropKey(d) != "*") { return "moved, over nothing: \{dropKey(d)}"; }
+  // A folder row says first; the window around it, and the desktop, then have nothing to add.
+  hover(d, "Desktop/f", "f");
+  hover(d, "", "Home");
+  hover(d, "Desktop", "the desktop");
+  dragFilesTo(d, 31, 31, false);
+  if (dropKey(d) != "*=Desktop/f") { return "over a folder: \{dropKey(d)}"; }
+  // Nothing claims the next move: the pointer has left everything that takes a drop.
+  dragFilesTo(d, 32, 32, true);
+  if (dropKey(d) != "*") { return "over nothing again: \{dropKey(d)}"; }
+  // Over its own folder, a file has nowhere to go.
+  hover(d, "Desktop", "the desktop");
+  dragFilesTo(d, 33, 33, false);
+  if (dropKey(d) != "*") { return "over where it is: \{dropKey(d)}"; }
+  return "";
+}
+
+export string test_windows_follow_what_moved() {
+  Desk d = newDesk(disk());
+  Win e = open(d, "editor", "Desktop/notes/a.md", "a.md", "text");
+  Win f = open(d, "files", "Desktop/notes", "notes", "folder");
+  Win g = open(d, "files", "Desktop/other", "other", "folder");
+  moved(d, "Desktop/notes", "Home notes");
+  if (e.arg != "Home notes/a.md" || f.arg != "Home notes" || g.arg != "Desktop/other") { return "\{e.arg} | \{f.arg} | \{g.arg}"; }
+  if (e.rev != 1 || g.rev != 0) { return "revisions"; }
+  return "";
+}
+
+// ── the Trash ───────────────────────────────────────────────────────────────
+
+async string trashScenario(Vfs fs) {
+  await fs.write("Desktop/a.txt", "a".toBytes());
+  await fs.write("Desktop/b/c.txt", "c".toBytes());
+  await fs.write("Docs/a.txt", "another a".toBytes());
+  Got<string[]> t = await toTrash(fs, ["Desktop/a.txt", "Desktop/b", "Docs/a.txt"], 1700000000000);
+  if (!t.ok || t.value.len() != 3 || t.value[2] != "a 2.txt") { return "to the Trash: \{t.error}"; }
+  if ((await fs.stat("Desktop/a.txt")).ok || (await fs.stat("Desktop/b")).ok) { return "deleting left them"; }
+  if (await trashCount(fs) != 3) { return "count \{await trashCount(fs)}"; }
+  Origin[] o = await readOrigins(fs);
+  if (o.len() != 3 || o[2].name != "a 2.txt" || o[2].from != "Docs" || o[2].when != 1700000000000) { return "origins: \{originsText(o)}"; }
+  // Restored to where it came from, beside whatever has taken its name since.
+  await fs.write("Docs/a.txt", "new".toBytes());
+  Got<i32> back = await restoreFromTrash(fs, ["a 2.txt", "b"]);
+  if (!back.ok || back.value != 2) { return "restore: \{back.error}"; }
+  if (string.fromBytes((await fs.read("Docs/a 2.txt")).value) != "another a") { return "restored beside the new one"; }
+  if (!(await fs.read("Desktop/b/c.txt")).ok) { return "the folder came back whole"; }
+  if ((await readOrigins(fs)).len() != 1) { return "the note keeps only what is still there: \{originsText(await readOrigins(fs))}"; }
+  // A folder that has gone since is made again.
+  await toTrash(fs, ["Desktop/b/c.txt"], 1);
+  await fs.remove("Desktop/b");
+  await restoreFromTrash(fs, ["c.txt"]);
+  if (!(await fs.read("Desktop/b/c.txt")).ok) { return "restore into a folder that had gone"; }
+  if (!(await deleteForGood(fs, ["a.txt"])).ok || await trashCount(fs) != 0) { return "delete for good"; }
+  await toTrash(fs, ["Docs/a.txt"], 2);
+  if (!(await emptyTrash(fs)).ok || await trashCount(fs) != 0 || !(await fs.stat(TRASH)).ok) { return "empty"; }
+  return "";
+}
+
+export string test_the_trash_keeps_what_was_deleted_and_where_from() {
+  Runner r = Runner.create();
+  schedule r.take;
+  return run(r, trashScenario(disk()));
+}
+
+export string test_the_trash_note_reads_back() {
+  Origin[] xs = parseOrigins("a.txt\tDesktop\t12\nweird name\t\t3\nbroken line\n");
+  if (xs.len() != 2 || xs[1].name != "weird name" || xs[1].from != "" || xs[0].when != 12) { return originsText(xs); }
+  if (originsText(parseOrigins(originsText(xs))) != originsText(xs)) { return "round trip"; }
+  return "";
+}
+
+// ── the Calculator ──────────────────────────────────────────────────────────
+
+string answer(string s) {
+  Answer a = evaluate(s);
+  return a.ok ? plain(a.value) : "!" + a.error;
+}
+
+export string test_sums_are_worked_out_the_ordinary_way() {
+  string[] cases = ["1+2*3", "7", "(1+2)*3", "9", "2(3+4)", "14", "10/4", "2.5", "-3*-2", "6", "2*(3+4", "14",
+                    "0.1+0.2", "0.3", "1/3", "0.333333333333", "r16", "4", "3r16", "12", "5q", "25", "r(9q)", "9",
+                    "50%", "0.5", "200+10%", "220", "200-10%", "180", "200*10%", "20", "1e3", "!Not a complete sum",
+                    "1/0", "!Can't divide by zero", "r-4", "!No square root of a negative number", "2+", "!Not a complete sum",
+                    "123456789*1000", "123456789000", "0.000001*0.000001", "1e-12", "2/3*3", "2"];
+  for (i32 i = 0; i < cases.len(); i += 2) {
+    if (answer(cases[i]) != cases[i + 1]) { return "\{cases[i]} gave \{answer(cases[i])}, not \{cases[i + 1]}"; }
+  }
+  if (shown(1234567.5) != "1,234,567.5" || shown(-1000.0) != "-1,000") { return "shown: \{shown(1234567.5)} \{shown(-1000.0)}"; }
+  if (pretty("-12*3/(4-1234)") != "−12 × 3 ÷ (4 − 1,234)") { return "pretty: \{pretty("-12*3/(4-1234)")}"; }
+  return "";
+}
+
+string keys(string ks) {
+  CalcState s = calcState("");
+  u8[] b = ks.toBytes();
+  i32 i = 0;
+  while (i < b.len()) {
+    // `~` is the sign key, written as one character here.
+    if (b[i] == '~') { press(s, "±"); } else { press(s, ks.slice(i, i + 1)); }
+    i++;
+  }
+  return errorOf(s) != "" ? "!" + errorOf(s) : exprOf(s);
+}
+
+export string test_keys_build_a_sum_the_way_a_calculator_does() {
+  string[] cases = ["12+3=", "15", "12+3=*2=", "30", "12+3=4", "4", "2+*3", "2*3", "2*-3", "2*-3", "2*-+3", "2+3",
+                    "5~", "-5", "5~~", "5", "3+5~", "3+-5", "..5", "0.5", "1.2.3", "1.23", "(2+3", "(2+3", "2+3)", "2+3",
+                    "9<", "", "12<", "1", "12=<", "", "1/0=", "!Can't divide by zero", "C", "", "-", "-", "+", "0+",
+                    "2(3)", "2(3)", "4%=", "0.04", "(3)4", "(3)*4"];
+  for (i32 i = 0; i < cases.len(); i += 2) {
+    if (keys(cases[i]) != cases[i + 1]) { return "\{cases[i]} gave \{keys(cases[i])}, not \{cases[i + 1]}"; }
+  }
+  return "";
+}

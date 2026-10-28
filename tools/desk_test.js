@@ -33,7 +33,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.goto(url);
   await p.waitForSelector('.dicons', { timeout: 20000 });
   await settle(800);
-  check((await texts('.dicon .dname')).join() === 'Home,Welcome.md,demo.zip', 'a new desktop has Home, Welcome.md and demo.zip', await texts('.dicon .dname'));
+  check((await texts('.dicon .dname')).join() === 'Home,Trash,Welcome.md,demo.zip', 'a new desktop has Home, the Trash, Welcome.md and demo.zip', await texts('.dicon .dname'));
   check((await texts('.win .tt')).join() === 'Welcome.md', 'and opens Welcome.md', await texts('.win .tt'));
   check((await p.textContent('.pill')).includes('Saved in this browser'), 'over http it says files are kept', await p.textContent('.pill'));
   await shot('1-first');
@@ -127,10 +127,92 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.waitForSelector('.dicons', { timeout: 20000 });
   await settle(1500);
   check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
-  check((await texts('.dicon .dname')).join() === 'Home,Welcome.md,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  check((await texts('.dicon .dname')).join() === 'Home,Trash,Welcome.md,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
   check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
   check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
   await shot('4-reloaded');
+
+  // Moving files by dragging them, the Trash, cut and paste. First, every window away.
+  for (let i = 0; i < 12; i++) {
+    if (await p.$('.win.focus')) { await p.locator('.win.focus .wbtn[title=Close]').click({ delay: 120 }); await settle(250); continue; }
+    if (await p.$('.tbwin')) { await p.locator('.tbwin').first().click(); await settle(250); continue; }
+    break;
+  }
+  const icon = (name) => p.locator('.dicon', { has: p.locator('.dname', { hasText: new RegExp(`^${name.replace(/[.]/g, '\\.')}$`) }) }).first();
+  const crumb = (name) => p.locator('.win.focus .crumb', { has: p.locator('.t', { hasText: new RegExp(`^${name}$`) }) }).first();
+  const toast = () => p.textContent('.toast').catch(() => '');
+  const dragOnto = async (from, to, ctrl = false) => {
+    const a = await from.boundingBox();
+    const b = to.x !== undefined ? to : await to.boundingBox();
+    await p.mouse.move(a.x + Math.min(40, a.width / 2), a.y + a.height / 2); await p.mouse.down();
+    await p.mouse.move(a.x + 60, a.y + a.height / 2 + 24, { steps: 4 });
+    if (ctrl) await p.keyboard.down('Control');
+    await p.mouse.move(b.x + Math.min(40, b.width / 2), b.y + b.height / 2, { steps: 12 }); await settle(150);
+    await p.mouse.up();
+    if (ctrl) await p.keyboard.up('Control');
+    await settle(1300);
+  };
+  await dragOnto(icon('dropped.txt'), icon('demo'));
+  check((await toast()).includes('Moved dropped.txt to demo') && !(await texts('.dicon .dname')).includes('dropped.txt'), 'a desktop icon dragged onto a folder icon moves into it', [await toast(), await texts('.dicon .dname')]);
+  await icon('demo').dblclick(); await settle(900);
+  check((await texts('.win.focus .row .t')).includes('dropped.txt'), 'and Files finds it there', await texts('.win.focus .row .t'));
+  await row('wordcount').dblclick(); await settle(900);
+  await dragOnto(row('shell.txt'), row('src'));
+  check(!(await texts('.win.focus .row .t')).includes('shell.txt') && (await toast()).includes('Moved shell.txt to src'), 'a row dragged onto a folder row moves into it', [await toast(), await texts('.win.focus .row .t')]);
+  await dragOnto(row('into-files.txt'), crumb('demo'), true);
+  check((await texts('.win.focus .row .t')).includes('into-files.txt') && (await toast()).includes('Copied into-files.txt to demo'), 'with Ctrl held, onto a breadcrumb, it is copied instead', [await toast(), await texts('.win.focus .row .t')]);
+  await dragOnto(row('Makefile'), { x: 20, y: 740, width: 80, height: 40 });
+  check((await texts('.dicon .dname')).includes('Makefile') && !(await texts('.win.focus .row .t')).includes('Makefile'), 'a row dragged onto the desktop lands on it', [await toast(), await texts('.dicon .dname')]);
+
+  await row('README.md').click(); await settle(200);
+  await row('into-files.txt').click({ modifiers: ['Control'] }); await settle(400);
+  check((await p.textContent('.win.focus .preview .nm').catch(() => '')) === '2 items selected', 'Ctrl-click selects a second file', await p.textContent('.win.focus .preview .nm').catch(() => ''));
+  await p.keyboard.press('Delete'); await settle(1200);
+  check((await toast()).includes('Moved 2 items to the Trash') && !(await texts('.win.focus .row .t')).includes('README.md'), 'Delete moves both to the Trash', [await toast(), await texts('.win.focus .row .t')]);
+  check(!!(await p.$('.dtile.c-trash.full')), 'and the Trash says it has something in it', null);
+  await p.locator('.toast .tundo').click(); await settle(1200);
+  check((await texts('.win.focus .row .t')).includes('README.md') && (await texts('.win.focus .row .t')).includes('into-files.txt'), 'Undo puts them back', await texts('.win.focus .row .t'));
+  await row('README.md').click(); await settle(400);
+  await p.locator('.win.focus .pactions button', { hasText: 'Delete' }).click(); await settle(1200);
+  await icon('Trash').dblclick(); await settle(1000);
+  check((await p.textContent('.win.focus .tt')) === 'Trash' && (await texts('.win.focus .row .t')).join() === 'README.md', 'the Trash window lists what was deleted', await texts('.win.focus .row .t'));
+  check((await texts('.win.focus .row .r.dim'))[1] === 'Desktop/demo/wordcount', 'and where it came from', await texts('.win.focus .row .r.dim'));
+  await row('README.md').click(); await settle(400);
+  await p.locator('.win.focus .pactions button', { hasText: 'Restore' }).click(); await settle(1200);
+  check((await texts('.win.focus .empty')).join().includes('The Trash is empty') && (await toast()).includes('Restored README.md'), 'Restore takes it out of the Trash', [await toast(), await texts('.win.focus .empty')]);
+  await dragOnto(icon('Makefile'), icon('Trash'));
+  check((await texts('.win.focus .row .t')).join() === 'Makefile' && !(await texts('.dicon .dname')).includes('Makefile'), 'an icon dragged onto the Trash goes in it', [await texts('.win.focus .row .t'), await texts('.dicon .dname')]);
+  await p.locator('.win.focus .ftop button', { hasText: 'Empty Trash' }).click(); await settle(300);
+  await p.locator('.win.focus .ftop button', { hasText: 'Empty for good?' }).click(); await settle(1200);
+  check((await texts('.win.focus .empty')).join().includes('The Trash is empty') && !(await p.$('.dtile.c-trash.full')), 'Empty Trash, asked twice, empties it', await texts('.win.focus .empty'));
+
+  await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(400);
+  check((await texts('.win.focus .row .t')).includes('README.md'), 'and the restored file is back where it was', await texts('.win.focus .row .t'));
+  await row('src').click(); await settle(400);
+  await p.locator('.win.focus .pactions button', { hasText: 'Cut' }).click(); await settle(300);
+  await crumb('demo').click(); await settle(800);
+  await p.locator('.win.focus .ftop button', { hasText: 'Paste' }).click(); await settle(1300);
+  check((await texts('.win.focus .row .t')).includes('src') && (await toast()).includes('Moved src to demo'), 'Cut and Paste move a folder', [await toast(), await texts('.win.focus .row .t')]);
+  await row('src').dblclick(); await settle(800);
+  check((await texts('.win.focus .row .t')).includes('shell.txt'), 'with everything in it', await texts('.win.focus .row .t'));
+  await shot('5-moved');
+
+  // The Calculator: clicked, and typed.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Calculator' }).click(); await settle(600);
+  for (const k of ['7', '×', '6', '=']) { await p.locator('.win.focus .ck').filter({ hasText: new RegExp(`^${k}$`) }).click(); await settle(80); }
+  await settle(300);
+  check((await p.textContent('.win.focus .cmain')) === '42', 'the Calculator works out 7 × 6 from its keys', await p.textContent('.win.focus .cmain'));
+  await p.keyboard.type('(1+2)*3'); await settle(300);
+  check((await p.textContent('.win.focus .csub')) === '= 9', 'and shows the answer as a sum is typed', await p.textContent('.win.focus .csub'));
+  await p.keyboard.press('Enter'); await settle(300);
+  await p.keyboard.type('200+10%'); await settle(300);
+  check((await p.textContent('.win.focus .csub')) === '= 220', 'a percentage added is a percentage of what it is added to', await p.textContent('.win.focus .csub'));
+  await p.keyboard.press('Escape'); await p.keyboard.type('0.1+0.2'); await p.keyboard.press('Enter'); await settle(300);
+  check((await p.textContent('.win.focus .cmain')) === '0.3', '0.1 + 0.2 is 0.3', await p.textContent('.win.focus .cmain'));
+  await p.keyboard.type('1/0'); await p.keyboard.press('Enter'); await settle(300);
+  check((await p.textContent('.win.focus .csub')) === "Can't divide by zero", 'and dividing by zero says so', await p.textContent('.win.focus .csub'));
+  check((await texts('.win.focus .chrow .cha')).join() === '42,9,0.3', 'the sums worked out are kept above', await texts('.win.focus .chrow .cha'));
+  await shot('6-calculator');
 
   // From a file: no storage. It must say so, and still work.
   const q = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
@@ -139,7 +221,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await q.waitForSelector('.dicons', { timeout: 20000 });
   await q.waitForTimeout(800);
   check((await q.textContent('.pill')).includes('Not saved'), 'from file:// it says nothing is kept', await q.textContent('.pill'));
-  check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).join() === 'Home,Welcome.md,demo.zip', 'and still starts with something to open', null);
+  check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).join() === 'Home,Trash,Welcome.md,demo.zip', 'and still starts with something to open', null);
   await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
   await q.waitForTimeout(1200);
   check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);

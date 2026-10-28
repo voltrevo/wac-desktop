@@ -5,10 +5,11 @@
 // breadcrumbs carry on from the disk's into the archive's. "Extract here" turns the second into the first.
 
 import { Ticket, Vec } from "core";
-import { ElementEvent, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
+import { ElementEvent, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
          html.span } from "web";
-import { Vfs, Got, Info, join, leafOf, parentOf, freeName } from "./vfs.wac";
-import { Desk, Win, open } from "./wm.wac";
+import { Vfs, Got, Info, copyInto, join, leafOf, moveInto, parentOf, freeName, within } from "./vfs.wac";
+import { Desk, Win, canDrop, dragging, dropOn, hover, moved, open, pressFiles } from "./wm.wac";
+import { Origin, TRASH, deleteForGood, emptyTrash, inTrash, originOf, readOrigins, restoreFromTrash, toTrash } from "./trash.wac";
 import { Extracted, extract } from "../archive.wac";
 import { Kind, isContainer, kindLabel, sniff } from "../sniff.wac";
 import { Level, Model, emptyModel, goUp, hasFile, iconFor, openRoot, top } from "../model.wac";
@@ -30,8 +31,10 @@ export struct FilesState {
   Item[] items;
   bool loading;
   string error;
-  /** The selected item's name, or "". */
+  /** The selected item's name, or "": the one the preview shows, and the cursor's. */
   string selected;
+  /** Every selected name — the one above and any picked with Ctrl or Shift. */
+  string[] picked;
   i32 cursor;
   string filter;
   i32 sortKey;
@@ -51,10 +54,12 @@ export struct FilesState {
   i32 reload;
   string busy;
   bool focusCursor;
+  /** In the Trash: where each item came from. */
+  Origin[] origins;
 }
 
 export FilesState filesState(string dir) {
-  return FilesState(dir, Item[](), true, "", "", 0, "", 0, false, "", "", "", null, "", null, "", 0, "", false);
+  return FilesState(dir, Item[](), true, "", "", string[](), 0, "", 0, false, "", "", "", null, "", null, "", 0, "", false, Origin[]());
 }
 
 // ── the disk ────────────────────────────────────────────────────────────────
@@ -78,8 +83,15 @@ async void load(Vfs fs, FilesState s, fn<void()> bump) {
     Got<Info> st = await fs.stat(join(dir, n));
     if (st.ok) { out.push(Item(n, st.value.isDir, st.value.size, st.value.modified)); }
   }
+  if (inTrash(dir)) { s.origins = await readOrigins(fs); }
   if (s.dir != dir) { return; }
   s.items = out.toArray();
+  // What was picked and has gone — moved, deleted, renamed elsewhere — is no longer picked.
+  Vec<string> still = Vec.create();
+  for (i32 i = 0; i < s.picked.len(); i++) {
+    for (i32 k = 0; k < s.items.len(); k++) { if (s.items[k].name == s.picked[i]) { still.push(s.picked[i]); break; } }
+  }
+  s.picked = still.toArray();
   s.error = "";
   s.loading = false;
   bump();
@@ -205,22 +217,79 @@ async void extractHere(Desk d, Page page, FilesState s, fn<void()> bump, fn<void
 
 // ── the window ──────────────────────────────────────────────────────────────
 
-Node diskCrumbs(FilesState s, Win w, Desk d, fn<void()> bump) {
-  Node[] out = [<button class={s.dir == "" && s.arch is null ? "crumb level here" : "crumb level"}
-                        onclick={(ElementEvent e) => { s.arch = null; s.dir = ""; s.selected = ""; w.arg = ""; d.dirty = true; bump(); }}>
-                  <span class="ic i-home sm c-folder"></span><span class="t">Home</span></button>];
-  if (s.dir != "") {
-    u8[] b = s.dir.toBytes();
+/** What an action takes: everything picked, or the one selected. */
+string[] chosen(FilesState s) {
+  if (s.picked.len() > 0) { return s.picked; }
+  return s.selected == "" ? string[]() : [s.selected];
+}
+
+bool isPicked(FilesState s, string name) {
+  for (i32 i = 0; i < s.picked.len(); i++) { if (s.picked[i] == name) { return true; } }
+  return false;
+}
+
+string[] pathsOf(FilesState s, string[] names) {
+  string[] out = string[].filled(names.len(), "");
+  for (i32 i = 0; i < names.len(); i++) { out[i] = join(s.dir, names[i]); }
+  return out;
+}
+
+/** Select just `name`. */
+void pickOnly(FilesState s, string name) {
+  s.selected = name;
+  s.picked = name == "" ? string[]() : [name];
+}
+
+/** Go to `dir`, with nothing selected. */
+void goTo(Desk d, Win w, FilesState s, string dir, fn<void()> bump) {
+  s.arch = null;
+  s.dir = dir;
+  pickOnly(s, "");
+  s.confirming = "";
+  s.filter = "";
+  w.arg = dir;
+  d.dirty = true;
+  bump();
+}
+
+/** Up a folder, with the one just left selected. */
+void upFolder(Desk d, Win w, FilesState s, fn<void()> bump) {
+  if (s.dir == "" || s.dir == TRASH) { return; }
+  string from = leafOf(s.dir);
+  goTo(d, w, s, parentOf(s.dir), bump);
+  pickOnly(s, from);
+}
+
+/** Where a drop on this window lands, or null where nothing may be dropped: inside an archive, or inside something in the Trash. */
+string? dropDir(FilesState s) {
+  if (s.arch is not null) { return null; }
+  if (inTrash(s.dir)) { return s.dir == TRASH ? TRASH : null; }
+  return s.dir;
+}
+
+string placeName(string dir) { return dir == "" ? "Home" : (dir == TRASH ? "the Trash" : leafOf(dir)); }
+
+Node diskCrumbs(FilesState s, Win w, Desk d, fn<void()> bump, string drop) {
+  bool trash = inTrash(s.dir);
+  string base = trash ? TRASH : "";
+  bool drag = dragging(drop);
+  fn<Node(string, string, string, bool)> crumb = (string path, string name, string ic, bool first) => {
+    string? target = trash && path != TRASH ? null : path;
+    bool here = path == s.dir && s.arch is null;
+    return <button class={(first ? "crumb level" : "crumb") + (here ? " here" : "") + (dropOn(drop, path) ? " dropon" : "")}
+                   onpointermove={drag ? (ElementEvent e) => { hover(d, target, name); } : null}
+                   onclick={(ElementEvent e) => { goTo(d, w, s, path, bump); }}>
+      <span class={"ic sm i-\{ic} \{ic == "trash" ? "c-trash" : "c-folder"}"}></span><span class="t">{name}</span></button>;
+  };
+  Node[] out = [crumb(base, trash ? "Trash" : "Home", trash ? "trash" : "home", true)];
+  string rest = s.dir == base ? "" : (base == "" ? s.dir : s.dir.slice(base.len() + 1, s.dir.len()));
+  if (rest != "") {
+    u8[] b = rest.toBytes();
     i32 start = 0;
     for (i32 i = 0; i <= b.len(); i++) {
       if (i == b.len() || b[i] == '/') {
-        string path = s.dir.slice(0, i);
-        string name = s.dir.slice(start, i);
-        bool here = i == b.len() && s.arch is null;
         out = push(out, <span class="sep">{icon("chev", "sm")}</span>);
-        out = push(out, <button class={here ? "crumb here" : "crumb"}
-                                onclick={(ElementEvent e) => { s.arch = null; s.dir = path; s.selected = ""; w.arg = path; d.dirty = true; bump(); }}>
-                          <span class="ic i-folder sm c-folder"></span><span class="t">{name}</span></button>);
+        out = push(out, crumb(join(base, rest.slice(0, i)), rest.slice(start, i), "folder", false));
         start = i + 1;
       }
     }
@@ -241,12 +310,14 @@ string kindOfItem(Item it) {
 
 string when(i64 ms) { return ms <= 0 ? "" : unixTime(ms / 1000); }
 
-Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()> bump, fn<void()> bumpDesk, Ref cursorRef) {
+Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()> bump, fn<void()> bumpDesk, Ref cursorRef, string drop) {
   if (s.cursor >= items.len()) { s.cursor = items.len() - 1; }
   if (s.cursor < 0) { s.cursor = 0; }
+  bool trashRoot = s.dir == TRASH;
+  bool drag = dragging(drop);
   fn<void(Item)> activate = (Item it) => {
     string path = join(s.dir, it.name);
-    if (it.isDir) { s.dir = path; s.selected = ""; s.filter = ""; w.arg = path; d.dirty = true; bump(); return; }
+    if (it.isDir) { goTo(d, w, s, path, bump); return; }
     if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
     openPath(d, path, false);
     bumpDesk();
@@ -255,11 +326,11 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
     if (items.len() == 0) { return; }
     i32 c = k < 0 ? 0 : (k >= items.len() ? items.len() - 1 : k);
     s.cursor = c;
-    s.selected = items[c].name;
+    pickOnly(s, items[c].name);
     s.focusCursor = true;
     bump();
   };
-  string[] names = ["Name", "Size", "Kind", "Modified"];
+  string[] names = trashRoot ? ["Name", "Size", "From", "Deleted"] : ["Name", "Size", "Kind", "Modified"];
   Node[] head = Node[].filled(4, Node.Text(""));
   for (i32 k = 0; k < 4; k++) {
     i32 key = k;
@@ -274,8 +345,11 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
   for (i32 k = 0; k < items.len(); k++) {
     Item it = items[k];
     i32 at = k;
+    string path = join(s.dir, it.name);
     string ic = it.isDir ? "folder" : iconFor(it.name);
-    bool sel = it.name == s.selected;
+    bool sel = isPicked(s, it.name) || (s.picked.len() == 0 && it.name == s.selected);
+    Origin? o = trashRoot ? originOf(s.origins, it.name) : null;
+    string from = o is null ? "" : (o!.from == "" ? "Home" : o!.from);
     Node name = s.renaming == it.name
       ? <input class="rename" value={s.draft} autofocus="" prevent="Enter Escape"
                oninput={(ElementEvent e) => { s.draft = e.value; }}
@@ -284,47 +358,92 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
                  if (e.value == "Enter") { rename(d, s, bump, bumpDesk); }
                }}/>
       : <span class="t">{it.name}</span>;
-    rows[k] = <div class={"row" + (sel ? " sel" : "") + (k == s.cursor ? " cursor" : "")} key={it.name} tabindex="-1"
-                   title={it.name} ref={k == s.cursor ? cursorRef : null}
-                   onclick={(ElementEvent e) => { s.selected = it.name; s.cursor = at; s.confirming = ""; bump(); }}
+    string? into = it.isDir && !inTrash(s.dir) ? path : null;
+    rows[k] = <div class={"row" + (sel ? " sel" : "") + (k == s.cursor ? " cursor" : "") + (dropOn(drop, path) ? " dropon" : "")}
+                   key={it.name} tabindex="-1" title={it.name} ref={k == s.cursor ? cursorRef : null}
+                   onpointerdown={(ElementEvent e) => {
+                     if (s.renaming != "") { return; }
+                     pressFiles(d, pathsOf(s, sel ? chosen(s) : [it.name]));
+                     bumpDesk();
+                   }}
+                   onpointermove={drag ? (ElementEvent e) => { if (into is not null) { hover(d, into!, it.name); } } : null}
+                   onclick={(ElementEvent e) => {
+                     s.confirming = "";
+                     if ((e.mods & (MOD_CTRL | MOD_META)) != 0) {
+                       // Ctrl-click adds one to the selection, or takes it out.
+                       Vec<string> next = Vec.create();
+                       string[] was = chosen(s);
+                       bool had = false;
+                       for (i32 i = 0; i < was.len(); i++) { if (was[i] == it.name) { had = true; } else { next.push(was[i]); } }
+                       if (!had) { next.push(it.name); }
+                       s.picked = next.toArray();
+                       s.selected = !had ? it.name : (next.len() > 0 ? next.get(next.len() - 1) : "");
+                       s.cursor = at;
+                     } else if ((e.mods & MOD_SHIFT) != 0) {
+                       // Shift-click selects everything between the cursor and here.
+                       i32 lo = s.cursor < at ? s.cursor : at;
+                       i32 hi = s.cursor < at ? at : s.cursor;
+                       string[] range = string[].filled(hi - lo + 1, "");
+                       for (i32 i = lo; i <= hi; i++) { range[i - lo] = items[i].name; }
+                       s.picked = range;
+                       s.selected = it.name;
+                     } else {
+                       pickOnly(s, it.name);
+                       s.cursor = at;
+                     }
+                     bump();
+                   }}
                    ondblclick={(ElementEvent e) => { activate(it); }}>
       <div class="name"><span class={"ic i-\{ic} c-\{ic}"}></span>{name}
         {!it.isDir && ic == "archive" ? <span class="badge">open</span> : Node.Text("")}</div>
       <div class="r dim num">{it.isDir ? "—" : sizeOf(it.size)}</div>
-      <div class="r dim">{kindOfItem(it)}</div>
-      <div class="r dim num">{when(it.modified)}</div>
+      <div class="r dim" title={from}>{trashRoot ? from : kindOfItem(it)}</div>
+      <div class="r dim num">{trashRoot ? (o is null ? "" : when(o!.when)) : when(it.modified)}</div>
     </div>;
   }
-  return <section class="pane list">
+  string empty = s.error != "" ? s.error
+               : (s.filter != "" ? "Nothing here matches “\{s.filter}”."
+               : (trashRoot ? "The Trash is empty." : "This folder is empty. Drop files on the window to add them."));
+  return <section class={"pane list" + (dropOn(drop, s.dir) ? " dropon" : "")}>
     <div class="toolbar">
       <label class="search">{icon("search", "sm")}
         <input placeholder="Filter this folder…" value={s.filter}
                oninput={(ElementEvent e) => { s.filter = e.value; s.cursor = 0; bump(); }}
                onkeydown={(ElementEvent e) => { if (e.value == "Escape") { s.filter = ""; bump(); } if (e.value == "ArrowDown") { moveTo(0); } }}
                prevent="ArrowDown"/></label>
-      <div class="stats num"><span><b>{grouped(items.len() as i64)}</b> {items.len() == 1 ? "item" : "items"}</span></div>
+      <div class="stats num"><span>{chosen(s).len() > 1 ? <b>{grouped(chosen(s).len() as i64)} selected · </b> : Node.Text("")}<b>{grouped(items.len() as i64)}</b> {items.len() == 1 ? "item" : "items"}</span></div>
     </div>
     <div class="thead">{head}</div>
     <div class="rows" tabindex="0" prevent="ArrowUp ArrowDown Enter Backspace Home End F2 Delete"
          onkeydown={(ElementEvent e) => {
            string key = e.value;
            if (s.renaming != "") { return; }
+           if ((e.mods & (MOD_CTRL | MOD_META)) != 0) {
+             if ((key == "x" || key == "c") && chosen(s).len() > 0 && !inTrash(s.dir)) { clip(d, s, key == "x"); bump(); }
+             else if (key == "v" && d.clip.len() > 0 && !inTrash(s.dir)) { paste(d, s, bump, bumpDesk); }
+             else if (key == "a") { s.picked = namesOf(items); bump(); }
+             return;
+           }
            if (key == "ArrowDown") { moveTo(s.cursor + 1); }
            else if (key == "ArrowUp") { moveTo(s.cursor - 1); }
            else if (key == "Home") { moveTo(0); }
            else if (key == "End") { moveTo(items.len() - 1); }
            else if (key == "Enter" && items.len() > 0) { activate(items[s.cursor]); }
-           else if (key == "Backspace" && s.dir != "") { s.selected = leafOf(s.dir); s.dir = parentOf(s.dir); w.arg = s.dir; d.dirty = true; bump(); }
-           else if (key == "F2" && s.selected != "") { s.renaming = s.selected; s.draft = s.selected; bump(); }
-           else if (key == "Delete" && s.selected != "") { remove(d, s, bump, bumpDesk); }
+           else if (key == "Backspace") { upFolder(d, w, s, bump); }
+           else if (key == "F2" && s.selected != "" && !inTrash(s.dir)) { s.renaming = s.selected; s.draft = s.selected; bump(); }
+           else if (key == "Delete" && chosen(s).len() > 0) { remove(d, page, s, bump, bumpDesk); }
          }}>
       {s.loading && items.len() == 0 ? <div class="empty">Loading…</div> : Node.Text("")}
-      {!s.loading && items.len() == 0
-        ? <div class="empty">{s.error != "" ? s.error : (s.filter != "" ? "Nothing here matches “\{s.filter}”." : "This folder is empty. Drop files on the window to add them.")}</div>
-        : Node.Text("")}
+      {!s.loading && items.len() == 0 ? <div class="empty">{empty}</div> : Node.Text("")}
       {rows}
     </div>
   </section>;
+}
+
+string[] namesOf(Item[] items) {
+  string[] out = string[].filled(items.len(), "");
+  for (i32 i = 0; i < items.len(); i++) { out[i] = items[i].name; }
+  return out;
 }
 
 async void rename(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
@@ -333,18 +452,94 @@ async void rename(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
   s.renaming = "";
   if (to == "" || to == from || to.indexOf("/") >= 0) { bump(); return; }
   Got<bool> r = await d.fs.rename(join(s.dir, from), join(s.dir, to));
-  if (!r.ok) { d.error = r.error; } else { s.selected = to; }
+  if (!r.ok) { d.error = r.error; } else { pickOnly(s, to); moved(d, join(s.dir, from), join(s.dir, to)); }
   d.fsRev++;
   bumpDesk();
   bump();
 }
 
-async void remove(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
-  if (s.confirming != s.selected) { s.confirming = s.selected; bump(); return; }
-  string name = s.selected;
+string countOf(i32 n) { return n == 1 ? "1 item" : "\{n} items"; }
+string nameOrCount(string[] names) { return names.len() == 1 ? names[0] : countOf(names.len()); }
+
+/**
+ * Delete what is selected: to the Trash, from anywhere but the Trash — with an Undo beside the note that
+ * says so — and for good from the Trash itself, which asks twice.
+ */
+async void remove(Desk d, Page page, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string[] names = chosen(s);
+  if (names.len() == 0) { return; }
+  if (inTrash(s.dir)) {
+    string asking = "\0delete:" + "\{names.len()}" + ":" + names[0];
+    if (s.confirming != asking) { s.confirming = asking; bump(); return; }
+    s.confirming = "";
+    if (s.dir == TRASH) {
+      Got<i32> r = await deleteForGood(d.fs, names);
+      if (!r.ok) { d.error = r.error; }
+    } else {
+      for (i32 i = 0; i < names.len(); i++) { await d.fs.remove(join(s.dir, names[i])); }
+    }
+    d.note = "Deleted \{nameOrCount(names)} for good";
+    d.undo = string[]();
+  } else {
+    Got<string[]> r = await toTrash(d.fs, pathsOf(s, names), page.sys.core.nowMillis().wait());
+    if (!r.ok) { d.error = r.error; }
+    if (r.value.len() > 0) { d.note = "Moved \{nameOrCount(names)} to the Trash"; d.undo = r.value; }
+  }
+  pickOnly(s, "");
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+async void restore(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string[] names = chosen(s);
+  Got<i32> r = await restoreFromTrash(d.fs, names);
+  if (!r.ok) { d.error = r.error; }
+  if (r.value > 0) { d.note = "Restored \{r.value == 1 && names.len() == 1 ? names[0] : countOf(r.value)}"; }
+  pickOnly(s, "");
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+async void emptyBin(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  if (s.confirming != "\0empty") { s.confirming = "\0empty"; bump(); return; }
   s.confirming = "";
-  Got<bool> r = await d.fs.remove(join(s.dir, name));
-  if (!r.ok) { d.error = r.error; } else { d.note = "Deleted \{name}"; s.selected = ""; }
+  Got<bool> r = await emptyTrash(d.fs);
+  if (!r.ok) { d.error = r.error; } else { d.note = "The Trash is empty"; d.undo = string[](); }
+  pickOnly(s, "");
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+/** Cut or copy what is selected, for a Paste in any Files window. */
+void clip(Desk d, FilesState s, bool cut) {
+  d.clip = pathsOf(s, chosen(s));
+  d.clipCut = cut;
+  d.note = "\{cut ? "Cut" : "Copied"} \{nameOrCount(chosen(s))} — paste it in any folder";
+}
+
+/** Paste what was cut or copied into this folder: a cut moves it, a copy copies it. */
+async void paste(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string[] from = d.clip;
+  bool cut = d.clipCut;
+  Vec<string> landed = Vec.create();
+  string error = "";
+  for (i32 i = 0; i < from.len(); i++) {
+    // A folder cannot go inside itself, and a cut back into where it came from is no move at all.
+    if (within(s.dir, from[i])) { error = "\{leafOf(from[i])} cannot go inside itself"; continue; }
+    if (cut && parentOf(from[i]) == s.dir) { continue; }
+    Got<string> r = cut ? await moveInto(d.fs, from[i], s.dir) : await copyInto(d.fs, from[i], s.dir);
+    if (r.ok) { landed.push(r.value); if (cut) { moved(d, from[i], join(s.dir, r.value)); } } else { error = r.error; }
+  }
+  if (cut) { d.clip = string[](); }
+  if (error != "") { d.error = error; }
+  if (landed.len() > 0) {
+    d.note = "\{cut ? "Moved" : "Copied"} \{nameOrCount(landed.toArray())} to \{placeName(s.dir)}";
+    s.picked = landed.toArray();
+    s.selected = landed.get(0);
+  }
   d.fsRev++;
   bumpDesk();
   bump();
@@ -354,7 +549,7 @@ async void newFolder(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk)
   string name = await freeName(d.fs, s.dir, "New folder");
   Got<bool> r = await d.fs.mkdir(join(s.dir, name));
   if (!r.ok) { d.error = r.error; bump(); return; }
-  s.selected = name;
+  pickOnly(s, name);
   s.renaming = name;
   s.draft = name;
   d.fsRev++;
@@ -362,33 +557,69 @@ async void newFolder(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk)
   bump();
 }
 
+/** The buttons that act on what is selected. */
+Node selectionActions(Desk d, Page page, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string[] names = chosen(s);
+  if (inTrash(s.dir)) {
+    bool asked = s.confirming.len() > 8 && s.confirming.slice(0, 8) == "\0delete:";
+    return <div class="actions">
+      {s.dir == TRASH ? <button class="btn primary" title="Put back where it was deleted from"
+                                onclick={(ElementEvent e) => { restore(d, s, bump, bumpDesk); }}>{icon("restore", "sm")}<span class="label">Restore</span></button>
+                      : Node.Text("")}
+      <button class={asked ? "btn danger" : "btn"} title="Delete from the disk"
+              onclick={(ElementEvent e) => { remove(d, page, s, bump, bumpDesk); }}>{icon("trash", "sm")}<span class="label">{asked ? "Delete for good?" : "Delete for good"}</span></button>
+    </div>;
+  }
+  return <div class="actions">
+    <button class="btn" title="Cut (Ctrl+X)" onclick={(ElementEvent e) => { clip(d, s, true); bump(); bumpDesk(); }}>{icon("cut", "sm")}<span class="label">Cut</span></button>
+    <button class="btn" title="Copy (Ctrl+C)" onclick={(ElementEvent e) => { clip(d, s, false); bump(); bumpDesk(); }}>{icon("copy", "sm")}<span class="label">Copy</span></button>
+    <button class="btn" title="Move to the Trash (Delete)" onclick={(ElementEvent e) => { remove(d, page, s, bump, bumpDesk); }}>{icon("trash", "sm")}<span class="label">Delete</span></button>
+  </div>;
+}
+
 /** The pane beside a disk listing: the selected file, shown. */
 Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
   string path = join(s.dir, s.selected);
+  string[] names = chosen(s);
+  if (names.len() > 1) {
+    i64 total = 0;
+    i32 folders = 0;
+    for (i32 i = 0; i < s.items.len(); i++) {
+      if (isPicked(s, s.items[i].name)) { if (s.items[i].isDir) { folders++; } else { total += s.items[i].size; } }
+    }
+    string detail = folders == 0 ? sizeOf(total) : (folders == names.len() ? plural(folders, "folder") : "\{sizeOf(total)} and \{plural(folders, "folder")}");
+    return <div class="pane preview">
+      <div class="phead"><div class="tile c-folder">{icon("layers", "lg")}</div>
+        <div class="who"><div class="nm">{countOf(names.len())} selected</div><div class="meta num">{detail}</div></div></div>
+      <div class="pactions">{selectionActions(d, page, s, bump, bumpDesk)}</div>
+      <div class="placeholder"><div>Drag them onto a folder, the desktop or the Trash —<br/>hold Ctrl as you let go to copy instead.</div></div>
+    </div>;
+  }
   if (s.selected == "") {
     return <div class="pane preview"><div class="placeholder"><div>{icon("layers", "")}
-      <div>Select something to see it here.<br/>Double-click to open it.</div></div></div></div>;
+      {inTrash(s.dir) ? <div>Select something to restore it,<br/>or to delete it for good.</div> : <div>Select something to see it here.<br/>Double-click to open it.</div>}</div></div></div>;
   }
   Item? found = null;
   for (i32 i = 0; i < s.items.len(); i++) { if (s.items[i].name == s.selected) { found = s.items[i]; } }
   if (found is null) { return <div class="pane preview"></div>; }
   Item it = found!;
   fn<void()> openIt = () => {
-    if (it.isDir) { s.dir = path; s.selected = ""; w.arg = path; d.dirty = true; bump(); return; }
+    if (it.isDir) { goTo(d, w, s, path, bump); return; }
     if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
     openPath(d, path, false);
     bumpDesk();
   };
+  bool trash = inTrash(s.dir);
   Node actions = <div class="actions">
-    {!it.isDir && appFor(it.name) == "files"
+    {!it.isDir && appFor(it.name) == "files" && !trash
       ? <button class="btn primary" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>
       : <button class="btn" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>}
-    {!it.isDir && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
+    {!it.isDir && !trash && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
       ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { open(d, "editor", path, it.name, "edit"); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
       : Node.Text("")}
-    <button class="btn" title="Rename (F2)" onclick={(ElementEvent e) => { s.renaming = it.name; s.draft = it.name; bump(); }}>{icon("rename", "sm")}<span class="label">Rename</span></button>
-    <button class={s.confirming == it.name ? "btn danger" : "btn"} title="Delete"
-            onclick={(ElementEvent e) => { remove(d, s, bump, bumpDesk); }}>{icon("trash", "sm")}<span class="label">{s.confirming == it.name ? "Delete for good?" : "Delete"}</span></button>
+    {!trash ? <button class="btn" title="Rename (F2)" onclick={(ElementEvent e) => { s.renaming = it.name; s.draft = it.name; bump(); }}>{icon("rename", "sm")}<span class="label">Rename</span></button>
+            : Node.Text("")}
+    {selectionActions(d, page, s, bump, bumpDesk)}
   </div>;
   if (it.isDir) {
     return <div class="pane preview">
@@ -417,8 +648,8 @@ Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<voi
   </div>;
 }
 
-/** A Files window's contents. */
-export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+/** A Files window's contents. `drop` is the desktop's `dropKey`, and `clipN` how much is waiting to be pasted. */
+export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev, string drop, i32 clipN) {
   FilesState s = ui.memo<FilesState>("", () => filesState(""));
   auto version = ui.state(0);
   fn<void()> bump = () => { version.update((i32 v) => v + 1); };
@@ -437,11 +668,11 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
     return () => { };
   });
   ui.effect("\{s.dir}|\{fsRev}|\{s.reload}", () => { load(d.fs, s, bump); return () => { }; });
-  // The window is named for where it is: a folder, Home, or the archive it is inside.
+  // The window is named for where it is: a folder, Home, the Trash, or the archive it is inside.
   Model? inArch = s.arch;
   ui.effect("\{s.dir}|\{inArch is not null}|\{s.archPath}", () => {
-    string title = inArch is not null ? leafOf(s.archPath) : (s.dir == "" ? "Home" : leafOf(s.dir));
-    string ic = inArch is not null ? "archive" : (s.dir == "" ? "home" : "folder");
+    string title = inArch is not null ? leafOf(s.archPath) : (s.dir == "" ? "Home" : (s.dir == TRASH ? "Trash" : leafOf(s.dir)));
+    string ic = inArch is not null ? "archive" : (s.dir == "" ? "home" : (s.dir == TRASH ? "trash" : "folder"));
     if (w.title != title || w.icon != ic) { w.title = title; w.icon = ic; d.dirty = true; bumpDesk(); }
     return () => { };
   });
@@ -466,6 +697,11 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
     return () => { };
   });
 
+  // While files are dragged, the whole window is a place to drop them: its folder, unless something
+  // inside — a folder row, a breadcrumb — has said first.
+  string? here = dropDir(s);
+  string hereName = here is null ? "" : placeName(here!);
+  fn<void(ElementEvent)>? over = dragging(drop) ? (ElementEvent e) => { hover(d, here, hereName); } : null;
   Node busy = s.busy != "" ? <div class="busy"><div class="card"><span class="spin"></span><span>{s.busy}</span></div></div> : Node.Text("");
   Model? a = s.arch;
   if (a is not null) {
@@ -473,14 +709,14 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
     if (m.busy != "") { busy = <div class="busy"><div class="card"><span class="spin"></span><span>{m.busy}</span></div></div>; }
     if (m.error != "") { d.error = m.error; m.error = ""; bumpDesk(); }
     bool atRoot = m.levels.len() == 1 && top(m).cwd == "";
-    return <div class="files">
+    return <div class="files" onpointermove={over}>
       <header class="ftop">
         <button class="btn ghost icon" title="Up"
                 onclick={(ElementEvent e) => {
                   if (atRoot) { s.arch = null; } else { goUp(m); }
                   bump();
                 }}>{icon("up", "")}</button>
-        <div class="crumbs">{diskCrumbs(s, w, d, bump)}<span class="sep">{icon("chev", "sm")}</span>{crumbs(m, bump)}</div>
+        <div class="crumbs">{diskCrumbs(s, w, d, bump, drop)}<span class="sep">{icon("chev", "sm")}</span>{crumbs(m, bump)}</div>
         <div class="actions">
           <button class="btn primary" title="Unpack this archive into a folder beside it"
                   onclick={(ElementEvent e) => { extractHere(d, page, s, bump, bumpDesk); }}>{icon("download", "sm")}<span class="label">Extract here</span></button>
@@ -494,22 +730,33 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
     </div>;
   }
   Item[] items = sorted(s);
-  return <div class="files">
-    <header class="ftop">
-      <button class="btn ghost icon" title="Up (Backspace)"
-              onclick={(ElementEvent e) => { if (s.dir != "") { s.selected = leafOf(s.dir); s.dir = parentOf(s.dir); w.arg = s.dir; d.dirty = true; bump(); } }}>{icon("up", "")}</button>
-      {diskCrumbs(s, w, d, bump)}
-      <div class="actions">
+  bool trash = inTrash(s.dir);
+  Node actions = trash
+    ? <div class="actions">
+        {s.dir == TRASH && s.items.len() > 0
+          ? <button class={s.confirming == "\0empty" ? "btn danger" : "btn"} title="Delete everything in the Trash, for good"
+                    onclick={(ElementEvent e) => { emptyBin(d, s, bump, bumpDesk); }}>{icon("trash", "sm")}<span class="label">{s.confirming == "\0empty" ? "Empty for good?" : "Empty Trash"}</span></button>
+          : Node.Text("")}
+      </div>
+    : <div class="actions">
+        {clipN > 0 ? <button class="btn primary" title={"Paste (Ctrl+V): \{d.clipCut ? "move" : "copy"} \{nameOrCount(d.clip)} here"}
+                             onclick={(ElementEvent e) => { paste(d, s, bump, bumpDesk); }}>{icon("paste", "sm")}<span class="label">Paste</span></button>
+                   : Node.Text("")}
         <button class="btn" title="A terminal in this folder" onclick={(ElementEvent e) => { open(d, "terminal", s.dir, "Terminal", "terminal"); bumpDesk(); }}>{icon("terminal", "sm")}<span class="label">Terminal</span></button>
         <button class="btn" title="New folder" onclick={(ElementEvent e) => { newFolder(d, s, bump, bumpDesk); }}>{icon("plus", "sm")}<span class="label">New folder</span></button>
         <label class="btn" title="Add files from your computer">{icon("upload", "sm")}<span class="label">Add files</span><input type="file" multiple="" class="hidden"/></label>
-      </div>
+      </div>;
+  return <div class="files" onpointermove={over}>
+    <header class="ftop">
+      <button class="btn ghost icon" title="Up (Backspace)"
+              onclick={(ElementEvent e) => { upFolder(d, w, s, bump); }}>{icon("up", "")}</button>
+      {diskCrumbs(s, w, d, bump, drop)}
+      {actions}
     </header>
     <div class="main">
-      {diskListing(d, w, page, s, items, bump, bumpDesk, cursorRef)}
+      {diskListing(d, w, page, s, items, bump, bumpDesk, cursorRef, drop)}
       {diskPreview(d, w, page, s, bump, bumpDesk)}
     </div>
     {busy}
   </div>;
 }
-

@@ -75,6 +75,49 @@ export string deskCss() {
     .snapghost.m { left: 6px; right: 6px; }
     .edge-r { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; z-index: 100001; }
 
+    /* ── dragging files ── */
+    .desk.carrying, .desk.carrying * { cursor: grabbing !important; }
+    .row, .dicon { user-select: none; -webkit-user-select: none; }
+    .fghost { position: absolute; z-index: 300000; pointer-events: none; display: flex; align-items: center; gap: 7px; max-width: 320px;
+              padding: 7px 11px; border-radius: 10px; font-size: 12.5px; font-weight: 600; background: var(--surface); color: var(--text);
+              border: 1px solid var(--line-strong); box-shadow: var(--shadow-lg); animation: fade .1s both; }
+    .fghost .fwhat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .fghost .fto { color: var(--accent); white-space: nowrap; }
+    .fghost.ok { border-color: color-mix(in oklab, var(--accent) 55%, transparent); }
+    .row.dropon { background: color-mix(in oklab, var(--accent) 18%, transparent) !important; box-shadow: inset 0 0 0 1.5px var(--accent); }
+    .pane.list.dropon .rows { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 55%, transparent); background: color-mix(in oklab, var(--accent) 5%, transparent); }
+    .crumb.dropon { background: color-mix(in oklab, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+    .dicon.dropon { background: color-mix(in oklab, var(--accent) 26%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+    .dtile.c-trash.full::after { content: ""; position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .dtile { position: relative; }
+    .toast .tundo { margin-left: 6px; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+    .toast .tundo:hover { background: var(--accent-soft); }
+
+    /* ── calculator ── */
+    .calc { height: 100%; display: flex; flex-direction: column; background: var(--surface-2); outline: 0; user-select: none; -webkit-user-select: none; }
+    .cdisp { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 18px 12px; gap: 2px; }
+    .chist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 1px; scrollbar-width: thin; }
+    .chrow { display: flex; justify-content: flex-end; gap: 8px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px;
+             padding: 3px 6px; border-radius: 6px; cursor: pointer; text-align: right; }
+    .chrow:hover { background: var(--hover); color: var(--text); }
+    .chrow .chs { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .chrow .cha { font-weight: 650; color: var(--text); white-space: nowrap; }
+    .csub { min-height: 20px; text-align: right; font-size: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .csub.bad { color: var(--bad); }
+    .cmain { text-align: right; font-size: 40px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+    .cmain.m { font-size: 28px; } .cmain.s { font-size: 20px; }
+    .cghost { color: var(--faint); }
+    .ckeys { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 0 12px 12px; }
+    .ck { height: 50px; border: 0; border-radius: 12px; font: inherit; font-size: 19px; font-weight: 550; cursor: pointer; color: var(--text);
+          background: var(--surface); box-shadow: 0 1px 0 var(--line-strong), 0 0 0 1px var(--line) inset; transition: transform .05s, filter .12s; }
+    .ck:hover { filter: brightness(.97); }
+    .ck:active { transform: scale(.97); }
+    .ck.fn { background: var(--sunken); font-size: 16px; color: var(--muted); }
+    .ck.clear { color: var(--bad); }
+    .ck.op { background: var(--accent-soft); color: var(--accent); font-size: 22px; }
+    .ck.eq { background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: white; font-size: 22px; box-shadow: 0 6px 16px -8px var(--accent); }
+    @media (prefers-color-scheme: dark) { .ck:hover { filter: brightness(1.15); } }
+
     /* ── apps inside windows ── */
     .files { display: flex; flex-direction: column; height: 100%; position: relative; }
     .ftop { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface); min-width: 0; }
@@ -134,8 +177,10 @@ export string deskCss() {
              border-radius: 9px; background: transparent; color: var(--text); cursor: pointer; font-size: 12.5px; font-weight: 550; position: relative; }
     .tbwin .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tbwin:hover { background: rgb(255 255 255 / .35); }
-    .tbwin.on { background: var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
-    .tbwin.on::after { content: ""; position: absolute; left: 30%; right: 30%; bottom: 3px; height: 3px; border-radius: 3px; background: var(--accent); }
+    /* The window in front is the one whose button is filled in: tinted with the accent, outlined, its title bolder. */
+    .tbwin.on { background: color-mix(in oklab, var(--accent) 13%, var(--surface)); color: var(--text); font-weight: 650;
+                box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent), 0 1px 3px rgb(0 0 0 / .08); }
+    .tbwin.on:hover { background: color-mix(in oklab, var(--accent) 18%, var(--surface)); }
     .tbwin.min { opacity: .62; }
     .tbright { display: flex; align-items: center; gap: 10px; flex: none; }
     .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 99px;

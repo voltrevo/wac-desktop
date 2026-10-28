@@ -168,3 +168,33 @@ bool has(string[] xs, string x) {
   for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
   return false;
 }
+
+/** Whether `path` is `dir` or somewhere inside it. */
+export bool within(string path, string dir) {
+  return path == dir || dir == "" || (path.len() > dir.len() && path.slice(0, dir.len() + 1) == dir + "/");
+}
+
+/**
+ * Move `from` into the folder `dir`, under a name not taken there; answers the name it got. A rename where
+ * the storage does one, and a copy and a delete where it will not.
+ */
+export async Got<string> moveInto(Vfs fs, string from, string dir) {
+  if (dir != "") { await fs.mkdir(dir); }
+  string name = await freeName(fs, dir, leafOf(from));
+  string to = join(dir, name);
+  Got<bool> r = await fs.rename(from, to);
+  if (r.ok) { return Got(true, name, ""); }
+  Got<bool> c = await copyTree(fs, from, to);
+  if (!c.ok) { await fs.remove(to); return Got(false, "", c.error); }
+  Got<bool> gone = await fs.remove(from);
+  if (!gone.ok) { return Got(false, name, gone.error); }
+  return Got(true, name, "");
+}
+
+/** Copy `from` into the folder `dir`, under a name not taken there; answers the name it got. */
+export async Got<string> copyInto(Vfs fs, string from, string dir) {
+  if (dir != "") { await fs.mkdir(dir); }
+  string name = await freeName(fs, dir, leafOf(from));
+  Got<bool> c = await copyTree(fs, from, join(dir, name));
+  return Got(c.ok, name, c.error);
+}

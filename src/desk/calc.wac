@@ -1,0 +1,419 @@
+// Calculator: a sum typed or clicked, worked out as it is typed, with what came before kept above it.
+//
+// **The sum is text, and the answer is read from it.** What the window holds is the expression as typed —
+// `12+3*4`, in ASCII, with `r` for a square root and `q` for squared — and the answer is whatever a small
+// recursive-descent reading of that text gives, so precedence and brackets are the ordinary ones and an
+// unfinished sum simply has no answer yet. The window's `arg` keeps the text, so a reload brings it back.
+//
+// **Percent is the calculator's, not the programmer's.** `50%` alone is 0.5, but `200 + 10%` is 220: a
+// percentage added to or taken from something is a percentage *of* it, as every pocket calculator does.
+//
+// Answers show twelve significant digits, so `0.1 + 0.2` is 0.3: the binary arithmetic underneath is
+// exact to about sixteen, and the last few are where its rounding shows.
+
+import { Vec } from "core";
+import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.button, html.div, html.span } from "web";
+import { Desk, Win } from "./wm.wac";
+
+// ── reading a sum ───────────────────────────────────────────────────────────
+
+/** What a sum came to: a value, or why there is none. */
+export struct Answer {
+  bool ok;
+  f64 value;
+  string error;
+}
+
+struct Reader {
+  u8[] b;
+  i32 i;
+  bool bad;
+  bool divZero;
+  bool negRoot;
+  /** Whether what was just read was a bare percentage, which `+` and `-` take as a share of their left. */
+  bool pct;
+}
+
+u8 peek(Reader r) { return r.i < r.b.len() ? r.b[r.i] : (0 as u8); }
+bool digitOrDot(u8 c) { return (c >= '0' && c <= '9') || c == '.'; }
+
+f64 root(f64 x) {
+  if (x == 0.0) { return 0.0; }
+  f64 g = x > 1.0 ? x : 1.0;
+  for (i32 k = 0; k < 2000; k++) {
+    f64 next = (g + x / g) / 2.0;
+    if (next == g) { break; }
+    g = next;
+  }
+  return g;
+}
+
+f64 number(Reader r) {
+  f64 v = 0.0;
+  f64 scale = 1.0;
+  bool dot = false;
+  i32 digits = 0;
+  while (digitOrDot(peek(r))) {
+    u8 c = peek(r);
+    r.i++;
+    if (c == '.') { if (dot) { r.bad = true; } dot = true; continue; }
+    v = v * 10.0 + ((c - '0') as i32 as f64);
+    if (dot) { scale = scale * 10.0; }
+    digits++;
+  }
+  if (digits == 0) { r.bad = true; }
+  return v / scale;
+}
+
+f64 primary(Reader r) {
+  u8 c = peek(r);
+  if (c == '(') {
+    r.i++;
+    f64 v = sum(r);
+    if (peek(r) == ')') { r.i++; } else if (r.i < r.b.len()) { r.bad = true; }
+    return v;
+  }
+  if (digitOrDot(c)) { return number(r); }
+  r.bad = true;
+  return 0.0;
+}
+
+f64 postfix(Reader r) {
+  f64 v = primary(r);
+  r.pct = false;
+  while (true) {
+    u8 c = peek(r);
+    if (c == '%') { r.i++; v = v / 100.0; r.pct = true; }
+    else if (c == 'q') { r.i++; v = v * v; r.pct = false; }
+    else { break; }
+  }
+  return v;
+}
+
+f64 unary(Reader r) {
+  u8 c = peek(r);
+  if (c == '-') { r.i++; return 0.0 - unary(r); }
+  if (c == '+') { r.i++; return unary(r); }
+  if (c == 'r') {
+    r.i++;
+    f64 x = unary(r);
+    r.pct = false;
+    if (x < 0.0) { r.negRoot = true; return 0.0; }
+    return root(x);
+  }
+  return postfix(r);
+}
+
+f64 product(Reader r) {
+  f64 v = unary(r);
+  bool pct = r.pct;
+  while (true) {
+    u8 c = peek(r);
+    if (c == '*' || c == '/') {
+      r.i++;
+      f64 x = unary(r);
+      pct = false;
+      if (c == '*') { v = v * x; } else if (x == 0.0) { r.divZero = true; } else { v = v / x; }
+    } else if (c == '(' || c == 'r' || (digitOrDot(c) && r.i > 0 && r.b[r.i - 1] == ')')) {
+      // Written side by side, as in `2(3+4)` or `3√9`: multiplied.
+      v = v * unary(r);
+      pct = false;
+    } else {
+      break;
+    }
+  }
+  r.pct = pct;
+  return v;
+}
+
+f64 sum(Reader r) {
+  f64 v = product(r);
+  while (true) {
+    u8 c = peek(r);
+    if (c != '+' && c != '-') { break; }
+    r.i++;
+    f64 x = product(r);
+    if (r.pct) { x = v * x; }
+    v = c == '+' ? v + x : v - x;
+  }
+  return v;
+}
+
+/** Brackets left open, which the answer closes for you. */
+export i32 openBrackets(string s) {
+  i32 n = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '(') { n++; } else if (b[i] == ')' && n > 0) { n--; } }
+  return n;
+}
+
+/** Work out `s`, closing any brackets left open. */
+export Answer evaluate(string s) {
+  string closed = s;
+  for (i32 k = openBrackets(s); k > 0; k--) { closed = closed + ")"; }
+  Reader r = Reader(closed.toBytes(), 0, false, false, false, false);
+  if (r.b.len() == 0) { return Answer(false, 0.0, ""); }
+  f64 v = sum(r);
+  if (r.bad || r.i != r.b.len()) { return Answer(false, 0.0, "Not a complete sum"); }
+  if (r.divZero) { return Answer(false, 0.0, "Can't divide by zero"); }
+  if (r.negRoot) { return Answer(false, 0.0, "No square root of a negative number"); }
+  if (v != v || v - v != 0.0) { return Answer(false, 0.0, "Too large to show"); }
+  return Answer(true, v, "");
+}
+
+// ── showing numbers ─────────────────────────────────────────────────────────
+
+f64 tenTo(i32 k) {
+  f64 v = 1.0;
+  for (i32 i = 0; i < k; i++) { v = v * 10.0; }
+  return v;
+}
+
+/** `x` to twelve significant digits, as the shortest text that reads back as that. */
+export string plain(f64 x) {
+  if (x == 0.0) { return "0"; }
+  f64 a = x < 0.0 ? 0.0 - x : x;
+  i32 e = 0;
+  while (a >= 10.0 && e < 400) { a = a / 10.0; e++; }
+  while (a < 1.0 && e > -400) { a = a * 10.0; e--; }
+  i32 k = 11 - e;
+  f64 r = x;
+  if (k >= 0 && k <= 22) { r = (x * tenTo(k)).round() / tenTo(k); }
+  else if (k < 0 && k >= -22) { r = (x / tenTo(0 - k)).round() * tenTo(0 - k); }
+  if (r == 0.0) { return "0"; }
+  return "\{r}";
+}
+
+/** Thousands separated in every run of digits before a point: `1234567.891` is `1,234,567.891`. */
+string grouped(string s) {
+  u8[] b = s.toBytes();
+  string out = "";
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] >= '0' && b[i] <= '9') {
+      i32 j = i;
+      while (j < b.len() && b[j] >= '0' && b[j] <= '9') { j++; }
+      string run = s.slice(i, j);
+      // A run after a point, or in an exponent, is not grouped.
+      bool after = i > 0 && (b[i - 1] == '.' || b[i - 1] == 'e' || b[i - 1] == '+' && i > 1 && b[i - 2] == 'e');
+      if (!after && run.len() > 3) {
+        string g = "";
+        i32 lead = run.len() % 3 == 0 ? 3 : run.len() % 3;
+        g = run.slice(0, lead);
+        for (i32 p = lead; p < run.len(); p += 3) { g = g + "," + run.slice(p, p + 3); }
+        run = g;
+      }
+      out = out + run;
+      i = j;
+    } else {
+      out = out + s.slice(i, i + 1);
+      i++;
+    }
+  }
+  return out;
+}
+
+/** An answer as the window shows it. */
+export string shown(f64 x) { return grouped(plain(x)); }
+
+/** The typed sum as the window shows it: real operator signs, and thousands separated. */
+export string pretty(string s) {
+  string g = grouped(s);
+  string out = "";
+  u8[] b = g.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    u8 c = b[i];
+    if (c == '*') { out = out + " × "; }
+    else if (c == '/') { out = out + " ÷ "; }
+    else if (c == '+') { out = out + (i == 0 || b[i - 1] == '(' || b[i - 1] == 'e' ? "+" : " + "); }
+    else if (c == '-') { out = out + (i == 0 || b[i - 1] == '(' || b[i - 1] == '*' || b[i - 1] == '/' || b[i - 1] == 'r' || b[i - 1] == 'e' ? "−" : " − "); }
+    else if (c == 'r') { out = out + "√"; }
+    else if (c == 'q') { out = out + "²"; }
+    else { out = out + g.slice(i, i + 1); }
+  }
+  return out;
+}
+
+// ── typing ──────────────────────────────────────────────────────────────────
+
+export struct CalcState {
+  string expr;
+  /** The sums worked out so far, oldest first, and what each came to. */
+  Vec<string> sums;
+  Vec<f64> answers;
+  /** The sum on show is an answer: a digit starts a new one, an operator carries it on. */
+  bool fresh;
+  string error;
+}
+
+u8 last(string s) { return s.len() == 0 ? (0 as u8) : s.toBytes()[s.len() - 1]; }
+bool isOp(u8 c) { return c == '+' || c == '-' || c == '*' || c == '/'; }
+bool ends(u8 c) { return (c >= '0' && c <= '9') || c == ')' || c == '%' || c == 'q' || c == '.'; }
+
+/** Carry on from the answer on show, or start again, as the next key needs. */
+void carry(CalcState s, bool fromAnswer) {
+  if (!s.fresh) { return; }
+  s.fresh = false;
+  if (!fromAnswer) { s.expr = ""; return; }
+  // An answer too large or too small to write without an exponent cannot be typed after.
+  if (s.expr.indexOf("e") >= 0) { s.expr = ""; }
+}
+
+/** The key `k` — `0`–`9`, `.`, an operator, a bracket, `%`, `r`, `q`, `=`, `C`, `<` (back) or `±`. */
+export void press(CalcState s, string k) {
+  s.error = "";
+  if (k == "C") { s.expr = ""; s.fresh = false; return; }
+  if (k == "<") { if (s.fresh) { s.expr = ""; s.fresh = false; } else if (s.expr.len() > 0) { s.expr = s.expr.slice(0, s.expr.len() - 1); } return; }
+  if (k == "=") {
+    if (s.expr == "" || s.fresh) { return; }
+    Answer a = evaluate(s.expr);
+    if (!a.ok) { s.error = a.error == "" ? "Not a complete sum" : a.error; return; }
+    string closed = s.expr;
+    for (i32 n = openBrackets(s.expr); n > 0; n--) { closed = closed + ")"; }
+    s.sums.push(closed);
+    s.answers.push(a.value);
+    if (s.sums.len() > 50) { s.sums.remove(0); s.answers.remove(0); }
+    s.expr = plain(a.value);
+    s.fresh = true;
+    return;
+  }
+  if (k == "±") {
+    carry(s, true);
+    // The last number changes sign: a minus written in front of it comes or goes.
+    u8[] b = s.expr.toBytes();
+    i32 j = b.len();
+    while (j > 0 && digitOrDot(b[j - 1])) { j--; }
+    if (j == b.len()) { s.expr = s.expr + "-"; return; }
+    bool signed = j > 0 && b[j - 1] == '-' && (j == 1 || isOp(b[j - 2]) || b[j - 2] == '(' || b[j - 2] == 'r');
+    s.expr = signed ? s.expr.slice(0, j - 1) + s.expr.slice(j, s.expr.len()) : s.expr.slice(0, j) + "-" + s.expr.slice(j, s.expr.len());
+    return;
+  }
+  u8 c = k.toBytes()[0];
+  if ((c >= '0' && c <= '9') || c == '.') {
+    carry(s, false);
+    if (c == '.') {
+      u8[] b = s.expr.toBytes();
+      i32 j = b.len();
+      while (j > 0 && b[j - 1] >= '0' && b[j - 1] <= '9') { j--; }
+      if (j > 0 && b[j - 1] == '.') { return; }
+      if (j == b.len()) { s.expr = s.expr + "0"; }
+    }
+    if (last(s.expr) == ')' || last(s.expr) == '%' || last(s.expr) == 'q') { s.expr = s.expr + "*"; }
+    s.expr = s.expr + k;
+    return;
+  }
+  if (isOp(c)) {
+    carry(s, true);
+    u8 p = last(s.expr);
+    if (s.expr == "") { s.expr = c == '-' ? "-" : "0" + k; return; }
+    if (c == '-' && (p == '*' || p == '/' || p == '(' || p == 'r')) { s.expr = s.expr + k; return; }
+    if (isOp(p) || p == '.') {
+      // A second operator replaces the first, and a minus that was a sign goes with it.
+      string cut = s.expr.slice(0, s.expr.len() - 1);
+      if (isOp(last(cut))) { cut = cut.slice(0, cut.len() - 1); }
+      if (cut == "" || last(cut) == '(' || last(cut) == 'r') { s.expr = cut; return; }
+      s.expr = cut + k;
+      return;
+    }
+    if (p == '(' || p == 'r') { return; }
+    s.expr = s.expr + k;
+    return;
+  }
+  if (c == '(' || c == 'r') {
+    carry(s, false);
+    s.expr = s.expr + k;
+    return;
+  }
+  if (c == ')') {
+    if (openBrackets(s.expr) > 0 && ends(last(s.expr))) { s.expr = s.expr + k; }
+    return;
+  }
+  if (c == '%' || c == 'q') {
+    carry(s, true);
+    if (ends(last(s.expr)) && last(s.expr) != '.') { s.expr = s.expr + k; }
+    return;
+  }
+}
+
+export CalcState calcState(string expr) { return CalcState(expr, Vec.create(), Vec.create(), false, ""); }
+export string exprOf(CalcState s) { return s.expr; }
+export string errorOf(CalcState s) { return s.error; }
+
+// ── the window ──────────────────────────────────────────────────────────────
+
+/** The key a keyboard key means, or "". */
+string keyFor(string key) {
+  if (key.len() == 1) {
+    u8 c = key.toBytes()[0];
+    if ((c >= '0' && c <= '9') || c == '.' || c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' || c == '%') { return key; }
+    if (c == ',') { return "."; }
+    if (c == 'x' || c == 'X') { return "*"; }
+    if (c == '=') { return "="; }
+    if (c == '^') { return "q"; }
+    if (c == 'r' || c == 'R') { return "r"; }
+    if (c == 'c' || c == 'C') { return "C"; }
+    return "";
+  }
+  if (key == "Enter") { return "="; }
+  if (key == "Backspace") { return "<"; }
+  if (key == "Escape" || key == "Delete") { return "C"; }
+  return "";
+}
+
+/** A Calculator window's contents. */
+export Node CalcApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  CalcState s = ui.memo<CalcState>("", () => calcState(w.arg));
+  auto version = ui.state(0);
+  Ref root = ui.ref();
+  fn<void()> refocus = () => { if (root.element() is not null) { root.element()!.focus(); } };
+  ui.effect("", () => { refocus(); return () => { }; });
+  fn<void(string)> key = (string k) => {
+    press(s, k);
+    if (w.arg != s.expr) { w.arg = s.expr; d.dirty = true; }
+    version.update((i32 v) => v + 1);
+  };
+  fn<Node(string, string, string)> b = (string label, string k, string cls) =>
+    <button class={"ck " + cls} tabindex="-1" title={k == "r" ? "Square root" : (k == "q" ? "Squared" : (k == "<" ? "Back" : (k == "±" ? "Change sign" : "")))}
+            onclick={(ElementEvent e) => { key(k); }}>{label}</button>;
+
+  // The history: each sum and its answer, the newest nearest the display; a click takes the answer.
+  Node[] past = Node[].filled(s.sums.len(), Node.Text(""));
+  for (i32 i = 0; i < s.sums.len(); i++) {
+    f64 v = s.answers.get(i);
+    past[i] = <button class="chrow" tabindex="-1" title="Use this answer"
+                      onclick={(ElementEvent e) => { s.expr = plain(v); s.fresh = true; s.error = ""; w.arg = s.expr; d.dirty = true; version.update((i32 n) => n + 1); }}>
+      <span class="chs">{pretty(s.sums.get(i))} =</span><span class="cha num">{shown(v)}</span></button>;
+  }
+  Answer live = evaluate(s.expr);
+  bool bare = true;
+  u8[] eb = s.expr.toBytes();
+  for (i32 i = 0; i < eb.len(); i++) { if (!digitOrDot(eb[i]) && !(i == 0 && eb[i] == '-')) { bare = false; } }
+  string sub = s.error != "" ? s.error
+             : (s.fresh && s.sums.len() > 0 ? pretty(s.sums.get(s.sums.len() - 1)) + " ="
+             : (live.ok && !bare ? "= " + shown(live.value) : ""));
+  string main = s.expr == "" ? "0" : (s.fresh ? shown(live.value) : pretty(s.expr));
+  string ghost = "";
+  for (i32 k = s.fresh ? 0 : openBrackets(s.expr); k > 0; k--) { ghost = ghost + ")"; }
+  string size = main.len() + ghost.len() > 22 ? " s" : (main.len() + ghost.len() > 13 ? " m" : "");
+  return <div class="calc" tabindex="0" ref={root} prevent="Enter Backspace Escape / '"
+              onkeydown={(ElementEvent e) => {
+                if ((e.mods & (MOD_CTRL | MOD_META)) != 0) { return; }
+                string k = keyFor(e.value);
+                if (k != "") { key(k); }
+              }}
+              onpointerup={(ElementEvent e) => { refocus(); }}>
+    <div class="cdisp">
+      <div class="chist">{past}</div>
+      <div class={s.error != "" ? "csub bad" : "csub"}>{sub}</div>
+      <div class={"cmain num" + size}>{main}<span class="cghost">{ghost}</span></div>
+    </div>
+    <div class="ckeys">
+      {b("(", "(", "fn")}{b(")", ")", "fn")}{b("√", "r", "fn")}{b("x²", "q", "fn")}
+      {b("C", "C", "fn clear")}{b("⌫", "<", "fn")}{b("%", "%", "fn")}{b("÷", "/", "op")}
+      {b("7", "7", "")}{b("8", "8", "")}{b("9", "9", "")}{b("×", "*", "op")}
+      {b("4", "4", "")}{b("5", "5", "")}{b("6", "6", "")}{b("−", "-", "op")}
+      {b("1", "1", "")}{b("2", "2", "")}{b("3", "3", "")}{b("+", "+", "op")}
+      {b("±", "±", "")}{b("0", "0", "")}{b(".", ".", "")}{b("=", "=", "eq")}
+    </div>
+  </div>;
+}
