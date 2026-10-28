@@ -1,17 +1,19 @@
-// The desktop's disk: wac's own filesystem, `packages/fs`'s `Fs`, shared with every terminal.
+// The desktop's disk: std's `Files`, shared with every terminal.
 //
 // **One filesystem, two backings.** A page served over http gets the browser's Origin Private File System
-// through `page.sys`, and `Fs.onHost` puts its root there — what is written survives a reload. A page
-// opened from a `file://` URL is refused that storage (Chromium answers a SecurityError), so the same
-// desktop runs on `Fs.inMemory` instead, and says so. Either way it is one `Fs`: Files writes a file and
-// a terminal's `ls` sees it, because they are asking the same filesystem rather than two that agree.
+// as `page.sys.files()` — what is written survives a reload. A page opened from a `file://` URL is refused
+// that storage (Chromium answers a SecurityError), so the same desktop runs on a `MemoryStore` instead,
+// and says so. Either way it is one `Files`, with box's `/bin`, `/proc` and `/dev` mounted over it: Files
+// writes a file and a terminal's `ls` sees it, because they are asking the same filesystem rather than two
+// that agree.
 //
 // The apps see it through `Vfs`, which takes paths relative to the root — "" is the root,
 // "Desktop/notes.md" a file — and answers with the host's own sentence on failure.
 
-import { Ticket, Vec } from "core";
-import { Cli, Core, FileResult, Change, Stat } from "std";
-import { fs.Fs } from "wac";
+import { Result, Ticket, Vec, flatten } from "core";
+import { Files, MemoryStore, Sys } from "std";
+import { fs.ProcTable } from "wac";
+import { Page } from "web";
 
 export struct Info {
   bool isDir;
@@ -31,7 +33,9 @@ export struct Vfs {
   /** Whether what is written here outlives the tab. */
   bool persistent;
   /** The filesystem underneath, which a terminal's shell is handed too. */
-  Fs fs;
+  Files fs;
+  /** The process table every terminal's shell shares, as `ps` shows it: one system, many shells. */
+  ProcTable table;
   fn<Ticket<Got<u8[]>>(string)> read;
   fn<Ticket<Got<bool>>(string, u8[])> write;
   fn<Ticket<Got<Info>>(string)> stat;
@@ -63,47 +67,57 @@ export string join(string dir, string name) { return dir == "" ? name : dir + "/
 
 // ── over wac's filesystem ──────────────────────────────────────────────────
 
-/** `p`, relative to the root, as `Fs` wants it: absolute. */
+/** `p`, relative to the root, as `Files` wants it: absolute. */
 string abs(string p) { return "/" + p; }
 
-async Got<u8[]> fsRead(Fs fs, string p) {
-  FileResult f = await fs.readFile(abs(p));
-  return Got(f.ok, f.bytes, f.error);
+async Got<u8[]> fsRead(Files fs, string p) {
+  match (await fs.readFile(abs(p))) {
+    Ok(b): { return Got(true, b, ""); }
+    Err(e): { return Got(false, u8[](), "\{e}"); }
+  }
 }
 
 /** Write a file, making the folders above it first: the browser's storage will not write into nothing. */
-async Got<bool> fsWrite(Fs fs, string p, u8[] b) {
+async Got<bool> fsWrite(Files fs, string p, u8[] b) {
   string dir = parentOf(p);
   if (dir != "") {
-    Change made = await fs.mkdir(abs(dir), true);
-    if (!made.ok()) { return Got(false, false, made.message); }
+    Got<bool> made = await fsChange(fs.mkdir(abs(dir), true));
+    if (!made.ok) { return made; }
   }
-  Change c = await fs.writeFile(abs(p), b);
-  return Got(c.ok(), c.ok(), c.message);
+  return await fsChange(fs.writeFile(abs(p), b));
 }
 
-async Got<Info> fsStat(Fs fs, string p) {
-  Stat s = await fs.stat(abs(p));
-  if (!s.exists) { return Got(false, Info(false, 0, 0), "\{p}: no such file or folder"); }
-  return Got(true, Info(s.isDir, s.size, s.modifiedMillis), "");
+async Got<Info> fsStat(Files fs, string p) {
+  match (await fs.stat(abs(p))) {
+    Ok(s): {
+      if (!s.exists) { return Got(false, Info(false, 0, 0), "\{p}: no such file or folder"); }
+      return Got(true, Info(s.isDir, s.size, s.modifiedMillis), "");
+    }
+    Err(e): { return Got(false, Info(false, 0, 0), "\{e}"); }
+  }
 }
 
-async Got<string[]> fsList(Fs fs, string p) {
-  string[]? names = await fs.readDir(abs(p));
-  if (names is null) { return Got(false, string[](), "\{p}: could not be listed"); }
-  return Got(true, names!, "");
+async Got<string[]> fsList(Files fs, string p) {
+  match (await fs.readDir(abs(p))) {
+    Ok(names): { return Got(true, names, ""); }
+    Err(e): { return Got(false, string[](), "\{e}"); }
+  }
 }
 
-async Got<bool> fsChange(Ticket<Change> pending) {
-  Change c = await pending;
-  return Got(c.ok(), c.ok(), c.message);
+/** Any change's answer — a `Result<void, F>` for whichever fault `F` that change can have — as a `Got`. */
+async Got<bool> fsChange<F>(Ticket<Result<void, F>> pending) {
+  match (await pending) {
+    Ok(v): { return Got(true, true, ""); }
+    Err(e): { return Got(false, false, "\{e}"); }
+  }
 }
 
 /** The apps' view of `fs`. */
-export Vfs vfsOf(Fs fs, bool persistent) {
+export Vfs vfsOf(Files fs, ProcTable table, bool persistent) {
   return Vfs(
     persistent,
     fs,
+    table,
     (string p) => fsRead(fs, p),
     (string p, u8[] b) => fsWrite(fs, p, b),
     (string p) => fsStat(fs, p),
@@ -114,15 +128,20 @@ export Vfs vfsOf(Fs fs, bool persistent) {
   );
 }
 
+/** The time now: a clock is answered as it is asked, so waiting on it never blocks the page. */
+export i64 nowMillis(Page page) { return flatten(page.sys.clock().nowMillis().wait()).orElse(0 as i64); }
+
 /** Whether the browser's storage answers at all: a `file://` page is refused it outright. */
-export async bool usable(Cli cli) {
-  Change c = await cli.mkdir("Desktop", true).ticket();
-  return c.ok();
+export async bool usable(Files host) {
+  match (await host.mkdir("Desktop", true)) {
+    Ok(v): { return true; }
+    Err(e): { return false; }
+  }
 }
 
 /** The desktop's filesystem: on the browser's storage when it will have us, in memory when it will not. */
-export Fs filesystem(Cli cli, bool persistent, i64 now) {
-  return persistent ? Fs.onHost(cli, now) : Fs.inMemory(now);
+export Files filesystem(Sys sys, bool persistent) {
+  return persistent ? sys.files() : MemoryStore.create(sys.clock()).asUser("root");
 }
 
 // ── whole-folder operations ────────────────────────────────────────────────

@@ -21,13 +21,13 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `25a34468`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
+wac is pinned to one commit, `1afa908e`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
 `wac` command itself (bootstrapped from that commit — see README). Change them together.
 
     wac task build && wac task test && wac task test:desk && wac task test:drops
 
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (35 unit tests, 62 desktop checks, 18 drop cases).
+  All of them pass at the latest commit (36 unit tests, 62 desktop checks, 18 drop cases).
 - `wac update` could not reach GitHub from the container this was made in ("network access not
   granted"). `sh tools/use-local-wac.sh <wac clone>` fills the package cache from a clone instead.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs (about 2.5 minutes, mostly

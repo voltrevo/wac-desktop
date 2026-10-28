@@ -3,7 +3,8 @@
 import { Ticket } from "core";
 import { Runner } from "web";
 import { Vfs, Got, Info, copyTree, freeName, vfsOf } from "../src/desk/vfs.wac";
-import { fs.Fs } from "wac";
+import { MemoryStore, Sys } from "std";
+import { fs.ProcTable } from "wac";
 import { Desk, Win, close, dragTo, endDrag, find, focus, hintRight, minimise, newDesk, open, restore, sessionOf,
          startMove, startResize, taskbarClick, toggleMax } from "../src/desk/wm.wac";
 
@@ -37,16 +38,19 @@ async string diskScenario(Vfs fs) {
   return "";
 }
 
-export string test_the_disk_behaves_like_a_disk() {
+export string test_the_disk_behaves_like_a_disk(Sys sys) {
   Runner r = Runner.create();
   schedule r.take;
-  return run(r, diskScenario(vfsOf(Fs.inMemory(0), false)));
+  return run(r, diskScenario(memoryDisk(sys)));
 }
 
-Desk desk() { return newDesk(vfsOf(Fs.inMemory(0), false)); }
+/** A disk in memory, as a page opened from a file gets. */
+Vfs memoryDisk(Sys sys) { return vfsOf(MemoryStore.create(sys.clock()).asUser("root"), ProcTable.create(), false); }
 
-export string test_windows_open_cascaded_and_stack() {
-  Desk d = desk();
+Desk desk(Sys sys) { return newDesk(memoryDisk(sys)); }
+
+export string test_windows_open_cascaded_and_stack(Sys sys) {
+  Desk d = desk(sys);
   Win a = open(d, "files", "", "Home", "home");
   Win b = open(d, "viewer", "x.md", "x.md", "text");
   if (b.x <= a.x || b.y <= a.y) { return "not cascaded: \{a.x},\{a.y} then \{b.x},\{b.y}"; }
@@ -62,8 +66,8 @@ export string test_windows_open_cascaded_and_stack() {
   return "";
 }
 
-export string test_minimise_close_and_the_taskbar() {
-  Desk d = desk();
+export string test_minimise_close_and_the_taskbar(Sys sys) {
+  Desk d = desk(sys);
   Win a = open(d, "files", "", "Home", "home");
   Win b = open(d, "editor", "", "Untitled", "edit");
   minimise(d, b.id);
@@ -77,8 +81,8 @@ export string test_minimise_close_and_the_taskbar() {
   return "";
 }
 
-export string test_dragging_moves_and_resizing_keeps_a_minimum() {
-  Desk d = desk();
+export string test_dragging_moves_and_resizing_keeps_a_minimum(Sys sys) {
+  Desk d = desk(sys);
   Win w = open(d, "files", "", "Home", "home");
   i32 x = w.x;
   i32 y = w.y;
@@ -108,8 +112,8 @@ export string test_dragging_moves_and_resizing_keeps_a_minimum() {
   return "";
 }
 
-export string test_snapping_and_maximising() {
-  Desk d = desk();
+export string test_snapping_and_maximising(Sys sys) {
+  Desk d = desk(sys);
   Win w = open(d, "files", "", "Home", "home");
   i32 x = w.x;
   startMove(d, w.id, x + 50, w.y + 10);
@@ -131,8 +135,8 @@ export string test_snapping_and_maximising() {
   return "";
 }
 
-export string test_the_session_comes_back() {
-  Desk d = desk();
+export string test_the_session_comes_back(Sys sys) {
+  Desk d = desk(sys);
   Win a = open(d, "files", "Desktop", "Desktop", "folder");
   Win b = open(d, "editor", "notes \"one\".txt", "notes \"one\".txt", "edit");
   Win c = open(d, "viewer", "x.md", "x.md", "text");
@@ -141,7 +145,7 @@ export string test_the_session_comes_back() {
   a.snap = 2;
   minimise(d, c.id);
   focus(d, b.id);
-  Desk e = desk();
+  Desk e = desk(sys);
   i32 n = restore(e, sessionOf(d));
   if (n != 3) { return "restored \{n} windows"; }
   Win? b2 = null;
@@ -153,6 +157,6 @@ export string test_the_session_comes_back() {
     if (w.app == "files" && w.snap != 2) { return "the snap"; }
     if (w.app == "viewer" && !w.min) { return "minimised"; }
   }
-  if (restore(desk(), "{ not json".toBytes()) != 0) { return "a damaged session restored something"; }
+  if (restore(desk(sys), "{ not json".toBytes()) != 0) { return "a damaged session restored something"; }
   return "";
 }

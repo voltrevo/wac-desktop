@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned to one wac commit,
-[`25a34468`](https://github.com/voltrevo/wac/commit/25a34468293a1eeb0fa6dbd9fb8b002e98eec735).** The `wac`
+[`1afa908e`](https://github.com/voltrevo/wac/commit/1afa908ef255fc585c444447b18ed2b50ad6568d).** The `wac`
 command should be built from that commit, and `wac.json5` names it as the `ref` of every wac dependency —
 `wac` itself (its packages, as `import { json.parse } from "wac"`), `web` and `webbuild` — with `wac.lock`
 agreeing. To change it, change all three refs and the lock together, and rebuild `wac` from the new
@@ -25,7 +25,7 @@ git clone https://github.com/voltrevo/wac ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout 25a34468293a1eeb0fa6dbd9fb8b002e98eec735
+git -C ~/src/wac checkout 1afa908ef255fc585c444447b18ed2b50ad6568d
 ```
 
 ```bash
@@ -106,7 +106,7 @@ shares, so their pages can see each other's files.
 | `src/desktop.wac` | the desktop's page |
 | `src/desk/shell.wac` | the desktop: startup, icons, window frames, taskbar and launcher, files arriving, saving the layout |
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
-| `src/desk/vfs.wac` | the disk: wac's `Fs` on the browser's storage, or in memory, as the apps use it; copying, free names |
+| `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
@@ -136,9 +136,10 @@ shares, so their pages can see each other's files.
   reason. As a backstop for this project's own parsing — a trap cannot be caught — work marks itself in
   progress; a page runs on one thread, so a timer that finds the mark still there knows the work died,
   and says so. The loops that receive files never open anything themselves.
-- **One disk, many shells.** The desktop makes one wac `Fs` at startup — on the browser's storage, or in
-  memory — and mounts wac's system on it (`/bin`, `/proc`, `/dev`) as box does. Files, the Viewer and
-  the Editor read and write it through `vfs.wac`; every terminal is `Session.startOn` that same `Fs`. A
+- **One disk, many shells.** The desktop makes one std `Files` at startup — on the browser's storage, or
+  in memory — and mounts wac's system over it (`/bin`, `/proc`, `/dev`) as box does, with one process
+  table. Files, the Viewer and the Editor read and write it through `vfs.wac`; every terminal is
+  `Session.startOn` those same files and that table. A
   command that finishes bumps the disk's revision, so every Files window looks again. Programs run as
   box applets in workers: the page is built with `--spawn applet`, and `src/desktop.wac` exports one.
 - **Size.** Carrying the shell takes the page from 1.8 MB to about 3.6 MB of module. It also needs a

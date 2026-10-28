@@ -7,7 +7,7 @@
 import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
          html.span } from "web";
-import { Vfs, Got, Info, copyInto, join, leafOf, moveInto, parentOf, freeName, within } from "./vfs.wac";
+import { Vfs, Got, Info, nowMillis, copyInto, join, leafOf, moveInto, parentOf, freeName, within } from "./vfs.wac";
 import { Desk, Win, canDrop, dragging, dropOn, hover, moved, open, pressFiles } from "./wm.wac";
 import { Origin, TRASH, deleteForGood, emptyTrash, inTrash, originOf, readOrigins, restoreFromTrash, toTrash } from "./trash.wac";
 import { Extracted, extract } from "../archive.wac";
@@ -481,7 +481,7 @@ async void remove(Desk d, Page page, FilesState s, fn<void()> bump, fn<void()> b
     d.note = "Deleted \{nameOrCount(names)} for good";
     d.undo = string[]();
   } else {
-    Got<string[]> r = await toTrash(d.fs, pathsOf(s, names), page.sys.core.nowMillis().wait());
+    Got<string[]> r = await toTrash(d.fs, pathsOf(s, names), nowMillis(page));
     if (!r.ok) { d.error = r.error; }
     if (r.value.len() > 0) { d.note = "Moved \{nameOrCount(names)} to the Trash"; d.undo = r.value; }
   }

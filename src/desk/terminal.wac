@@ -2,9 +2,9 @@
 //
 // **The shell is box's `Session`** — `packages/sh` with box's sixty-odd programs, `/bin`, `/proc` and
 // `/dev`, history and scrollback — and it imports no page, so a window is only its presentation: the
-// screen, a prompt and the line being typed. It runs over the desktop's own `Fs`, which is the same disk
+// screen, a prompt and the line being typed. It runs over the desktop's own `Files`, which is the same disk
 // Files shows, so `ls /Desktop` lists the desktop and `echo hi > /Desktop/x` puts an icon on it. Every
-// terminal is `Session.startOn` that one `Fs`: one system, many shells, one process table.
+// terminal is `Session.startOn` those `Files` and one process table: one system, many shells.
 //
 // The window keeps scrolled to the bottom without being told to — a page cannot set `scrollTop` — by
 // stacking its contents from the bottom up (`column-reverse`), which a browser keeps pinned to the end.
@@ -129,7 +129,7 @@ async void complete(Desk d, Term t, State<string> draft) {
 /** A terminal window's contents. */
 export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
   Term t = ui.memo<Term>("", () => {
-    Session s = Session.startOn(page.sys.core, page.sys.cli, d.fs.fs, "sh");
+    Session s = Session.startOn(page.sys, d.fs.fs, d.fs.table, "sh");
     s.sh.cwd = w.arg == "" ? "/" : "/" + w.arg;
     // A page opened from a file has an opaque origin, and a worker there may not start workers of its
     // own: box's programs then run inside the shell's worker instead of as processes of their own. They

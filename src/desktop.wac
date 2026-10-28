@@ -9,7 +9,7 @@ import { box.boxApplet } from "wac";
  * What a copy of this page started by the shell runs: one of box's programs, as a process of its own in
  * a worker of its own. The build names it with `--spawn applet`.
  */
-export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
+export async i32 applet(Sys sys) { return await boxApplet(sys); }
 
 export async i32 main(Page page) {
   page.title("Desktop");

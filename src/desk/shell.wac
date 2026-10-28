@@ -7,8 +7,9 @@
 
 import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
-import { Vfs, Got, Info, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
-import { fs.Fs, fs.mountSystem } from "wac";
+import { Vfs, Got, Info, nowMillis, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
+import { Files, MemoryStore } from "std";
+import { fs.ProcTable, fs.systemFiles } from "wac";
 import { box.boxNames } from "wac";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
          hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax } from "./wm.wac";
@@ -33,12 +34,13 @@ static i32 GRACE = 200;
 async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   // One filesystem for every window: the browser's storage if it is offered, memory if not, with the
   // system a shell expects mounted on it — `/bin` with box's programs, `/dev`, `/proc`.
-  bool persistent = await usable(page.sys.cli);
-  Fs system = filesystem(page.sys.cli, persistent, page.sys.core.nowMillis().wait());
+  bool persistent = await usable(page.sys.files());
   Vec<string> argv = Vec.create();
   argv.push("desktop");
-  mountSystem(system, page.sys.core.randomBytes, argv, Vec.fromArray(boxNames()));
-  d.fs = vfsOf(system, persistent);
+  ProcTable table = ProcTable.create();
+  table.current = table.start(0, argv, nowMillis(page));
+  Files system = systemFiles(filesystem(page.sys, persistent), page.sys.random(), table, boxNames());
+  d.fs = vfsOf(system, table, persistent);
   Vfs fs = d.fs;
   await fs.mkdir("Desktop");
   Got<u8[]> saved = await fs.read(SESSION);
@@ -229,7 +231,7 @@ Node DesktopIcons(Ui ui, Desk d, fn<void()> bumpDesk, i32 fsRev, string drop) {
 /** Files let go of over a place that takes them: moved there, copied with Ctrl held, or put in the Trash. */
 async void dropFiles(Desk d, Page page, FileDrag f, fn<void()> bump) {
   if (f.over == TRASH && !f.copy) {
-    Got<string[]> r = await toTrash(d.fs, f.paths, page.sys.core.nowMillis().wait());
+    Got<string[]> r = await toTrash(d.fs, f.paths, nowMillis(page));
     if (!r.ok) { d.error = r.error; }
     if (r.value.len() > 0) {
       d.note = "Moved \{f.paths.len() == 1 ? leafOf(f.paths[0]) : plural(f.paths.len(), "item")} to the Trash";
@@ -279,7 +281,7 @@ Node Clock(Ui ui, Page page) {
   auto tick = ui.state(0);
   ui.every(10000, () => { tick.update((i32 v) => v + 1); });
   // The wall clock comes from the system, and the page is told nothing about time zones: so it says UTC.
-  i64 secs = page.sys.core.nowMillis().wait() / 1000;
+  i64 secs = nowMillis(page) / 1000;
   i32 mins = ((secs / 60) % 1440) as! i32;
   return <span class="clock num" title="The page is not told your time zone">{two(mins / 60)}:{two(mins % 60)} <span class="tz">UTC</span></span>;
 }
@@ -372,7 +374,7 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
 
 export Node Desktop(Ui ui, Page page) {
   // A disk to stand on until `start` has chosen the real one, a moment later.
-  Desk d = ui.memo<Desk>("", () => newDesk(vfsOf(Fs.inMemory(0), false)));
+  Desk d = ui.memo<Desk>("", () => newDesk(vfsOf(MemoryStore.create(page.sys.clock()).asUser("root"), ProcTable.create(), false)));
   auto version = ui.state(0);
   auto ready = ui.state(false);
   fn<void()> bump = () => { version.update((i32 v) => v + 1); };

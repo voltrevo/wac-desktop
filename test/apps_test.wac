@@ -3,7 +3,8 @@
 import { Ticket } from "core";
 import { Runner } from "web";
 import { Vfs, Got, copyInto, moveInto, vfsOf } from "../src/desk/vfs.wac";
-import { fs.Fs } from "wac";
+import { MemoryStore, Sys } from "std";
+import { fs.ProcTable } from "wac";
 import { Desk, Win, canDrop, dragFilesTo, dropKey, hover, moved, newDesk, open, pressFiles } from "../src/desk/wm.wac";
 import { Origin, TRASH, deleteForGood, emptyTrash, originsText, parseOrigins, readOrigins, restoreFromTrash, toTrash,
          trashCount } from "../src/desk/trash.wac";
@@ -15,7 +16,8 @@ T run<T>(Runner r, Ticket<T> t) {
   return t.value();
 }
 
-Vfs disk() { return vfsOf(Fs.inMemory(0), false); }
+/** A disk in memory, as a page opened from a file gets. */
+Vfs disk(Sys sys) { return vfsOf(MemoryStore.create(sys.clock()).asUser("root"), ProcTable.create(), false); }
 
 // ── moving ──────────────────────────────────────────────────────────────────
 
@@ -36,10 +38,10 @@ async string moveScenario(Vfs fs) {
   return "";
 }
 
-export string test_moving_and_copying_never_replace_anything() {
+export string test_moving_and_copying_never_replace_anything(Sys sys) {
   Runner r = Runner.create();
   schedule r.take;
-  return run(r, moveScenario(disk()));
+  return run(r, moveScenario(disk(sys)));
 }
 
 export string test_what_may_be_dropped_where() {
@@ -52,8 +54,8 @@ export string test_what_may_be_dropped_where() {
   return "";
 }
 
-export string test_a_drag_hears_from_the_innermost_place_first() {
-  Desk d = newDesk(disk());
+export string test_a_drag_hears_from_the_innermost_place_first(Sys sys) {
+  Desk d = newDesk(disk(sys));
   pressFiles(d, ["Desktop/a.txt"]);
   dragFilesTo(d, 10, 10, false);
   if (dropKey(d) != "") { return "a press is not yet a drag"; }
@@ -75,8 +77,8 @@ export string test_a_drag_hears_from_the_innermost_place_first() {
   return "";
 }
 
-export string test_windows_follow_what_moved() {
-  Desk d = newDesk(disk());
+export string test_windows_follow_what_moved(Sys sys) {
+  Desk d = newDesk(disk(sys));
   Win e = open(d, "editor", "Desktop/notes/a.md", "a.md", "text");
   Win f = open(d, "files", "Desktop/notes", "notes", "folder");
   Win g = open(d, "files", "Desktop/other", "other", "folder");
@@ -116,10 +118,10 @@ async string trashScenario(Vfs fs) {
   return "";
 }
 
-export string test_the_trash_keeps_what_was_deleted_and_where_from() {
+export string test_the_trash_keeps_what_was_deleted_and_where_from(Sys sys) {
   Runner r = Runner.create();
   schedule r.take;
-  return run(r, trashScenario(disk()));
+  return run(r, trashScenario(disk(sys)));
 }
 
 export string test_the_trash_note_reads_back() {
