@@ -4,10 +4,10 @@ The desktop is a tactical, DOM-only experiment, built in wac as an outside consu
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
 `Session`. This note lists what it needs from wac, most important first.
 
-**Status at wac master `25a34468` (2026-10-28), which the project now pins:** items 1, 2 and 3 are
-merged, and the project has no patches and no vendored code — it imports wac's packages as
+**Status at the wac commit the project pins (2026-10-28):** items 1, 2, 3 and 4 are merged, and so is 7 —
+the terminal has `wac`. The project has no patches and no vendored code — it imports wac's packages as
 `import { json.parse } from "wac"`. From item 6, modifier keys in `prevent`, decoders that return errors,
-and the LICENSE are merged too. Items 4 and 5 are written up upstream as design/system/0015 (proposed).
+and the LICENSE are merged too. Item 5 is decision 3 of upstream design/system/0015, agreed and not built.
 Still open: the reader's time zone, reproducible names (`0368c`), `wac update`, and the box gaps.
 
 ## 1. Folder drops in `web` (merged)
@@ -57,7 +57,12 @@ Once the wac root exports its packages, the vendored copy goes away and these be
 imports. A note for that work: `box/src/shrun.wac` and `box/src/lib/session.wac` are what an
 embedder actually imports, so they deserve a stable, exported name.
 
-## 4. Let the web host run a wasm module it is given
+## 4. Let the web host run a wasm module it is given (merged)
+
+**Merged 2026-10-28** as design/system/0015 steps 2 and 3, on the flat host ABI of 0013 step 6 rather than
+through exported page capabilities: `spawn` with a module's bytes starts a worker that drives the module from
+its own manifest and serves its requests, holding what it was handed; that module can `load` another and call
+it. What follows is the request as it was written.
 
 This is what a `wac` command, or any compiled program, needs to run inside the terminal. At the moment:
 
@@ -113,7 +118,16 @@ processes, and `^C`, on `file://`.
   shell that a `Session` started.
 - ~~**A LICENSE file.**~~ Done: MIT.
 
-## 7. Later: `wac` inside the terminal
+## 7. `wac` inside the terminal (done)
+
+**Done 2026-10-28**, differently from what is below: not as an applet but as a module on the disk. wac's
+design/system/0013 step 6 made every module's boundary the same flat host ABI, so a page can drive any module
+it holds (0015, implemented in `packages/web`); the desktop's build compiles the `wac` command from the
+pinned commit and the page unpacks it to `/usr/bin/wac`. Neither of the two needs below turned out to be
+needed: the command is built from the package cache like any program, and it needs no packages of its own
+at run time for `check`, `build`, `run` and `test` of a program that imports only `std` and `core`. A
+program that imports a git dependency would still need the cache on the page's disk. The page is about
+5.4 MB of module; the estimate was 6–7. What follows is the plan as it was written.
 
 `packages/wac/src/wac.wac` is an ordinary `main(Sys)` program, and the compiler does no I/O, so a page
 can carry the command as one more applet. With items 3 and 4 in place:
@@ -137,11 +151,11 @@ The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has no
 | 1 | Folder drops | `web` | merged |
 | 2 | Growable instantiation table | `wacc` | merged (`63edaad6b`) |
 | 3 | `from "wac"` | repo root | merged (`lib.wac`); the project's `vendor/` is gone |
-| 4 | Run a given module (`spawn` bytes, `load`) | `web` host | proposed upstream, design/system/0015 |
-| 5 | Spawn via the page on `file://` | `web` host | proposed upstream, design/system/0015 |
+| 4 | Run a given module (`spawn` bytes, `load`) | `web` host | merged (design/system/0015 steps 2 and 3) |
+| 5 | Spawn via the page on `file://` | `web` host | agreed upstream (0015 decision 3), not built |
 | 6 | Modifier keys in `prevent` | `web` | merged; used for Ctrl+S, Ctrl+L, Ctrl+A |
 | 6 | Decoders return errors | `gzip`, `zstd` | merged; used |
 | 6 | LICENSE | repo root | merged (MIT) |
 | 6 | Reproducible names | build | filed, `0368c` |
 | 6 | Time zone, `wac update`, box gaps | various | open |
-| 7 | `wac` as an applet | `wac`, `web` | depends on 4 |
+| 7 | `wac` in the terminal | this project | done: `/usr/bin/wac`, a module on the disk |

@@ -19,6 +19,7 @@ import { FilesApp, appFor, openPath } from "./files.wac";
 import { EditorApp, ViewerApp } from "./apps.wac";
 import { TerminalApp } from "./terminal.wac";
 import { deskCss } from "./style.wac";
+import { installWac, withUsr } from "./usrbin.wac";
 import { demoZip, welcomeMd } from "./seed.wac";
 import { css } from "../style.wac";
 import { icon } from "../preview.wac";
@@ -33,13 +34,15 @@ static i32 GRACE = 200;
 /** Choose the disk, give a new one something to start with, and bring the last session back. */
 async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   // One filesystem for every window: the browser's storage if it is offered, memory if not, with the
-  // system a shell expects mounted on it — `/bin` with box's programs, `/dev`, `/proc`.
+  // system a shell expects mounted on it — `/bin` with box's programs, `/dev`, `/proc`, and `/usr/bin` with the
+  // `wac` command (`usrbin.wac`).
   bool persistent = await usable(page.sys.files());
   Vec<string> argv = Vec.create();
   argv.push("desktop");
   ProcTable table = ProcTable.create();
   table.current = table.start(0, argv, nowMillis(page));
-  Files system = systemFiles(filesystem(page.sys, persistent), page.sys.random(), table, boxNames());
+  MemoryStore usr = MemoryStore.create(page.sys.clock());
+  Files system = withUsr(systemFiles(filesystem(page.sys, persistent), page.sys.random(), table, boxNames()), usr);
   d.fs = vfsOf(system, table, persistent);
   Vfs fs = d.fs;
   await fs.mkdir("Desktop");
@@ -58,6 +61,8 @@ async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   d.dirty = true;
   ready();
   files(page, d, bump);
+  string unpacked = await installWac(usr);
+  if (unpacked != "") { page.sys.warn("/usr/bin/wac: \{unpacked}"); }
 }
 
 async void saveSession(Desk d) {

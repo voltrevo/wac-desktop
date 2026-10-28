@@ -19,6 +19,7 @@ It is written in [wac](https://github.com/voltrevo/wac) and compiled to WebAssem
 5. Reload the page. Everything — files and windows — is where you left it.
 6. Open the **Terminal** from the launcher (bottom left) and try `ls /Desktop`, `cat`, `grep` or
    `sha256sum`: it is wac's own shell, on the same disk. `open <file>` shows a file in a window.
+   `wac` is there too: write a `.wac` file in the Editor and `wac run` it, or `wac test` it.
 7. Drag a file onto a folder, the desktop or the **Trash**. Hold Ctrl as you let go to copy instead.
 
 ## Good to know

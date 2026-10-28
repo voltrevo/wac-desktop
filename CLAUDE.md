@@ -13,7 +13,9 @@ good deal of it has landed upstream.
 
 ## Working agreements
 
-- **Do not push** (this repository or any wac branch) unless the owner says so. Commit locally.
+- **Pushing.** Since 2026-10-28 this repository lives beside wac as a bare repo on the shared machine
+  (`~/bare-repos/wac-desktop.git`), and pushing finished work there is the agent's call, as it is for wac
+  itself. Nothing goes to GitHub unless the owner says so.
 - **Ask before a big direction change.** Features have been chosen together, from short lists of
   options with a recommendation.
 - **Icons are SVG `data:` URLs used as CSS masks** (`src/style.wac`), by the owner's choice.
@@ -21,13 +23,14 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `1afa908e`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
+wac is pinned to one commit, `001db0fc`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
 `wac` command itself (bootstrapped from that commit — see README). Change them together.
 
     wac task build && wac task test && wac task test:desk && wac task test:drops
 
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (36 unit tests, 62 desktop checks, 18 drop cases).
+  All of them pass at the latest commit (36 unit tests, 67 desktop checks, 18 drop cases). The build also
+  compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time.
 - `wac update` could not reach GitHub from the container this was made in ("network access not
   granted"). `sh tools/use-local-wac.sh <wac clone>` fills the package cache from a clone instead.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs (about 2.5 minutes, mostly
@@ -37,6 +40,10 @@ wac is pinned to one commit, `1afa908e`, everywhere: the three refs in `wac.json
 
 ## wac things that have bitten
 
+- **The terminal's `wac` is the page's own work, not a special case.** A program the shell finds on
+  `$WACPATH` is spawned as a module in a worker (wac's `packages/web`, `moduleSide`), so a bug in how
+  `wac` runs there is usually in that driver or in a `.wait()` the command makes — a page cannot wait, and
+  aborts a program that asks it to. `wac run` was one such; `packages/wac` awaits it now.
 - **The page's program runs in a worker**, so the DOM updates a moment after an event. A browser test
   must wait (`settle()`) before reading what changed.
 - **A trap cannot be caught.** The decoders now return errors, but this project's own parsing can still
@@ -52,8 +59,11 @@ wac is pinned to one commit, `1afa908e`, everywhere: the three refs in `wac.json
 
 ## Open threads
 
-- `docs/wac-proposal.md`: what is still wanted from wac — chiefly running a separately built module in
-  the page, and spawning on `file://` (upstream design/system/0015, proposed).
+- `docs/wac-proposal.md`: what is still wanted from wac — chiefly spawning on `file://` (upstream
+  design/system/0015 decision 3, agreed and not built). Until then neither box's programs as processes
+  nor `wac` run from a page opened as a file.
+- **`wac` in the terminal** runs programs that import `std` and `core`. One importing a git dependency
+  needs that dependency in a package cache on the page's disk, which nothing provides yet.
 - **Shelved by the owner:** building apps as separate modules. The direction discussed was a process
   per app holding a connection to the desktop, asking it for *surfaces* with roles (window, dialog,
   popup, notification, status item, drag image), each surface an `Element` grant, passable between

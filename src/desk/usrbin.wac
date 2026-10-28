@@ -1,0 +1,75 @@
+// `/usr/bin`: the `wac` command, as a program the terminal runs.
+//
+// **A module like any other.** The build compiles the `wac` command from the commit everything here is pinned to
+// (`tools/wacbin.py`) and the page carries it gzipped. At startup it is unpacked into a store of its own, mounted
+// read-only at `/usr`, and every terminal has `/usr/bin` on its `$WACPATH` — so `wac check notes.wac` is the shell
+// finding a file and spawning it, which a page does since wac's design/system/0015, and the program works on the
+// desktop's disk because it is handed the shell's files. Nothing here is a special case for `wac`.
+//
+// **Unpacked after the desktop is up**, not before: 1 MB of inflate is a moment, and a desktop that waits for it
+// before drawing anything is a desktop that seems slow for a program most visits never run.
+
+import { Result, Vec } from "core";
+import { Clock, Files, MemoryStore, Mount } from "std";
+import { gzip.gunzipBytesResult } from "wac";
+import { wacModuleGz } from "./wacbin.wac";
+
+/** Where a terminal looks for programs that are not box's. */
+export string WACPATH() { return "/usr/bin"; }
+
+/** `system` with `usr` mounted, read-only, at `/usr`. */
+export Files withUsr(Files system, MemoryStore usr) {
+  return Files.mounted([Mount("/usr", usr.asUser("root").readOnly()), Mount("/", system)]);
+}
+
+/** Put the `wac` command in `usr`, as `/bin/wac` — `/usr/bin/wac` once mounted. Answers why not, or `""`. */
+export async string installWac(MemoryStore usr) {
+  match (gunzipBytesResult(fromBase64(wacModuleGz()))) {
+    Ok(module): {
+      Files f = usr.asUser("root");
+      match (await f.mkdir("/bin", true)) {
+        Ok(v): { }
+        Err(e): { return "\{e}"; }
+      }
+      match (await f.writeFile("/bin/wac", module)) {
+        Ok(v): { return ""; }
+        Err(e): { return "\{e}"; }
+      }
+    }
+    Err(e): { return "the wac command did not unpack: \{e}"; }
+  }
+}
+
+/** The value of one base64 character, or -1 for padding and anything else. */
+i32 sextet(u8 c) {
+  if (c >= 'A' && c <= 'Z') { return (c - 'A') as i32; }
+  if (c >= 'a' && c <= 'z') { return (c - 'a') as i32 + 26; }
+  if (c >= '0' && c <= '9') { return (c - '0') as i32 + 52; }
+  if (c == '+') { return 62; }
+  if (c == '/') { return 63; }
+  return 0 - 1;
+}
+
+/** Standard base64, as `tools/wacbin.py` writes it. */
+u8[] fromBase64(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[].filled(b.len() / 4 * 3, 0);
+  i32 n = 0;
+  for (i32 i = 0; i + 3 < b.len(); i += 4) {
+    i32 a = sextet(b[i]);
+    i32 c = sextet(b[i + 1]);
+    i32 d = sextet(b[i + 2]);
+    i32 e = sextet(b[i + 3]);
+    out[n] = (((a << 2) | (c >> 4)) & 255) as! u8;
+    n = n + 1;
+    if (d < 0) { break; }
+    out[n] = (((c & 15) << 4) | (d >> 2)) as! u8;
+    n = n + 1;
+    if (e < 0) { break; }
+    out[n] = (((d & 3) << 6) | e) as! u8;
+    n = n + 1;
+  }
+  u8[] exact = u8[].filled(n, 0);
+  exact.copyFrom(out, 0, 0, n);
+  return exact;
+}

@@ -90,6 +90,26 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(/\n4\n100\n?$/.test(out.replace(/\/Desktop[^$]*\$ [^\n]*\n/g, '\n').replace(/\n+/g, '\n') + ''), 'box programs and pipes run', out.slice(-60));
   await p.locator('.win.focus .tcmd').press('Control+l'); await settle(400);
   check((await p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => 'x')) === '', 'Ctrl+L clears the terminal', null);
+  // The `wac` command, from /usr/bin: a page runs a module it holds, and this one compiles what is on the disk.
+  const runUntil = async (line, want, ms) => {
+    await p.locator('.win.focus .tcmd').fill(line); await p.locator('.win.focus .tcmd').press('Enter');
+    const end = Date.now() + ms;
+    let seen = '';
+    while (Date.now() < end) {
+      seen = await p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
+      if (want.test(seen)) break;
+      await settle(250);
+    }
+    return seen;
+  };
+  out = await runUntil("printf 'export i32 main() { return 3; }\\n' > three.wac; wac check three.wac", /three\.wac: 1 file\(s\)/, 60000);
+  check(out.includes('three.wac: 1 file(s), no diagnostics'), 'wac, in the terminal, checks a file on the disk', out.slice(-120));
+  out = await runUntil('wac build three.wac -o three && ./three.wasm', /\[exit 3\]/, 60000);
+  check(/three\.wasm: \d+ bytes from 1 file\(s\)\n[^\n]*\$ ?\n?\[exit 3\]\n?$/.test(out) || (out.includes('three.wasm: ') && /\[exit 3\]\n?$/.test(out)), 'and builds it into a program the shell runs, which answers its status', out.slice(-120));
+  out = await runUntil("printf '%s\\n' 'import { Sys } from \"std\";' 'export async i32 main(Sys sys) { sys.stdout().line(\"ran here\"); return 0; }' > ran.wac; wac run ran.wac; echo status $?", /status \d+/, 60000);
+  check(/\nran here\nstatus 0\n?$/.test(out), 'and runs a program straight from its source', out.slice(-120));
+  out = await runUntil("printf '%s\\n' 'export string test_holds() { return \"\"; }' 'export string test_breaks() { return \"on purpose\"; }' > two_test.wac; wac test two_test.wac", /\d+ passed, \d+ failed/, 60000);
+  check(out.includes('ok   test_holds') && out.includes('FAIL test_breaks — on purpose') && out.includes('1 passed, 1 failed'), 'and tests it', out.slice(-160));
   await run('echo made by the shell > shell.txt');
   await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(800);
   check((await texts('.win.focus .row .t')).includes('shell.txt'), 'and what the shell writes appears in Files', await texts('.win.focus .row .t'));
@@ -238,6 +258,14 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   let mem = await qrun('ls; echo in memory > mem.txt; cat mem.txt | wc -c');
   check(mem.includes('Welcome.md') && mem.includes('demo.zip') && /\n10\n?$/.test(mem), 'from file:// the shell runs on the same in-memory disk', mem.slice(-80));
   check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).includes('mem.txt'), 'and what it writes appears on the desktop', null);
+  // A page from a file may not start workers from its workers, so `wac` cannot run here — and says so, with the
+  // terminal still alive after it.
+  await q.locator('.win.focus .tcmd').fill('wac help; echo after $?'); await q.locator('.win.focus .tcmd').press('Enter');
+  await q.waitForFunction(() => /after \d+/.test(document.querySelector('.win.focus .tout')?.textContent ?? ''), null, { timeout: 30000 }).catch(() => {});
+  await q.waitForTimeout(500);
+  mem = await q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
+  check(mem.includes('sh: wac: a page opened from a file cannot start a program from a worker') && mem.includes('after 126'),
+        'from file://, wac says it cannot start, and the terminal carries on', mem.slice(-200));
   await q.locator('.tbwin', { hasText: 'demo.zip' }).click(); await q.waitForTimeout(300);
   await q.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await q.waitForTimeout(300);
   check(!(await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'a slow press on Close closes', null);

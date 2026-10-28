@@ -19,6 +19,7 @@ import { box.Session } from "wac";
 import { Desk, Win, close } from "./wm.wac";
 import { Got, Info, join, leafOf, parentOf } from "./vfs.wac";
 import { openPath } from "./files.wac";
+import { WACPATH } from "./usrbin.wac";
 
 /** How often a terminal with a command running is redrawn, in milliseconds. */
 static i32 REDRAW_MS = 100;
@@ -131,6 +132,7 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
   Term t = ui.memo<Term>("", () => {
     Session s = Session.startOn(page.sys, d.fs.fs, d.fs.table, "sh");
     s.sh.cwd = w.arg == "" ? "/" : "/" + w.arg;
+    s.sh.setVar("WACPATH", WACPATH());
     // A page opened from a file has an opaque origin, and a worker there may not start workers of its
     // own: box's programs then run inside the shell's worker instead of as processes of their own. They
     // still run; what is lost is `^C` for one that runs long, since nothing else runs while it does.
