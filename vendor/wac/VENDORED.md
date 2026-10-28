@@ -1,6 +1,6 @@
 # Vendored from wac
 
-Copied by `tools/vendor_wac.py` from wac `d9ff81c84979d4fd1c60371e51061297420655b8`: 176 files, 40,361 lines, from 19 packages (bignum, box, bytes, codec, crypto, datetime, fmt, fs, gzip, http, json, platform, regex, server, sh, tls, unicode, url, zstd).
+Copied by `tools/vendor_wac.py` from wac `2a6ca392bc1d7d066f8641d591ed076f1788d6a0`: 176 files, 40,361 lines, from 19 packages (bignum, box, bytes, codec, crypto, datetime, fmt, fs, gzip, http, json, platform, regex, server, sh, tls, unicode, url, zstd).
 
 Do not edit these files: change wac, then run the script again. When wac's root exports its packages (`import {{ json }} from "wac"`), import them that way and delete this directory.
 

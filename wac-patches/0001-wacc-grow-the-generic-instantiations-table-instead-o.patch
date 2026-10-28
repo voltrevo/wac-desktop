@@ -1,7 +1,7 @@
-From d9ff81c84979d4fd1c60371e51061297420655b8 Mon Sep 17 00:00:00 2001
+From 2a6ca392bc1d7d066f8641d591ed076f1788d6a0 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 01:39:17 +0000
-Subject: [PATCH 5/5] wacc: grow the generic instantiations table instead of
+Subject: [PATCH] wacc: grow the generic instantiations table instead of
  declining a large module
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

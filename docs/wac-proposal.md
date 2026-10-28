@@ -2,13 +2,15 @@
 
 The desktop is a tactical, DOM-only experiment, built in wac as an outside consumer of the wac
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
-`Session`. This note lists what it needs from wac, most important first. Items 1 and 2 are already
-written, as commits on a local branch.
+`Session`. This note lists what it needs from wac, most important first.
 
-The base is wac `a66fe9d51`. The branch is `wac-desktop` (5 commits, not pushed). It is carried in
-this project as `wac-patches/wac-desktop.git.bundle` and `wac-patches/000*.patch`.
+**Status at wac master `638b4fc6a` (2026-10-28):** item 1 is merged, and so is the LICENSE from item 6.
+The cache-path request from item 6 is filed as `0368c`. Item 3 is blocked on `0369c`, which leaves
+internal package dependencies undecided. The project now pins master plus one commit, the compiler fix
+in item 2: branch `wac-desktop` at `2a6ca392`, not pushed, carried as
+`wac-patches/wac-desktop.git.bundle` and `wac-patches/0001-*.patch`.
 
-## 1. Merge the folder-drop commits to `web` (written)
+## 1. Folder drops in `web` (merged)
 
 A page should receive the files of a dropped or picked folder, each named by its path inside the
 folder. Today a dropped folder arrives as one unreadable item.
@@ -24,13 +26,13 @@ The change is +59 −7 lines in three files: `tools/build.wac`, the `Picked` doc
 `src/page.wac`, and the package README. Real drops were tested in Chromium on `file://` and `http://`,
 with the handle API present, missing and refusing (18 cases).
 
-## 2. Merge the growable generic-instantiation table in `wacc` (written)
+## 2. Merge the growable generic-instantiation table in `wacc` (still needed)
 
-**Commit:** `d9ff81c8`, in `packages/wacc/src/emit.wac`, `Env.instantiate`.
+**Commit:** `2a6ca392` (on master `638b4fc6a`), in `packages/wacc/src/emit.wac`, `Env.instantiate`.
 
 **Problem:** the emitter keeps a fixed-size table of generic instantiations. When a module names
 more than it has room for, the build fails with *"the emitter ran out of room for generic
-instantiations"*. The desktop reached the limit once it carried the shell, because the module is
+instantiations"*. Master at `638b4fc6a` still fails the desktop's build this way. The desktop reached the limit once it carried the shell, because the module is
 large, not because anything in it is wrong.
 
 **Change:** the table now doubles when full, like the lambda capture tables. The compiler still
@@ -39,7 +41,7 @@ reaches a fixed point under `./bootstrap.sh`. The 3.4 MB desktop page builds wit
 Because the fix is inside the compiler, the project's CI bootstraps `wac` from the pinned commit
 instead of using an installed one. That is part of why CI takes about two minutes.
 
-## 3. `import { … } from "wac"` (already under way)
+## 3. `import { … } from "wac"` (blocked on `0369c`)
 
 The project vendors 176 files (40,361 lines) from 19 packages, using `tools/vendor_wac.py`. The roots
 it needs are:
@@ -100,7 +102,7 @@ processes, and `^C`, on `file://`.
   caught. The desktop detects a dead decode with a watchdog: work marks itself in progress, and a
   timer that still sees the mark reports the failure. Result-returning entry points (`inflate` →
   `Result<u8[], string>`, and the same for zstd frames) would remove that workaround.
-- **Reproducible builds.** The module's debug names include the absolute path of the package cache
+- **Reproducible builds** (filed as `0368c`). The module's debug names include the absolute path of the package cache
   (`…root__wac_cache_git_…`). The same source built under a different `$WAC_HOME` therefore gives
   different bytes, with the builder's home path inside. Names relative to the cache would fix it.
 - **`wac update` on the Node host** failed with *"network access not granted to this
@@ -109,7 +111,7 @@ processes, and `^C`, on `file://`.
   whether the fetch path asks for the network grant.
 - **Box gaps seen from the terminal:** `ls -l` reports "not implemented", and `ps` does not list the
   shell that a `Session` started.
-- **A LICENSE file.** The repository has none, and the project vendors and publishes wac code.
+- ~~**A LICENSE file.**~~ Done: MIT.
 
 ## 7. Later: `wac` inside the terminal
 
@@ -132,10 +134,12 @@ The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has no
 
 | # | What | Where | State |
 |---|---|---|---|
-| 1 | Folder drops | `web` | 4 commits, ready |
-| 2 | Growable instantiation table | `wacc` | 1 commit, ready |
-| 3 | `from "wac"` | repo root | under way upstream |
+| 1 | Folder drops | `web` | merged |
+| 2 | Growable instantiation table | `wacc` | 1 commit, ready (`2a6ca392`) |
+| 3 | `from "wac"` | repo root | blocked on `0369c` |
 | 4 | Run a given module (`spawn` bytes, `load`) | `web` host | proposal |
 | 5 | Spawn via the page on `file://` | `web` host | proposal |
-| 6 | Modifier keys, time zone, decode results, reproducible names, `wac update`, box gaps, LICENSE | various | requests |
+| 6 | Modifier keys, time zone, decode results, `wac update`, box gaps | various | requests |
+| 6 | Reproducible names | build | filed, `0368c` |
+| 6 | LICENSE | repo root | done |
 | 7 | `wac` as an applet | `wac`, `web` | depends on 3 and 4 |

@@ -99,12 +99,12 @@ shares, so their pages can see each other's files.
 - **Size.** Carrying the shell takes the page from 1.8 MB to 3.4 MB of module. It also took the build
   past a fixed limit in wac's compiler — the number of generic instantiations one module may name — so
   the pinned wac carries a compiler fix that lets the table grow, and the build bootstraps `wac` from it.
+  That fix is the one thing not yet on GitHub: `wac.lock` pins `2a6ca392`, which is wac's master
+  (`638b4fc6a`) plus that commit. It travels in `wac-patches/`; `tools/use-local-wac.sh <wac clone>`
+  makes the pinned commit available to `wac` on a new machine, and the Pages build does the same.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until
-  600 ms pass with no more. This needs the `web` package's host to walk dropped directories and pass each
-  file's path, which, with the compiler fix, is why `wac.lock` pins a wac commit (`d9ff81c8`, branch `wac-desktop`)
-  that is not on GitHub yet. The commits
-  travel in `wac-patches/`; `tools/use-local-wac.sh <wac clone>` makes the pinned one available to `wac`
-  on a new machine, and the Pages build does the same.
+  600 ms pass with no more. The `web` package's host walks dropped directories and passes each file's
+  path; that is in wac's master.
 
 ## Not yet
 
