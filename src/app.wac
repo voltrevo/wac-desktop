@@ -104,8 +104,20 @@ void openBatch(Page page, Model m, Vec<Picked> batch) {
     k++;
   }
   m.busy = "";
-  if (paths.len() == 0) { m.error = "Nothing in that folder could be read."; return; }
+  if (paths.len() == 0) {
+    bool folder = false;
+    for (i32 i = 0; i < batch.len(); i++) { if (batch.get(i).error.indexOf("dropped folder") >= 0) { folder = true; } }
+    m.error = folder ? "This browser won't let a page opened from a file read a dropped folder. \{FOLDER_HINT}"
+                     : "Nothing in that folder could be read.";
+    return;
+  }
   openFolder(m, paths, blobs, failed);
+  // A folder the browser would not list arrives as one failure among the rest: say what to do about it.
+  for (i32 i = 0; i < batch.len(); i++) {
+    if (!batch.get(i).ok && batch.get(i).error.indexOf("dropped folder") >= 0) {
+      m.error = "\{batch.get(i).name} wasn't read: this browser won't let a page opened from a file read a dropped folder. \{FOLDER_HINT}";
+    }
+  }
   page.title("\{top(m).name} — Archive Explorer");
 }
 

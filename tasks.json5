@@ -3,6 +3,8 @@
   build: "wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist --title 'Archive Explorer'",
   serve: "wac sh --allow-read --allow-net -c 'httpd -8080 dist'",
   test: "wac test test",
+  // Real drops in Chromium — files, folders, file:// and http:// — against dist/: build first.
+  "test:drops": "node tools/drop_test.js",
   // Regenerate test/fixtures.wac from tools/fixtures.py.
   fixtures: "python3 tools/fixtures.py",
 }
