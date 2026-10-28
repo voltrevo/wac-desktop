@@ -1,7 +1,7 @@
 # The desktop, built and published to GitHub Pages on every push to the default branch.
 #
-# Everything the build needs is in this repository or on GitHub: tools/ci-build.sh clones wac, adds the
-# commits wac-patches/ carries, bootstraps `wac` on Node and builds. The bootstrapped command is cached,
+# Everything the build needs is in this repository or on GitHub: tools/ci-build.sh clones wac, checks out
+# the commit wac.lock pins, bootstraps `wac` on Node from it and builds. The bootstrapped command is cached,
 # keyed on wac.lock, so a run after the first one skips straight to the build.
 #
 # In the repository's settings, under Pages, set the source to "GitHub Actions".

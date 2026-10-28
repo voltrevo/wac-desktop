@@ -1,5 +1,4 @@
 {
-  // src/app.wac as one dist/index.html. Open it, or serve it with `wac task serve`.
   // The desktop as dist/index.html, with a disk (the browser's storage, when it is offered); and the
   // Archive Explorer on its own as dist/explorer/index.html.
   build: "wac run --allow-read --allow-write --allow-run build.wac src/desktop.wac dist --title 'Desktop' --grant read,write --spawn applet && wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist/explorer --title 'Archive Explorer'",
@@ -11,4 +10,7 @@
   "test:drops": "node tools/drop_test.js",
   // Regenerate test/fixtures.wac from tools/fixtures.py.
   fixtures: "python3 tools/fixtures.py",
+  // Regenerate samples/demo.zip, then src/desk/seed.wac — the welcome note and demo.zip a new desktop gets.
+  demo: "python3 tools/demo.py",
+  seed: "python3 tools/seed.py",
 }

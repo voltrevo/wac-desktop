@@ -17,13 +17,19 @@ It is written in [wac](https://github.com/voltrevo/wac) and compiled to WebAssem
 3. Press **Extract here**. The archive becomes a folder next to it.
 4. Open a text file from that folder and change it in the **Editor**. Save.
 5. Reload the page. Everything — files and windows — is where you left it.
+6. Open the **Terminal** from the launcher (bottom left) and try `ls /Desktop`, `cat`, `grep` or
+   `sha256sum`: it is wac's own shell, on the same disk. `open <file>` shows a file in a window.
+7. Drag a file onto a folder, the desktop or the **Trash**. Hold Ctrl as you let go to copy instead.
 
 ## Good to know
 
 - **Drop files or folders** on a Files window to add them there, or anywhere else to put them on the desktop.
 - **Windows** move by their title bar and resize from any edge. Drag one to the top of the screen to
   maximise it, or to the left or right edge to fill that half. Double-click a title bar to maximise.
-- **Keys in Files:** arrows move, Enter opens, Backspace goes up, F2 renames, Delete deletes (it asks twice).
+- **Keys in Files:** arrows move, Enter opens, Backspace goes up, F2 renames, Delete moves to the Trash
+  (with an Undo), Ctrl+A selects everything, Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste.
+- **The Trash** remembers where each thing came from: Restore puts it back. Emptying it is for good.
+- **The Calculator** is in the launcher too, and takes typing as well as clicks.
 - **Your files stay in this browser** — nothing is uploaded. When the page is opened from a file rather
   than a web address, the browser gives it nowhere to keep things, and the desktop says so: it works,
   but forgets when the tab closes.
