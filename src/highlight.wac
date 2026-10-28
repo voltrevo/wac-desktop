@@ -1,0 +1,235 @@
+// Syntax highlighting: one small tokenizer, and a profile per family of languages.
+//
+// **Not a parser.** It knows comments, strings, numbers, keywords and calls — what a reader's eye
+// uses to find its way around — and nothing about grammar. A language is a profile: which comment
+// markers it has and which words are keywords. Being wrong costs a colour, never a crash, and it
+// never hides text: every byte of the input is in exactly one token.
+
+import { Buf, Vec } from "core";
+import { Node, html.span } from "web";
+import { extOf, lower } from "./bytes.wac";
+
+export struct Lang {
+  string name;
+  /** Line comment starts, e.g. `//` and `#`; block comment open and close, or "". */
+  const string[] line;
+  string blockOpen;
+  string blockClose;
+  const string[] keywords;
+  /** `<tag attr="…">` markup rather than code. */
+  bool markup;
+  /** Whether `'` starts a string — not in Rust, where it is mostly a lifetime. */
+  bool singleQuotes;
+}
+
+static string[] CLIKE = ["if", "else", "for", "while", "do", "return", "function", "fn", "func", "let", "const",
+  "var", "class", "struct", "enum", "interface", "import", "export", "from", "package", "public", "private",
+  "protected", "static", "void", "int", "char", "long", "double", "float", "bool", "boolean", "true", "false",
+  "null", "nil", "new", "this", "self", "match", "switch", "case", "default", "break", "continue", "try",
+  "catch", "finally", "throw", "throws", "async", "await", "yield", "type", "impl", "trait", "mod", "use", "pub",
+  "where", "in", "of", "as", "extends", "implements", "override", "virtual", "string", "i8", "i16", "i32", "i64",
+  "u8", "u16", "u32", "u64", "f32", "f64", "usize", "isize", "auto", "unsigned", "signed", "sizeof", "typedef",
+  "namespace", "template", "typename", "go", "defer", "chan", "map", "range", "select", "undefined", "typeof",
+  "instanceof", "delete", "super", "mut", "ref", "loop", "unsafe", "extern", "goto", "volatile", "inline",
+  "union", "contract", "mapping", "payable", "view", "pure", "memory", "storage", "calldata", "emit", "event",
+  "modifier", "require", "trap", "is", "not", "anyref", "symbol", "schedule", "readonly", "declare", "abstract",
+  "final", "sealed", "val", "object", "fun", "when", "data", "constexpr", "noexcept", "elif", "include",
+  "define", "ifdef", "ifndef", "endif", "pragma"];
+
+static string[] HASHY = ["def", "class", "import", "from", "return", "if", "elif", "else", "for", "while", "in",
+  "not", "and", "or", "is", "None", "True", "False", "lambda", "with", "as", "pass", "raise", "try", "except",
+  "finally", "yield", "global", "nonlocal", "async", "await", "assert", "del", "then", "fi", "do", "done",
+  "case", "esac", "function", "export", "local", "echo", "end", "module", "require", "begin", "rescue",
+  "unless", "until", "true", "false", "null", "nil", "self", "match", "break", "continue", "set", "source",
+  "readonly", "shift", "exit", "trap", "eval", "exec", "print", "let", "in", "with", "rec", "inherit"];
+
+static string[] SQL = ["select", "from", "where", "insert", "into", "values", "update", "set", "delete", "create",
+  "table", "index", "view", "drop", "alter", "add", "primary", "key", "foreign", "references", "not", "null",
+  "and", "or", "join", "left", "right", "inner", "outer", "on", "group", "by", "order", "having", "limit",
+  "offset", "as", "distinct", "union", "all", "case", "when", "then", "else", "end", "default", "unique",
+  "integer", "text", "varchar", "boolean", "true", "false", "begin", "commit", "with", "exists", "in", "is",
+  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX",
+  "VIEW", "DROP", "ALTER", "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "NOT", "NULL", "AND", "OR", "JOIN", "LEFT",
+  "RIGHT", "INNER", "ON", "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "AS", "DISTINCT", "UNION", "CASE", "WHEN",
+  "THEN", "ELSE", "END", "DEFAULT", "UNIQUE", "INTEGER", "TEXT", "VARCHAR", "BEGIN", "COMMIT", "WITH", "IN", "IS"];
+
+static string[] LUAISH = ["and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+  "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while", "module", "where", "let",
+  "data", "type", "class", "instance", "deriving", "import", "case", "of"];
+
+static string[] NONE = [];
+
+/** The profile for a file called `name`, or null when it is not code. */
+export Lang? langFor(string name) {
+  string ext = extOf(name);
+  string base = lower(name);
+  string[] clike = ["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "cs", "java", "kt", "kts", "swift", "go", "js",
+    "mjs", "cjs", "ts", "mts", "cts", "tsx", "jsx", "sol", "zig", "dart", "scala", "wac", "php", "groovy",
+    "gradle", "proto", "m", "mm", "v", "glsl", "hlsl", "wgsl", "json", "json5", "jsonc", "geojson", "ipynb",
+    "webmanifest", "babelrc", "eslintrc", "har", "map"];
+  string[] hashy = ["py", "pyi", "sh", "bash", "zsh", "fish", "rb", "yaml", "yml", "toml", "mk", "cmake", "r",
+    "pl", "pm", "nix", "ex", "exs", "tf", "hcl", "conf", "cfg", "gitignore", "dockerignore", "env", "properties"];
+  if (ext == "rs") { return Lang("rust", ["//"], "/*", "*/", CLIKE, false, false); }
+  if (ext == "css" || ext == "scss" || ext == "less") { return Lang("css", ["//"], "/*", "*/", NONE, false, true); }
+  if (has(clike, ext)) { return Lang(ext, ["//"], "/*", "*/", CLIKE, false, true); }
+  if (has(hashy, ext) || base == "makefile" || base == "dockerfile" || base == "gemfile" || base == "rakefile"
+      || base == "procfile" || base == ".gitignore" || base == ".bashrc" || base == ".zshrc") {
+    return Lang(ext, ["#"], "", "", HASHY, false, true);
+  }
+  if (ext == "sql") { return Lang("sql", ["--"], "/*", "*/", SQL, false, true); }
+  if (ext == "lua" || ext == "hs") { return Lang(ext, ["--"], ext == "lua" ? "--[[" : "{-", ext == "lua" ? "]]" : "-}", LUAISH, false, true); }
+  if (ext == "ini") { return Lang("ini", [";", "#"], "", "", NONE, false, true); }
+  if (ext == "html" || ext == "htm" || ext == "xml" || ext == "svg" || ext == "vue" || ext == "svelte"
+      || ext == "xhtml" || ext == "plist" || ext == "csproj") {
+    return Lang("markup", NONE, "<!--", "-->", NONE, true, true);
+  }
+  return null;
+}
+
+/** The profile a fenced code block's info string names — ```js, ```python — or null. */
+export Lang? langNamed(string info) {
+  string n = lower(info);
+  if (n == "python") { n = "py"; } else if (n == "javascript") { n = "js"; } else if (n == "typescript") { n = "ts"; }
+  else if (n == "shell" || n == "console" || n == "shellsession") { n = "sh"; } else if (n == "rust") { n = "rs"; }
+  else if (n == "ruby") { n = "rb"; } else if (n == "golang") { n = "go"; } else if (n == "c++") { n = "cpp"; }
+  else if (n == "solidity") { n = "sol"; } else if (n == "kotlin") { n = "kt"; } else if (n == "yaml") { n = "yml"; }
+  return n == "" ? null : langFor("x." + n);
+}
+
+bool has(const string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}
+
+bool identStart(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c >= 0x80; }
+bool identPart(u8 c) { return identStart(c) || (c >= '0' && c <= '9'); }
+bool digit(u8 c) { return c >= '0' && c <= '9'; }
+
+bool at(const u8[] b, i32 i, string s) {
+  u8[] t = s.toBytes();
+  if (t.len() == 0 || i + t.len() > b.len()) { return false; }
+  for (i32 k = 0; k < t.len(); k++) { if (b[i + k] != t[k]) { return false; } }
+  return true;
+}
+
+/** Spans for `b` in `lang`: a token class per run, and unstyled text between. */
+export Node[] highlight(const u8[] b, Lang lang) {
+  Vec<Node> out = Vec.create();
+  i32 plain = 0;            // where the current unstyled run began
+  i32 i = 0;
+  i32 n = b.len();
+  bool inTag = false;       // markup: between `<name` and `>`
+  // Emit the unstyled run up to `upto`, then a token of class `cls` over [upto, end).
+  fn<void(i32, i32, string)> token = (i32 upto, i32 end, string cls) => {
+    if (upto > plain) { out.push(Node.Text(slice(b, plain, upto))); }
+    out.push(<span class={"tk-\{cls}"}>{slice(b, upto, end)}</span>);
+    plain = end;
+  };
+  while (i < n) {
+    u8 c = b[i];
+    // Block comments, then line comments.
+    if (lang.blockOpen != "" && at(b, i, lang.blockOpen)) {
+      i32 e = find(b, i + lang.blockOpen.len(), lang.blockClose);
+      e = e < 0 ? n : e + lang.blockClose.len();
+      token(i, e, "c");
+      i = e;
+      continue;
+    }
+    bool lineComment = false;
+    for (i32 k = 0; k < lang.line.len(); k++) {
+      // `#` in the middle of a word (`a#b`, a URL's fragment) is not a comment.
+      if (at(b, i, lang.line[k]) && !(lang.line[k] == "#" && i > 0 && identPart(b[i - 1]))) { lineComment = true; }
+    }
+    if (lineComment) {
+      i32 e = i;
+      while (e < n && b[e] != '\n') { e++; }
+      token(i, e, "c");
+      i = e;
+      continue;
+    }
+    if (lang.markup) {
+      if (c == '<' && i + 1 < n && (identStart(b[i + 1]) || b[i + 1] == '/' || b[i + 1] == '!' || b[i + 1] == '?')) {
+        i32 e = i + 1;
+        while (e < n && (identPart(b[e]) || b[e] == '/' || b[e] == '!' || b[e] == '?' || b[e] == ':' || b[e] == '-')) { e++; }
+        token(i, e, "k");
+        i = e;
+        inTag = true;
+        continue;
+      }
+      if (inTag && (c == '>' || (c == '/' && i + 1 < n && b[i + 1] == '>'))) {
+        i32 e = c == '>' ? i + 1 : i + 2;
+        token(i, e, "k");
+        i = e;
+        inTag = false;
+        continue;
+      }
+      if (inTag && identStart(c)) {
+        i32 e = i;
+        while (e < n && (identPart(b[e]) || b[e] == '-' || b[e] == ':')) { e++; }
+        token(i, e, "f");
+        i = e;
+        continue;
+      }
+      if (inTag && (c == '"' || c == '\'')) {
+        i32 e = i + 1;
+        while (e < n && b[e] != c) { e++; }
+        e = e < n ? e + 1 : n;
+        token(i, e, "s");
+        i = e;
+        continue;
+      }
+      if (c == '&') {
+        i32 e = i + 1;
+        while (e < n && e - i < 10 && (identPart(b[e]) || b[e] == '#')) { e++; }
+        if (e < n && b[e] == ';') { token(i, e + 1, "n"); i = e + 1; continue; }
+      }
+      i++;
+      continue;
+    }
+    if (c == '"' || c == '`' || (c == '\'' && lang.singleQuotes)) {
+      i32 e = i + 1;
+      while (e < n && b[e] != c) {
+        if (b[e] == '\\') { e++; }
+        else if (b[e] == '\n' && c != '`') { break; }
+        e++;
+      }
+      e = e < n ? e + 1 : n;
+      if (e > n) { e = n; }
+      token(i, e, "s");
+      i = e;
+      continue;
+    }
+    if (digit(c) || (c == '.' && i + 1 < n && digit(b[i + 1]))) {
+      if (i > 0 && identPart(b[i - 1])) { i++; continue; }
+      i32 e = i + 1;
+      while (e < n && (identPart(b[e]) || b[e] == '.')) { e++; }
+      token(i, e, "n");
+      i = e;
+      continue;
+    }
+    if (identStart(c)) {
+      i32 e = i + 1;
+      while (e < n && identPart(b[e])) { e++; }
+      string word = slice(b, i, e);
+      if (has(lang.keywords, word)) { token(i, e, "k"); }
+      else if (e < n && b[e] == '(') { token(i, e, "f"); }
+      else if (c >= 'A' && c <= 'Z' && e - i > 1) { token(i, e, "t"); }
+      i = e;
+      continue;
+    }
+    i++;
+  }
+  if (n > plain) { out.push(Node.Text(slice(b, plain, n))); }
+  return out.toArray();
+}
+
+i32 find(const u8[] b, i32 from, string s) {
+  for (i32 i = from; i < b.len(); i++) { if (at(b, i, s)) { return i; } }
+  return -1;
+}
+
+string slice(const u8[] b, i32 from, i32 to) {
+  u8[] out = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
+  return string.toUtf8(out);
+}

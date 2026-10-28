@@ -49,6 +49,7 @@ export string css() {
       --shadow: 0 1px 2px rgb(16 24 40 / .05), 0 8px 24px -6px rgb(16 24 40 / .08);
       --shadow-lg: 0 24px 64px -20px rgb(44 40 120 / .28), 0 2px 6px rgb(16 24 40 / .05);
       --checker: #eef0f4;
+      --tk-k: #8b3fd9; --tk-s: #0f7b4a; --tk-c: #8a93a3; --tk-n: #c2410c; --tk-f: #2457c5; --tk-t: #0e7490;
       color-scheme: light;
     }
     @media (prefers-color-scheme: dark) {
@@ -64,6 +65,7 @@ export string css() {
         --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px -6px rgb(0 0 0 / .5);
         --shadow-lg: 0 24px 64px -20px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .4);
         --checker: #1b1e27;
+        --tk-k: #c792ea; --tk-s: #a5d6a7; --tk-c: #6b7385; --tk-n: #f7a76c; --tk-f: #82aaff; --tk-t: #7fdbca;
         color-scheme: dark;
       }
     }
@@ -251,6 +253,67 @@ export string css() {
             background: color-mix(in oklab, var(--bg) 55%, transparent); backdrop-filter: blur(3px); animation: fade .2s both; }
     .busy .card { padding: 18px 22px; display: flex; gap: 14px; align-items: center; }
     .spin { width: 20px; height: 20px; border-radius: 99px; border: 2.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+
+    /* ── code ── */
+    .tk-k { color: var(--tk-k); } .tk-s { color: var(--tk-s); } .tk-n { color: var(--tk-n); }
+    .tk-c { color: var(--tk-c); font-style: italic; } .tk-f { color: var(--tk-f); } .tk-t { color: var(--tk-t); }
+
+    /* ── markdown ── */
+    .md { max-width: 760px; margin: 0 auto; padding: 22px 28px 48px; font-size: 14.5px; line-height: 1.65; color: var(--text); }
+    .pbody > .anim:has(> .md) { background: var(--surface); min-height: 100%; }
+    .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { letter-spacing: -.02em; line-height: 1.25; margin: 1.5em 0 .6em; font-weight: 680; }
+    .md h1 { font-size: 1.9em; padding-bottom: .3em; border-bottom: 1px solid var(--line); margin-top: .4em; }
+    .md h2 { font-size: 1.45em; padding-bottom: .25em; border-bottom: 1px solid var(--line); }
+    .md h3 { font-size: 1.2em; } .md h4 { font-size: 1.05em; } .md h5, .md h6 { font-size: .95em; color: var(--muted); }
+    .md p, .md ul, .md ol, .md blockquote, .md pre, .md .mdtable { margin: 0 0 1em; }
+    .md ul, .md ol { padding-left: 1.6em; } .md li { margin: .25em 0; } .md li > ul, .md li > ol { margin: .25em 0 0; }
+    .md li.task { list-style: none; margin-left: -1.3em; }
+    .md a, .md .ilink { color: var(--accent); text-decoration: none; cursor: pointer; border-bottom: 1px solid color-mix(in oklab, var(--accent) 35%, transparent); }
+    .md a:hover { border-bottom-color: var(--accent); }
+    .md .ilink.dead { cursor: default; }
+    .md code { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: .86em;
+               padding: .15em .4em; border-radius: 5px; background: var(--sunken); border: 1px solid var(--line); }
+    .md pre.mdcode { padding: 14px 16px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line);
+                     overflow: auto; font-size: 12.5px; line-height: 1.6; white-space: pre; }
+    .md blockquote { padding: .2em 1em; border-left: 3px solid var(--accent-soft); color: var(--muted); }
+    .md blockquote > :last-child { margin-bottom: 0; }
+    .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+    .md .mdimg { max-width: 100%; border-radius: 6px; vertical-align: middle; }
+    .md .mdhtml { margin: 0 0 1em; text-align: center; }
+    .md .imgph { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; font-size: 12px;
+                 color: var(--muted); background: var(--sunken); border: 1px dashed var(--line-strong); }
+    .md .imgph::before { content: "🖼"; }
+    .md .del { text-decoration: line-through; color: var(--muted); }
+    .md .mdtable { overflow-x: auto; }
+    .md table { border-collapse: collapse; font-size: 13.5px; }
+    .md th, .md td { border: 1px solid var(--line); padding: 6px 12px; text-align: left; }
+    .md th { background: var(--surface-2); font-weight: 650; }
+    .md .r { text-align: right; } .md .c { text-align: center; }
+
+    /* ── json ── */
+    .jtree { background: var(--surface); min-height: 100%; }
+    .jtools { display: flex; gap: 8px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line);
+              position: sticky; top: 0; background: var(--surface); z-index: 1; }
+    .jtools .btn { height: 28px; font-size: 12px; padding: 0 10px; }
+    .jrows { padding: 8px 0 24px; font-size: 12.5px; line-height: 1.75; }
+    .jrow { white-space: nowrap; padding-right: 18px; border-radius: 4px; }
+    .jrow.fold { cursor: pointer; } .jrow.fold:hover { background: var(--hover); }
+    .caret { display: inline-block; width: 16px; color: var(--faint); font-size: 10px; }
+    .jk { color: var(--tk-f); } .jx { color: var(--faint); } .jp { color: var(--faint); }
+    .js { color: var(--tk-s); } .jn { color: var(--tk-n); } .jl { color: var(--tk-k); }
+    .jsum { color: var(--muted); } .jmore { color: var(--faint); font-style: italic; }
+
+    /* ── tables ── */
+    .grid { overflow: auto; background: var(--surface); margin: 12px 18px 24px; border: 1px solid var(--line); border-radius: 10px; max-height: calc(100% - 70px); }
+    .grid table { border-collapse: separate; border-spacing: 0; font-size: 13px; min-width: 100%; }
+    .grid th, .grid td { padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left;
+                         max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+    .grid th { position: sticky; top: 0; background: var(--surface-2); font-weight: 650; font-size: 12px; z-index: 1; }
+    .grid tr:hover td { background: var(--hover); }
+    .grid .r { text-align: right; font-variant-numeric: tabular-nums; }
+    .grid .rn { color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; font-size: 11.5px;
+                position: sticky; left: 0; background: var(--surface-2); border-right: 1px solid var(--line); }
+    .grid th.rn { z-index: 2; }
 
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes fade { from { opacity: 0; } }

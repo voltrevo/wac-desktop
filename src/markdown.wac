@@ -1,0 +1,668 @@
+// Markdown, rendered: the CommonMark blocks a README uses, GitHub's tables and task lists, and enough
+// inline HTML — `<img>`, `<br>` — for the banners projects put at the top.
+//
+// **Everything stays text.** The page has no way to hand the browser a string as markup, so HTML in
+// a document is never rendered as HTML: `<img>` becomes an image, `<br>` a break, and every other tag
+// is dropped while the text between survives.
+//
+// **Paths resolve inside the archive.** A README's `![logo](docs/logo.png)` shows the logo from the
+// same archive, and `[guide](docs/guide.md)` goes to that file. A remote image cannot load — the page
+// fetches nothing — so it shows as its alt text.
+
+import { Buf, Vec } from "core";
+import { ElementEvent, Node, html.a, html.blockquote, html.br, html.code, html.div, html.em, html.h1, html.h2, html.h3,
+         html.h4, html.h5, html.h6, html.hr, html.img, html.li, html.ol, html.p, html.pre, html.span, html.strong,
+         html.table, html.tbody, html.td, html.th, html.thead, html.tr, html.ul } from "web";
+import { Lang, highlight, langNamed } from "./highlight.wac";
+import { base64, extOf } from "./bytes.wac";
+
+/** What a document can reach in the archive it came from. */
+export struct MdHost {
+  /** The folder the document is in, inside the archive; "" at the root. */
+  string dir;
+  /** The bytes of the file at a path inside the archive, if there is one. */
+  fn<u8[]?(string)> file;
+  /** Go to the file at a path inside the archive. */
+  fn<void(string)> open;
+}
+
+/** `doc` rendered. */
+export Node markdown(const u8[] doc, MdHost host) {
+  return <div class="md">{blocks(lines(doc), host)}</div>;
+}
+
+// ── lines ───────────────────────────────────────────────────────────────────
+
+string[] lines(const u8[] b) {
+  Vec<string> out = Vec.create();
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '\n') {
+      i32 end = i > start && b[i - 1] == '\r' ? i - 1 : i;
+      u8[] l = u8[].filled(end - start, 0);
+      for (i32 k = start; k < end; k++) { l[k - start] = b[k] == 9 ? ' ' : b[k]; }
+      out.push(string.toUtf8(l));
+      start = i + 1;
+    }
+  }
+  return out.toArray();
+}
+
+i32 indentOf(string s) {
+  i32 n = 0;
+  while (n < s.len() && s[n] == " ") { n++; }
+  return n;
+}
+
+string trim(string s) {
+  i32 a = 0;
+  i32 b = s.len();
+  while (a < b && (s[a] == " ")) { a++; }
+  while (b > a && (s.slice(b - 1, b) == " ")) { b--; }
+  return s.slice(a, b);
+}
+
+bool blank(string s) { return trim(s) == ""; }
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+/** A thematic break: three or more of one of `-`, `*`, `_`, and spaces. */
+bool isRule(string t) {
+  if (t.len() < 3) { return false; }
+  u8[] b = t.toBytes();
+  u8 c = b[0];
+  if (c != '-' && c != '*' && c != '_') { return false; }
+  i32 count = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == c) { count++; } else if (b[i] != ' ') { return false; }
+  }
+  return count >= 3;
+}
+
+/** `#`..`######` and a space: the level, or 0. */
+i32 headingLevel(string t) {
+  i32 n = 0;
+  while (n < t.len() && n < 7 && t[n] == "#") { n++; }
+  if (n == 0 || n > 6) { return 0; }
+  return n == t.len() || t[n] == " " ? n : 0;
+}
+
+/** Where a list item's content starts — after `- `, `* `, `+ `, `1. `, `1) ` — or -1; and whether it is numbered. */
+i32 listMarker(string t) {
+  if (t.len() >= 2 && (t[0] == "-" || t[0] == "*" || t[0] == "+") && t[1] == " ") { return 2; }
+  if (t.len() == 1 && (t[0] == "-" || t[0] == "*" || t[0] == "+")) { return 1; }
+  i32 d = 0;
+  while (d < t.len() && d < 9 && t.toBytes()[d] >= '0' && t.toBytes()[d] <= '9') { d++; }
+  if (d > 0 && d + 1 < t.len() && (t[d] == "." || t[d] == ")") && t[d + 1] == " ") { return d + 2; }
+  return -1;
+}
+
+bool ordered(string t) { return t.len() > 0 && t.toBytes()[0] >= '0' && t.toBytes()[0] <= '9'; }
+
+bool isFence(string t) { return startsWith(t, "```") || startsWith(t, "~~~"); }
+
+/** A table's delimiter row: `| --- | :-: |`. */
+bool isDelimiterRow(string t) {
+  if (t.indexOf("-") < 0) { return false; }
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    u8 c = b[i];
+    if (c != '|' && c != '-' && c != ':' && c != ' ') { return false; }
+  }
+  return t.indexOf("|") >= 0 || t.indexOf("-") >= 0;
+}
+
+string[] cells(string row) {
+  string t = trim(row);
+  if (startsWith(t, "|")) { t = t.slice(1, t.len()); }
+  if (t.len() > 0 && t.slice(t.len() - 1, t.len()) == "|") { t = t.slice(0, t.len() - 1); }
+  Vec<string> out = Vec.create();
+  u8[] b = t.toBytes();
+  i32 start = 0;
+  bool inCode = false;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] == '`') { inCode = !inCode; }
+    if (i == b.len() || (b[i] == '|' && !inCode && (i == 0 || b[i - 1] != '\\'))) {
+      out.push(trim(t.slice(start, i)));
+      start = i + 1;
+    }
+  }
+  return out.toArray();
+}
+
+// ── blocks ──────────────────────────────────────────────────────────────────
+
+bool startsBlock(string line) {
+  string t = trim(line);
+  return headingLevel(t) > 0 || isFence(t) || startsWith(t, ">") || isRule(t)
+      || (listMarker(t) > 0 && !ordered(t)) || (listMarker(t) > 0 && startsWith(t, "1"));
+}
+
+Node[] blocks(string[] ls, MdHost h) {
+  Vec<Node> out = Vec.create();
+  i32 i = 0;
+  i32 n = ls.len();
+  while (i < n) {
+    string line = ls[i];
+    string t = trim(line);
+    if (t == "") { i++; continue; }
+
+    if (isFence(t)) {
+      string mark = t.slice(0, 3);
+      string info = trim(t.slice(3, t.len()));
+      i32 sp = info.indexOf(" ");
+      if (sp >= 0) { info = info.slice(0, sp); }
+      i32 strip = indentOf(line);
+      Buf body = Buf.create();
+      i++;
+      while (i < n && !startsWith(trim(ls[i]), mark)) {
+        string l = ls[i];
+        i32 cut = indentOf(l) < strip ? indentOf(l) : strip;
+        body.pushStr(l.slice(cut, l.len()));
+        body.push('\n');
+        i++;
+      }
+      i++;
+      out.push(codeBlock(body.take(), info));
+      continue;
+    }
+
+    i32 level = headingLevel(t);
+    if (level > 0) {
+      string text = trim(t.slice(level, t.len()));
+      while (text.len() > 0 && text.slice(text.len() - 1, text.len()) == "#") { text = trim(text.slice(0, text.len() - 1)); }
+      out.push(heading(level, inline(text, h)));
+      i++;
+      continue;
+    }
+
+    if (isRule(t)) { out.push(<hr/>); i++; continue; }
+
+    if (startsWith(t, ">")) {
+      Vec<string> inner = Vec.create();
+      while (i < n && startsWith(trim(ls[i]), ">")) {
+        string q = trim(ls[i]).slice(1, trim(ls[i]).len());
+        inner.push(startsWith(q, " ") ? q.slice(1, q.len()) : q);
+        i++;
+      }
+      out.push(<blockquote>{blocks(inner.toArray(), h)}</blockquote>);
+      continue;
+    }
+
+    if (listMarker(t) > 0) {
+      i = list(ls, i, h, out);
+      continue;
+    }
+
+    // A table: a row with pipes, then a delimiter row.
+    if (t.indexOf("|") >= 0 && i + 1 < n && isDelimiterRow(trim(ls[i + 1]))) {
+      string[] head = cells(t);
+      string[] align = cells(trim(ls[i + 1]));
+      i += 2;
+      Vec<Node> rows = Vec.create();
+      while (i < n && !blank(ls[i]) && ls[i].indexOf("|") >= 0) {
+        string[] cs = cells(ls[i]);
+        Node[] tds = Node[].filled(head.len(), Node.Text(""));
+        for (i32 k = 0; k < head.len(); k++) {
+          tds[k] = <td class={alignOf(align, k)}>{k < cs.len() ? inline(cs[k], h) : Node[]()}</td>;
+        }
+        rows.push(<tr>{tds}</tr>);
+        i++;
+      }
+      Node[] ths = Node[].filled(head.len(), Node.Text(""));
+      for (i32 k = 0; k < head.len(); k++) { ths[k] = <th class={alignOf(align, k)}>{inline(head[k], h)}</th>; }
+      out.push(<div class="mdtable"><table><thead><tr>{ths}</tr></thead><tbody>{rows.toArray()}</tbody></table></div>);
+      continue;
+    }
+
+    // Indented code.
+    if (indentOf(line) >= 4) {
+      Buf body = Buf.create();
+      while (i < n && (indentOf(ls[i]) >= 4 || blank(ls[i]))) {
+        string l = ls[i];
+        body.pushStr(l.len() >= 4 ? l.slice(4, l.len()) : "");
+        body.push('\n');
+        i++;
+      }
+      out.push(codeBlock(body.take(), ""));
+      continue;
+    }
+
+    // A paragraph — or a setext heading, when the next line underlines it.
+    Vec<string> para = Vec.create();
+    while (i < n && !blank(ls[i]) && (para.len() == 0 || !startsBlock(ls[i]))) {
+      string u = trim(ls[i]);
+      if (para.len() > 0 && u.len() >= 2 && (onlyOf(u, '=') || onlyOf(u, '-'))) {
+        out.push(heading(onlyOf(u, '=') ? 1 : 2, inline(joined(para), h)));
+        para = Vec.create();
+        i++;
+        break;
+      }
+      para.push(ls[i]);
+      i++;
+    }
+    if (para.len() > 0) {
+      // A paragraph that is only HTML — a centred banner, a `<details>` — keeps its images and text.
+      out.push(t.len() > 0 && t[0] == "<" ? <div class="mdhtml">{inline(joined(para), h)}</div>
+                                          : <p>{inline(joined(para), h)}</p>);
+    }
+  }
+  return out.toArray();
+}
+
+bool onlyOf(string s, u8 c) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] != c && b[i] != ' ') { return false; } }
+  return true;
+}
+
+/** Lines joined for inline parsing; a line ending in two spaces or `\` keeps its break. */
+string joined(Vec<string> ls) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = ls.get(i);
+    bool hard = l.len() >= 2 && l.slice(l.len() - 2, l.len()) == "  ";
+    string t = trim(l);
+    if (t.len() > 0 && t.slice(t.len() - 1, t.len()) == "\\") { hard = true; t = t.slice(0, t.len() - 1); }
+    out.pushStr(t);
+    if (i + 1 < ls.len()) { out.pushStr(hard ? "\n" : " "); }
+  }
+  return out.toStr();
+}
+
+string? alignOf(string[] align, i32 k) {
+  if (k >= align.len()) { return null; }
+  string a = align[k];
+  bool left = startsWith(a, ":");
+  bool right = a.len() > 0 && a.slice(a.len() - 1, a.len()) == ":";
+  if (left && right) { return "c"; }
+  if (right) { return "r"; }
+  return null;
+}
+
+Node heading(i32 level, Node[] kids) {
+  switch (level) {
+    case 1: { return <h1>{kids}</h1>; }
+    case 2: { return <h2>{kids}</h2>; }
+    case 3: { return <h3>{kids}</h3>; }
+    case 4: { return <h4>{kids}</h4>; }
+    case 5: { return <h5>{kids}</h5>; }
+    default: { return <h6>{kids}</h6>; }
+  }
+}
+
+Node codeBlock(u8[] body, string info) {
+  // The fence's own last newline is not part of the code.
+  i32 end = body.len();
+  if (end > 0 && body[end - 1] == '\n') { end--; }
+  u8[] code = u8[].filled(end, 0);
+  for (i32 i = 0; i < end; i++) { code[i] = body[i]; }
+  Lang? lang = langNamed(info);
+  return <pre class="mdcode mono">{lang is not null ? highlight(code, lang!) : [Node.Text(string.toUtf8(code))]}</pre>;
+}
+
+/** A list from line `i`, into `out`; answers the line after it. */
+i32 list(string[] ls, i32 start, MdHost h, Vec<Node> out) {
+  i32 i = start;
+  i32 n = ls.len();
+  i32 base = indentOf(ls[i]);
+  bool numbered = ordered(trim(ls[i]));
+  Vec<Node> items = Vec.create();
+  while (i < n) {
+    string t = trim(ls[i]);
+    i32 m = listMarker(t);
+    if (m < 0 || indentOf(ls[i]) != base || ordered(t) != numbered) { break; }
+    i32 content = base + m;
+    Vec<string> body = Vec.create();
+    body.push(t.slice(m, t.len()));
+    i++;
+    // The item goes on while lines are indented to its content, or blank with more such after.
+    while (i < n) {
+      if (blank(ls[i])) {
+        if (i + 1 < n && indentOf(ls[i + 1]) >= content && !blank(ls[i + 1])) { body.push(""); i++; continue; }
+        break;
+      }
+      if (indentOf(ls[i]) >= content) { body.push(ls[i].slice(content, ls[i].len())); i++; continue; }
+      // A lazy continuation: plain text right under the item, not another item or block.
+      if (indentOf(ls[i]) > base && listMarker(trim(ls[i])) < 0) { body.push(trim(ls[i])); i++; continue; }
+      if (listMarker(trim(ls[i])) < 0 && !startsBlock(ls[i]) && indentOf(ls[i]) <= base) { body.push(trim(ls[i])); i++; continue; }
+      break;
+    }
+    // A blank line between items keeps the list going.
+    if (i + 1 < n && blank(ls[i]) && listMarker(trim(ls[i + 1])) > 0 && indentOf(ls[i + 1]) == base) { i++; }
+    items.push(listItem(body.toArray(), h));
+  }
+  out.push(numbered ? <ol>{items.toArray()}</ol> : <ul>{items.toArray()}</ul>);
+  return i;
+}
+
+Node listItem(string[] body, MdHost h) {
+  string first = body[0];
+  string box = "";
+  if (startsWith(first, "[ ] ")) { box = "☐ "; body[0] = first.slice(4, first.len()); }
+  else if (startsWith(first, "[x] ") || startsWith(first, "[X] ")) { box = "☑ "; body[0] = first.slice(4, first.len()); }
+  Node[] kids = blocks(body, h);
+  // A tight item — one paragraph — shows its text without the paragraph's margins.
+  if (kids.len() >= 1) {
+    match (kids[0]) {
+      Element(tag, attrs, on, inner, ref): {
+        if (tag == "p") {
+          Node[] rest = Node[].filled(kids.len() - 1, Node.Text(""));
+          for (i32 k = 1; k < kids.len(); k++) { rest[k - 1] = kids[k]; }
+          return <li class={box != "" ? "task" : null}>{box}{inner}{rest}</li>;
+        }
+      }
+      default: { }
+    }
+  }
+  return <li class={box != "" ? "task" : null}>{box}{kids}</li>;
+}
+
+// ── inline ──────────────────────────────────────────────────────────────────
+
+bool alnum(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c >= 0x80; }
+
+bool punct(u8 c) { return (c >= 33 && c <= 47) || (c >= 58 && c <= 64) || (c >= 91 && c <= 96) || (c >= 123 && c <= 126); }
+
+/** The few entities documents actually use. */
+string entity(string name) {
+  if (name == "amp") { return "&"; }
+  if (name == "lt") { return "<"; }
+  if (name == "gt") { return ">"; }
+  if (name == "quot") { return "\""; }
+  if (name == "apos" || name == "#39") { return "'"; }
+  if (name == "nbsp") { return "\u{A0}"; }
+  if (name == "copy") { return "©"; }
+  if (name == "mdash") { return "—"; }
+  if (name == "ndash") { return "–"; }
+  if (name == "hellip") { return "…"; }
+  return "";
+}
+
+/** The position after the `]` matching the `[` at `open`, or -1. */
+i32 closeBracket(const u8[] b, i32 open) {
+  i32 depth = 0;
+  for (i32 i = open; i < b.len(); i++) {
+    if (b[i] == '\\') { i++; continue; }
+    if (b[i] == '[') { depth++; }
+    if (b[i] == ']') { depth--; if (depth == 0) { return i + 1; } }
+  }
+  return -1;
+}
+
+/** A link's destination at `(`: the URL, and the position after `)`; or ("", -1). */
+(string, i32) destination(const u8[] b, i32 at) {
+  if (at >= b.len() || b[at] != '(') { return ("", -1); }
+  i32 depth = 0;
+  for (i32 i = at; i < b.len(); i++) {
+    if (b[i] == '(') { depth++; }
+    if (b[i] == ')') {
+      depth--;
+      if (depth == 0) {
+        string inside = trim(string.fromBytes(sub(b, at + 1, i)));
+        // A title — `(url "title")` — is dropped.
+        i32 sp = inside.indexOf(" ");
+        string url = sp >= 0 ? inside.slice(0, sp) : inside;
+        if (startsWith(url, "<") && url.slice(url.len() - 1, url.len()) == ">") { url = url.slice(1, url.len() - 1); }
+        return (url, i + 1);
+      }
+    }
+  }
+  return ("", -1);
+}
+
+u8[] sub(const u8[] b, i32 from, i32 to) {
+  u8[] out = u8[].filled(to > from ? to - from : 0, 0);
+  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
+  return out;
+}
+
+bool external(string url) {
+  return startsWith(url, "http://") || startsWith(url, "https://") || startsWith(url, "mailto:");
+}
+
+/** `rel` from folder `dir`, as a path inside the archive: `..` climbs, `.` and anchors go. */
+export string resolve(string dir, string rel) {
+  string r = rel;
+  i32 hash = r.indexOf("#");
+  if (hash >= 0) { r = r.slice(0, hash); }
+  i32 q = r.indexOf("?");
+  if (q >= 0) { r = r.slice(0, q); }
+  Vec<string> parts = Vec.create();
+  string all = startsWith(r, "/") ? r.slice(1, r.len()) : (dir == "" ? r : dir + "/" + r);
+  u8[] b = all.toBytes();
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '/') {
+      string p = all.slice(start, i);
+      if (p == "..") { parts.pop(); } else if (p != "." && p != "") { parts.push(p); }
+      start = i + 1;
+    }
+  }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < parts.len(); i++) {
+    if (i > 0) { out.push('/'); }
+    out.pushStr(parts.get(i));
+  }
+  return out.toStr();
+}
+
+string mimeOf(string path) {
+  string e = extOf(path);
+  if (e == "png") { return "image/png"; }
+  if (e == "jpg" || e == "jpeg") { return "image/jpeg"; }
+  if (e == "gif") { return "image/gif"; }
+  if (e == "webp") { return "image/webp"; }
+  if (e == "svg") { return "image/svg+xml"; }
+  if (e == "avif") { return "image/avif"; }
+  return "";
+}
+
+Node image(string src, string alt, MdHost h) {
+  if (!external(src) && !startsWith(src, "data:")) {
+    string path = resolve(h.dir, src);
+    string mime = mimeOf(path);
+    u8[]? bytes = mime == "" ? null : h.file(path);
+    if (bytes is not null) {
+      return <img class="mdimg" src={"data:\{mime};base64,\{base64(bytes!)}"} alt={alt}/>;
+    }
+  }
+  return <span class="imgph" title={src}>{alt != "" ? alt : "image"}</span>;
+}
+
+Node link(string url, Node[] kids, MdHost h) {
+  if (external(url)) { return <a href={url} target="_blank" rel="noopener noreferrer">{kids}</a>; }
+  if (startsWith(url, "#") || url == "") { return <span class="ilink dead">{kids}</span>; }
+  string path = resolve(h.dir, url);
+  fn<void(string)> go = h.open;
+  return <a class="ilink" title={path} onclick={(ElementEvent e) => { go(path); }}>{kids}</a>;
+}
+
+/** A value of attribute `name` in an HTML tag's text, or "". */
+string attrOf(string tag, string name) {
+  i32 k = lowerAscii(tag).indexOf(name + "=");
+  if (k < 0) { return ""; }
+  string rest = tag.slice(k + name.len() + 1, tag.len());
+  if (rest.len() == 0) { return ""; }
+  string q = rest[0];
+  if (q == "\"" || q == "'") {
+    i32 end = rest.slice(1, rest.len()).indexOf(q);
+    return end < 0 ? "" : rest.slice(1, end + 1);
+  }
+  i32 end = 0;
+  while (end < rest.len() && rest[end] != " " && rest[end] != ">") { end++; }
+  return rest.slice(0, end);
+}
+
+string lowerAscii(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+/** Inline markdown in `s`. */
+export Node[] inline(string s, MdHost h) {
+  u8[] b = s.toBytes();
+  Vec<Node> out = Vec.create();
+  Buf text = Buf.create();
+  fn<void()> flush = () => { if (text.len > 0) { out.push(Node.Text(string.toUtf8(text.take()))); } };
+  i32 i = 0;
+  i32 n = b.len();
+  while (i < n) {
+    u8 c = b[i];
+    if (c == '\\' && i + 1 < n && punct(b[i + 1])) { text.push(b[i + 1]); i += 2; continue; }
+    if (c == '\n') { flush(); out.push(<br/>); i++; continue; }
+    if (c == '`') {
+      i32 run = 0;
+      while (i + run < n && b[i + run] == '`') { run++; }
+      i32 j = i + run;
+      i32 close = -1;
+      while (j < n) {
+        if (b[j] == '`') {
+          i32 r = 0;
+          while (j + r < n && b[j + r] == '`') { r++; }
+          if (r == run) { close = j; break; }
+          j += r;
+        } else { j++; }
+      }
+      if (close >= 0) {
+        flush();
+        out.push(<code>{trim(string.toUtf8(sub(b, i + run, close)))}</code>);
+        i = close + run;
+        continue;
+      }
+      for (i32 k = 0; k < run; k++) { text.push('`'); }
+      i += run;
+      continue;
+    }
+    if ((c == '!' && i + 1 < n && b[i + 1] == '[') || c == '[') {
+      i32 open = c == '!' ? i + 1 : i;
+      i32 after = closeBracket(b, open);
+      if (after > 0) {
+        (string url, i32 end) = destination(b, after);
+        if (end > 0) {
+          flush();
+          string label = string.toUtf8(sub(b, open + 1, after - 1));
+          if (c == '!') { out.push(image(url, label, h)); }
+          else { out.push(link(url, inline(label, h), h)); }
+          i = end;
+          continue;
+        }
+      }
+      text.push(c);
+      i++;
+      continue;
+    }
+    if (c == '<') {
+      i32 close = -1;
+      for (i32 k = i + 1; k < n && k < i + 2000; k++) { if (b[k] == '>') { close = k; break; } }
+      if (close > 0) {
+        string tag = string.toUtf8(sub(b, i + 1, close));
+        if (external(tag) && tag.indexOf(" ") < 0) {
+          flush();
+          out.push(link(tag, [Node.Text(tag)], h));
+          i = close + 1;
+          continue;
+        }
+        u8 t0 = b[i + 1];
+        if ((t0 >= 'a' && t0 <= 'z') || (t0 >= 'A' && t0 <= 'Z') || t0 == '/' || t0 == '!') {
+          string name = lowerAscii(tag);
+          flush();
+          if (startsWith(name, "img")) { out.push(image(attrOf(tag, "src"), attrOf(tag, "alt"), h)); }
+          else if (startsWith(name, "br")) { out.push(<br/>); }
+          i = close + 1;
+          continue;
+        }
+      }
+      text.push(c);
+      i++;
+      continue;
+    }
+    if (c == '&') {
+      i32 semi = -1;
+      for (i32 k = i + 1; k < n && k < i + 10; k++) { if (b[k] == ';') { semi = k; break; } }
+      if (semi > 0) {
+        string e = entity(string.fromBytes(sub(b, i + 1, semi)));
+        if (e != "") { text.pushStr(e); i = semi + 1; continue; }
+      }
+    }
+    if (c == '~' && i + 1 < n && b[i + 1] == '~') {
+      i32 close = indexFrom(b, i + 2, "~~");
+      if (close > i + 2) {
+        flush();
+        out.push(<span class="del">{inline(string.toUtf8(sub(b, i + 2, close)), h)}</span>);
+        i = close + 2;
+        continue;
+      }
+    }
+    if (c == '*' || c == '_') {
+      i32 run = 0;
+      while (i + run < n && b[i + run] == c && run < 3) { run++; }
+      bool opens = i + run < n && b[i + run] != ' ' && (c == '*' || i == 0 || !alnum(b[i - 1]));
+      if (opens) {
+        i32 close = closing(b, i + run, c, run);
+        if (close > 0) {
+          flush();
+          Node[] inner = inline(string.toUtf8(sub(b, i + run, close)), h);
+          out.push(run == 1 ? <em>{inner}</em> : (run == 2 ? <strong>{inner}</strong> : <strong><em>{inner}</em></strong>));
+          i = close + run;
+          continue;
+        }
+      }
+      for (i32 k = 0; k < run; k++) { text.push(c); }
+      i += run;
+      continue;
+    }
+    // A bare URL, as GitHub links it.
+    if ((c == 'h') && (i == 0 || !alnum(b[i - 1])) && (startsAt(b, i, "https://") || startsAt(b, i, "http://"))) {
+      i32 e = i;
+      while (e < n && b[e] != ' ' && b[e] != '<' && b[e] != '\n') { e++; }
+      while (e > i && (b[e - 1] == '.' || b[e - 1] == ',' || b[e - 1] == ')' || b[e - 1] == ';' || b[e - 1] == ':' || b[e - 1] == '!' || b[e - 1] == '?')) { e--; }
+      string url = string.toUtf8(sub(b, i, e));
+      flush();
+      out.push(link(url, [Node.Text(url)], h));
+      i = e;
+      continue;
+    }
+    text.push(c);
+    i++;
+  }
+  flush();
+  return out.toArray();
+}
+
+bool startsAt(const u8[] b, i32 i, string s) {
+  u8[] t = s.toBytes();
+  if (i + t.len() > b.len()) { return false; }
+  for (i32 k = 0; k < t.len(); k++) { if (b[i + k] != t[k]) { return false; } }
+  return true;
+}
+
+i32 indexFrom(const u8[] b, i32 from, string s) {
+  for (i32 i = from; i < b.len(); i++) { if (startsAt(b, i, s)) { return i; } }
+  return -1;
+}
+
+/** Where a run of `run` `c`s closes an emphasis opened before `from`: not after a space, and for `_` not inside a word. */
+i32 closing(const u8[] b, i32 from, u8 c, i32 run) {
+  i32 i = from;
+  while (i < b.len()) {
+    if (b[i] == '`') {
+      i32 j = i + 1;
+      while (j < b.len() && b[j] != '`') { j++; }
+      i = j + 1;
+      continue;
+    }
+    if (b[i] == c) {
+      i32 r = 0;
+      while (i + r < b.len() && b[i + r] == c) { r++; }
+      bool afterSpace = b[i - 1] == ' ';
+      bool wordAfter = i + r < b.len() && alnum(b[i + r]);
+      if (r >= run && !afterSpace && i > from && !(c == '_' && wordAfter)) { return i + (r - run); }
+      i += r;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}

@@ -1,0 +1,69 @@
+// Public entry points.
+//
+// Each answers a `Result`: the tree or the text, or a `JsonError` saying what was wrong and at which
+// byte. Until 2026-10-16 `parse` answered `JsonValue?` and threw the reason away, and `canonicalize`
+// answered a struct with an `ok` flag beside a `code`, a `pos` and a `text` that was empty on
+// failure — four fields, of which which ones meant anything depended on the first.
+//
+// Before that, `canonicalize` returned `u8[]` whether it succeeded or failed, with the difference
+// in byte 0, so `packages/server` calling it from wac put a NUL at the front of its output and could
+// not tell a parse failure from success. That is the bug a type that cannot be read without asking
+// which case it is was made for.
+
+import { JsonValue } from "./value.wac";
+import { Parser, parseDocument, JsonError, JsonFault } from "./parse.wac";
+import { writeValue } from "./stringify.wac";
+import { Buf, Result } from "core";
+
+/** What a parser that gave up says about why. */
+JsonError errorOf(Parser p) { return JsonError(p.err ?? JsonFault.Unexpected, p.errPos); }
+
+/** The tree `p` reads, or why it is not a document. */
+Result<JsonValue, JsonError> read(Parser p) {
+  JsonValue? v = parseDocument(p);
+  if (v is null) { return Result.Err(errorOf(p)); }
+  return Result.Ok(v!);
+}
+
+/** The parsed tree, or why the document is not JSON. */
+export Result<JsonValue, JsonError> parse(u8[] src) { return read(Parser.create(src)); }
+
+/**
+ * The parsed tree of a JSON5 document, or why it is not JSON5.
+ *
+ * JSON5 (json5.org 1.0.0) is JSON with comments, unquoted keys, single quotes, trailing commas
+ * and ECMAScript's numbers. Every JSON document is one, so this accepts strictly more than
+ * `parse` — which is the reason it is a second entry point rather than a replacement: a parser
+ * that quietly accepted a comment would let one into a file the other end reads with `parse`.
+ *
+ * `design/lang/0009` D6 is what it is here for: `wac.json5` and `wac.lock`. **Reading, not
+ * writing.** JSON is valid JSON5, so `stringify` already emits an acceptable manifest; a writer
+ * that used the extensions would have to decide when an identifier is safe unquoted, and nothing
+ * needs that yet.
+ */
+export Result<JsonValue, JsonError> parseJson5(u8[] src) { return read(Parser.createJson5(src)); }
+
+/** Parse and re-serialize: canonical JSON, or why the document is not JSON. */
+export Result<u8[], JsonError> canonicalize(u8[] src) {
+  JsonValue v = try parse(src);
+  return Result.Ok(stringify(v));
+}
+
+/** `canonicalize` for JSON5: the tree comes from JSON5, the text that comes back is JSON. */
+export Result<u8[], JsonError> canonicalizeJson5(u8[] src) {
+  JsonValue v = try parseJson5(src);
+  return Result.Ok(stringify(v));
+}
+
+/** The other direction: a tree, built by hand or edited after parsing, as bytes. */
+export u8[] stringify(JsonValue value) {
+  Buf out = Buf.create();
+  writeValue(out, value);
+  return out.take();
+}
+
+/**
+ * The `f64` of a document that is a bare number, for checking the decimal conversion against the
+ * host's own; null for anything else.
+ */
+export f64? parseNumberValue(u8[] src) { return parse(src).ok()?.number(); }

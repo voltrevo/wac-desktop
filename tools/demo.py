@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes samples/demo.zip: a small project-shaped archive to explore, with a nested .tar.gz inside."""
-import gzip, io, math, os, random, struct, tarfile, zipfile, zlib
+import gzip, io, json, math, os, random, struct, tarfile, zipfile, zlib
 
 here = os.path.dirname(os.path.abspath(__file__))
 repo = os.path.join(here, "..")
@@ -58,16 +58,50 @@ int count_words(const char *s) {
     return n;
 }
 '''
-README = """# wordcount
+README = """<p align="center"><img src="assets/logo.png" alt="wordcount logo" width="240"></p>
 
-A small program that counts words, packed up to show off **Archive Explorer**.
+# wordcount
 
-- `src/` — the C sources
-- `assets/` — a logo and an icon
-- `vendor/` — a library, as the `.tar.gz` it shipped in (open it!)
-- `data/` — a table and some bytes
+A small program that counts words, packed up to show off **Archive Explorer** — every file here
+was opened in your browser tab, by a page written in [wac](https://github.com/voltrevo/wac).
 
-Everything here was opened in your browser tab, by a page written in wac.
+## What's inside
+
+| Folder | What it holds | Files |
+|:-------|:--------------|------:|
+| `src/` | the C sources | 3 |
+| `assets/` | a logo and a banner | 2 |
+| `vendor/` | a library, as the `.tar.gz` it shipped in | 1 |
+| `data/` | a table, a config and some bytes | 3 |
+
+## Building
+
+```sh
+make            # builds ./wordcount
+./wordcount < README.md
+```
+
+The whole program is one loop — see [`src/main.c`](src/main.c):
+
+```c
+while (fgets(line, sizeof line, stdin)) {
+    words += count_words(line);   /* src/util/strings.c */
+    lines++;
+}
+```
+
+## Roadmap
+
+- [x] count words
+- [x] count lines
+- [ ] count *characters*, including ~~bytes~~ multi-byte ones
+  - and maybe graphemes
+
+> **Note:** the [guide](docs/guide.md) has more, and `data/cities.csv` is there to try the table view.
+
+---
+
+Made with care. Questions? https://example.invalid/wordcount
 """
 
 def entry(z, name, data, when, method=zipfile.ZIP_DEFLATED):
@@ -88,7 +122,15 @@ with zipfile.ZipFile(out, "w") as z:
         "%s,%s,%d\n" % (c, k, p) for c, k, p in [("Tokyo", "JP", 37400068), ("Delhi", "IN", 28514000), ("Shanghai", "CN", 25582000),
         ("São Paulo", "BR", 21650000), ("Mexico City", "MX", 21581000), ("Cairo", "EG", 20076000), ("Mumbai", "IN", 19980000),
         ("Beijing", "CN", 19618000), ("Dhaka", "BD", 19578000), ("Osaka", "JP", 19281000)]), (2026, 8, 14, 8, 0, 0))
+    entry(z, "wordcount/package.json", json.dumps({"name": "wordcount", "version": "1.4.0", "private": True,
+        "description": "Counts words, lines and (soon) characters", "scripts": {"build": "make", "test": "make test"},
+        "keywords": ["text", "cli", "wac"], "engines": {"node": ">=22"}, "files": ["src", "assets"],
+        "dependencies": {"libfoo": "1.2.0"}, "repository": {"type": "git", "url": "https://example.invalid/wordcount.git"}}, indent=2) + "\n", (2026, 10, 2, 9, 20, 0))
+    entry(z, "wordcount/data/config.json", json.dumps({"locale": "en-GB", "delimiters": [" ", "\t", "\n"],
+        "limits": {"maxLine": 4096, "maxWords": None, "strict": False},
+        "outputs": [{"format": "text", "pretty": True}, {"format": "json", "fields": ["words", "lines", "bytes"]}],
+        "history": [{"version": "1.%d.0" % k, "words": 1000 * k + 7} for k in range(12)]}, indent=2), (2026, 8, 14, 8, 5, 0))
     entry(z, "wordcount/data/sample.bin", bytes(random.getrandbits(8) for _ in range(3000)), (2026, 8, 14, 8, 1, 0))
     entry(z, "wordcount/vendor/libfoo-1.2.tar.gz", targz(), (2026, 6, 1, 12, 0, 0), zipfile.ZIP_STORED)
-    entry(z, "wordcount/docs/guide.md", "# Guide\n\n" + "Run `make`, then pipe text into `./wordcount`.\n\n" * 30, (2026, 10, 2, 9, 30, 0))
+    entry(z, "wordcount/docs/guide.md", "# Guide\n\nBack to the [README](../README.md).\n\n## Usage\n\nRun `make`, then pipe text into `./wordcount`:\n\n```sh\ncat *.md | ./wordcount\n```\n\n1. Build it\n2. Run it\n3. Count things\n", (2026, 10, 2, 9, 30, 0))
 print(out, os.path.getsize(out))

@@ -13,6 +13,23 @@ import { Archive, Entry, Extracted, Format, Opened, extract, folderArchive, open
 import { Kind, isContainer, sniff } from "./sniff.wac";
 import { Dir, Tree, buildTree, nameOf } from "./tree.wac";
 import { baseName, extOf, lower, percentKept, sortBy } from "./bytes.wac";
+import { Map, hashString, stringEq } from "core";
+import { Node } from "web";
+import { JsonValue } from "../vendor/json/src/value.wac";
+import { Folding } from "./jsonview.wac";
+
+/**
+ * What a rich preview of one entry has worked out, kept so a render does not work it out again: typing
+ * in the filter renders the page, and must not re-parse a 5 MB JSON file per keypress.
+ */
+export struct Rich {
+  bool parsed;
+  JsonValue? json;
+  /** Folds and opens in the JSON tree, which outlive the render that made them. */
+  Folding fold;
+  /** Rendered views, by tab, for the views that do not change once drawn. */
+  Map<string, Node> nodes;
+}
 
 export struct Level {
   /** What the breadcrumb calls it: the file's name. */
@@ -23,6 +40,8 @@ export struct Level {
   Extracted?[] cache;
   /** Each entry's SHA-256, once computed. */
   string[] digests;
+  /** Each entry's rich preview, once somebody has looked. */
+  Rich?[] rich;
   string cwd;
   /** The entry being previewed, or -1. */
   i32 selected;
@@ -77,7 +96,7 @@ Level single(string name, u8[] bytes) {
 
 Level levelOf(string name, Archive a) {
   i32 n = a.entries.len();
-  return Level(name, a, buildTree(a.entries), Extracted?[].defaulted(n), string[].filled(n, ""), "", -1, 0);
+  return Level(name, a, buildTree(a.entries), Extracted?[].defaulted(n), string[].filled(n, ""), Rich?[].defaulted(n), "", -1, 0);
 }
 
 /**
@@ -344,4 +363,33 @@ export string iconFor(string name) {
 bool has(string[] xs, string x) {
   for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
   return false;
+}
+
+/** Entry `i`'s rich-preview cache, made the first time. */
+export Rich richOf(Level l, i32 i) {
+  Rich? have = l.rich[i];
+  if (have is not null) { return have!; }
+  Rich r = Rich(false, null, Folding.create(), Map.create(hashString, stringEq));
+  l.rich[i] = r;
+  return r;
+}
+
+/** The entry at `path` in the current level, or -1. */
+export i32 entryAt(Model m, string path) {
+  Level l = top(m);
+  for (i32 i = 0; i < l.archive.entries.len(); i++) {
+    if (!l.archive.entries[i].isDir && l.archive.entries[i].path == path) { return i; }
+  }
+  return -1;
+}
+
+/** Show entry `i` of the current level: go to its folder, and select it there. */
+export void reveal(Model m, i32 i) {
+  string path = top(m).archive.entries[i].path;
+  goTo(m, m.levels.len() - 1, parentOf(path));
+  Row[] rows = rowsOf(m);
+  for (i32 k = 0; k < rows.len(); k++) {
+    if ((rows[k].dir is null) && rows[k].entry == i) { select(m, i, k); m.focusCursor = true; return; }
+  }
+  select(m, i, 0);
 }

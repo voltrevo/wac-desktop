@@ -18,15 +18,24 @@ It is written in [wac](https://github.com/voltrevo/wac) and builds to a single `
 |---|---|
 | `src/app.wac` | the page: landing, top bar, listing, keyboard, the loop that receives files |
 | `src/preview.wac` | the right-hand pane: text, hex, image, info, and a nested archive's card |
+| `src/markdown.wac` | Markdown rendered: CommonMark blocks, GFM tables and task lists, images and links resolved inside the archive |
+| `src/jsonview.wac` | JSON as a folding tree |
+| `src/table.wac` | CSV and TSV, delimiter detected |
+| `src/highlight.wac` | syntax highlighting: one tokenizer, a profile per family of languages |
 | `src/model.wac` | the state and every change to it; levels for nested archives |
 | `src/archive.wac` | zip (incl. zip64, CP437 names, self-extracting stubs), tar (GNU and pax names), gzip, zstd |
 | `src/tree.wac` | folders built from flat paths |
 | `src/sniff.wac` | what a file is, from its bytes |
 | `src/style.wac` | the stylesheet, light and dark, and the icons as SVG `data:` URLs |
-| `vendor/` | inflate, CRC-32, zstd and SHA-256, copied from wac's `packages/` at `a66fe9d51` |
+| `vendor/` | inflate, CRC-32, zstd, SHA-256, JSON and number formatting, copied from wac's `packages/` at `a66fe9d51` |
 | `tools/fixtures.py`, `tools/demo.py` | the test archives, and `samples/demo.zip` |
 
 ## How it behaves
+
+- **Previews follow the file.** Markdown renders — with its images and links resolved inside the
+  archive, so a README shows its own logo and `[guide](docs/guide.md)` goes there — JSON is a folding
+  tree, CSV and TSV are tables, and code is highlighted. Text, Hex and Info stay a tab away. Big files
+  are capped (the first 4,000 tree rows, 2,000 table rows, 128 KB of colour) so the page stays quick.
 
 - **Folders** — dropped, or chosen with "Choose a folder" — open like an archive, and archives inside
   them open as nested levels. Things dropped together open together: a folder and a loose file, or

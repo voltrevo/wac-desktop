@@ -1,0 +1,112 @@
+// JSON as a tree: containers fold, values are coloured by kind, and a large document stays usable.
+//
+// **What is open is kept by path**, so a render after any other change — a new selection elsewhere, a
+// keypress in the filter — shows the tree as the user left it. Nothing is open beyond `depth` unless
+// somebody opened it, and a render stops at `ROW_LIMIT` rows, so a 50 MB document costs what its first
+// screens cost.
+
+import { Map, hashString, stringEq } from "core";
+import { ElementEvent, Node, html.button, html.div, html.span } from "web";
+import { JsonValue } from "../vendor/json/src/value.wac";
+import { grouped } from "./bytes.wac";
+
+static i32 ROW_LIMIT = 4000;
+static i32 CHILD_LIMIT = 500;
+
+/** What is open, and how deep everything else starts open. */
+export struct Folding {
+  Map<string, bool> open;
+  i32 depth;
+
+  Folding create() { return Folding(Map.create(hashString, stringEq), 2); }
+}
+
+struct Walk {
+  Folding f;
+  fn<void()> bump;
+  Node[] rows;
+  i32 n;
+}
+
+void row(Walk w, Node r) {
+  if (w.n == w.rows.len()) {
+    Node[] grown = Node[].filled(w.rows.len() * 2 + 16, Node.Text(""));
+    for (i32 i = 0; i < w.n; i++) { grown[i] = w.rows[i]; }
+    w.rows = grown;
+  }
+  w.rows[w.n] = r;
+  w.n++;
+}
+
+bool isOpen(Folding f, string path, i32 depth) {
+  bool? set = f.open.get(path);
+  return set is not null ? set! : depth < f.depth;
+}
+
+string quoted(u8[] b) {
+  string s = string.toUtf8(b);
+  return s.len() > 400 ? "\"\{s.slice(0, 400)}…\"" : "\"\{s}\"";
+}
+
+/** The rows of `v`, which is called `key` and sits at `path`. */
+void walk(Walk w, JsonValue v, string key, bool index, string path, i32 depth) {
+  if (w.n >= ROW_LIMIT) { return; }
+  string pad = "padding-left:\{depth * 18 + 10}px";
+  Node name = key == "" ? Node.Text("")
+    : <><span class={index ? "jx" : "jk"}>{key}</span><span class="jp">: </span></>;
+  i32 count = match (v) { Array(items): items.len(), Object(members): members.len(), default: -1 };
+  if (count < 0) {
+    Node val = match (v) {
+      Null: <span class="jl">null</span>,
+      Bool(b): <span class="jl">{b ? "true" : "false"}</span>,
+      Number(x, raw): <span class="jn">{raw.len() > 0 ? string.fromBytes(raw) : "\{x}"}</span>,
+      Str(bytes): <span class="js">{quoted(bytes)}</span>,
+      default: Node.Text(""),
+    };
+    row(w, <div class="jrow" style={pad}><span class="caret"></span>{name}{val}</div>);
+    return;
+  }
+  bool isArray = match (v) { Array(_): true, default: false };
+  bool open = isOpen(w.f, path, depth) && count > 0;
+  Folding f = w.f;
+  fn<void()> bump = w.bump;
+  string summary = isArray ? (count == 1 ? "[ 1 item ]" : "[ \{grouped(count as i64)} items ]")
+                           : (count == 1 ? "{ 1 key }" : "{ \{grouped(count as i64)} keys }");
+  row(w, <div class={count > 0 ? "jrow fold" : "jrow"} style={pad}
+              onclick={(ElementEvent e) => { if (count > 0) { f.open.set(path, !open); bump(); } }}>
+    <span class="caret">{count == 0 ? "" : (open ? "▾" : "▸")}</span>{name}
+    <span class="jsum">{open ? (isArray ? "[" : "{") : summary}</span></div>);
+  if (!open) { return; }
+  i32 shown = count < CHILD_LIMIT ? count : CHILD_LIMIT;
+  for (i32 i = 0; i < shown; i++) {
+    if (w.n >= ROW_LIMIT) { break; }
+    match (v) {
+      Array(items): { walk(w, items.get(i), "\{i}", true, "\{path}/\{i}", depth + 1); }
+      Object(members): {
+        string k = members.at(i).keyStr();
+        walk(w, members.at(i).value, k, false, "\{path}/\{k}", depth + 1);
+      }
+      default: { }
+    }
+  }
+  if (count > shown) {
+    row(w, <div class="jrow jmore" style={"padding-left:\{(depth + 1) * 18 + 10}px"}>… {grouped((count - shown) as i64)} more not shown</div>);
+  }
+  row(w, <div class="jrow" style={pad}><span class="caret"></span><span class="jsum">{isArray ? "]" : "}"}</span></div>);
+}
+
+/** The tree of `v`, with buttons to open and close all of it. */
+export Node jsonTree(JsonValue v, Folding f, fn<void()> bump) {
+  Walk w = Walk(f, bump, Node[](), 0);
+  walk(w, v, "", false, "", 0);
+  Node[] rows = Node[].filled(w.n, Node.Text(""));
+  for (i32 i = 0; i < w.n; i++) { rows[i] = w.rows[i]; }
+  return <div class="jtree anim">
+    <div class="jtools">
+      <button class="btn" onclick={(ElementEvent e) => { f.open = Map.create(hashString, stringEq); f.depth = 64; bump(); }}>Expand all</button>
+      <button class="btn" onclick={(ElementEvent e) => { f.open = Map.create(hashString, stringEq); f.depth = 1; bump(); }}>Collapse all</button>
+      {w.n >= ROW_LIMIT ? <span class="digest">Showing the first {grouped(ROW_LIMIT as i64)} rows — collapse some to see more.</span> : Node.Text("")}
+    </div>
+    <div class="mono jrows">{rows}</div>
+  </div>;
+}

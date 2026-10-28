@@ -1,17 +1,29 @@
 // The right-hand pane: what the selected file is, shown the way its bytes suggest.
 
 import { Buf } from "core";
-import { ElementEvent, Node, Page, html.b, html.br, html.button, html.div, html.h3, html.img, html.p, html.pre, html.span } from "web";
+import { ElementEvent, Node, Page, html.b, html.br, html.button, html.div, html.h3, html.img, html.p, html.pre, html.span,
+         html.table, html.tbody, html.td, html.th, html.thead, html.tr } from "web";
 import { Entry, Extracted, formatLabel } from "./archive.wac";
 import { Kind, isContainer, kindLabel } from "./sniff.wac";
 import { Dir } from "./tree.wac";
-import { Level, Model, bytesOf, iconFor, isFolder, kindOf, top } from "./model.wac";
+import { Level, Model, Rich, bytesOf, entryAt, iconFor, isFolder, kindOf, reveal, richOf, top } from "./model.wac";
+import { Lang, highlight, langFor } from "./highlight.wac";
+import { MdHost, markdown } from "./markdown.wac";
+import { jsonTree } from "./jsonview.wac";
+import { Table, numeric, parseTable } from "./table.wac";
+import { JsonValue } from "../vendor/json/src/value.wac";
+import { parse, parseJson5 } from "../vendor/json/src/json.wac";
+import { extOf } from "./bytes.wac";
 import { base64, baseName, grouped, hexBytes, hexOf, le16, percentKept, sizeOf } from "./bytes.wac";
 import { sha256 } from "../vendor/crypto/sha256.wac";
 
 static i32 TEXT_LIMIT = 262144;
 static i32 LINE_LIMIT = 6000;
 static i32 HASH_LIMIT = 33554432;
+/** Past this, code is shown without colour: a span per token is a lot of page for a large file. */
+static i32 HIGHLIGHT_LIMIT = 131072;
+static i32 TABLE_ROWS = 2000;
+static i32 JSON_LIMIT = 33554432;
 
 /** An icon, as the stylesheet draws them. */
 export Node icon(string name, string extra) {
@@ -28,11 +40,28 @@ string iconOfKind(const Kind k, string name) {
   };
 }
 
-/** The tabs a kind offers, in order; the first is where a preview opens. */
-string[] tabsFor(const Kind k) {
+/**
+ * What a text file is underneath: JSON (by name, or because it parses as some), a table, a document —
+ * or "" for text that is only text.
+ */
+string flavorOf(string name, const u8[] b) {
+  string ext = extOf(name);
+  if (ext == "csv" || ext == "tsv" || ext == "tab") { return "table"; }
+  if (ext == "md" || ext == "markdown" || ext == "mdx" || ext == "mkd") { return "doc"; }
+  if (ext == "json" || ext == "json5" || ext == "jsonc" || ext == "geojson" || ext == "webmanifest" || ext == "ipynb"
+      || ext == "har" || ext == "map" || ext == "babelrc" || ext == "eslintrc") { return "tree"; }
+  // Anything else that opens with `{` or `[` gets a tree if it parses — checked when the tab is drawn.
+  i32 i = 0;
+  while (i < b.len() && i < 4096 && (b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == 9)) { i++; }
+  if (i < b.len() && (b[i] == '{' || b[i] == '[') && (ext == "" || ext == "txt" || ext == "lock" || ext == "data")) { return "tree"; }
+  return "";
+}
+
+/** The tabs a file offers, in order; the first is where a preview opens. */
+string[] tabsFor(const Kind k, string flavor) {
   return match (k) {
     Image(_): ["image", "hex", "info"],
-    Text: ["text", "hex", "info"],
+    Text: flavor == "" ? ["text", "hex", "info"] : [flavor, "text", "hex", "info"],
     Binary: ["hex", "info"],
     default: ["contents", "hex", "info"],
   };
@@ -43,6 +72,9 @@ string tabLabel(string t) {
   if (t == "text") { return "Text"; }
   if (t == "hex") { return "Hex"; }
   if (t == "contents") { return "Archive"; }
+  if (t == "tree") { return "Tree"; }
+  if (t == "table") { return "Table"; }
+  if (t == "doc") { return "Rendered"; }
   return "Info";
 }
 
@@ -58,7 +90,8 @@ export Node preview(Model m, Page page, fn<void()> bump, fn<void(i32)> openNeste
   m.trying = "";
   Kind k = kindOf(l, i);
   string ic = x.ok ? iconOfKind(k, name) : iconFor(name);
-  string[] tabs = x.ok ? tabsFor(k) : ["info"];
+  string flavor = x.ok ? flavorOf(name, x.bytes) : "";
+  string[] tabs = x.ok ? tabsFor(k, flavor) : ["info"];
   string tab = tabs[0];
   for (i32 t = 0; t < tabs.len(); t++) { if (tabs[t] == m.tab) { tab = m.tab; } }
 
@@ -71,7 +104,18 @@ export Node preview(Model m, Page page, fn<void()> bump, fn<void(i32)> openNeste
 
   Node body = Node.Text("");
   if (!x.ok && tab != "info") { body = problem(x.error); }
-  else if (tab == "text") { body = textView(x.bytes); }
+  else if (tab == "text") { body = cached(richOf(l, i), "text", () => textView(x.bytes, langFor(name))); }
+  else if (tab == "tree") { body = treeView(richOf(l, i), name, x.bytes, bump); }
+  else if (tab == "table") { body = cached(richOf(l, i), "table", () => tableView(name, x.bytes)); }
+  else if (tab == "doc") {
+    string dir = parentDir(e.path);
+    MdHost host = MdHost(dir, (string path) => fileAt(m, path), (string path) => {
+      i32 j = entryAt(m, path);
+      if (j >= 0) { reveal(m, j); } else { m.error = "\{path} is not in this archive"; }
+      bump();
+    });
+    body = cached(richOf(l, i), "doc", () => <div class="anim">{markdown(x.bytes, host)}</div>);
+  }
   else if (tab == "hex") { body = hexView(m, x.bytes, bump); }
   else if (tab == "image") { body = imageView(k, x.bytes); }
   else if (tab == "contents") { body = nestedCard(k, name, x.bytes, () => { openNested(i); }); }
@@ -127,8 +171,109 @@ Node folderSummary(Model m, Level l) {
   </div>;
 }
 
-/** Text, with line numbers in a gutter that stays put while the text scrolls sideways. */
-Node textView(u8[] bytes) {
+/** A view drawn once and kept: one that nothing but the file decides. */
+Node cached(Rich r, string tab, fn<Node()> draw) {
+  Node? have = r.nodes.get(tab);
+  if (have is not null) { return have!; }
+  Node n = draw();
+  r.nodes.set(tab, n);
+  return n;
+}
+
+string parentDir(string path) {
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { return path.slice(0, i); } }
+  return "";
+}
+
+/** The bytes of the file at `path` in the current level, for a document's images. */
+u8[]? fileAt(Model m, string path) {
+  i32 j = entryAt(m, path);
+  if (j < 0) { return null; }
+  Extracted x = bytesOf(top(m), j);
+  return x.ok ? x.bytes : null;
+}
+
+/** JSON as a tree — or, when it does not parse, why, and the text. */
+Node treeView(Rich r, string name, u8[] bytes, fn<void()> bump) {
+  if (!r.parsed) {
+    r.parsed = true;
+    if (bytes.len() <= JSON_LIMIT) {
+      bool five = extOf(name) == "json5" || extOf(name) == "jsonc";
+      r.json = five ? parseJson5(bytes).ok() : parse(bytes).ok();
+      // A strict parse that fails may be JSON5 — comments, trailing commas — which config files are.
+      if (r.json is null && !five) { r.json = parseJson5(bytes).ok(); }
+    }
+  }
+  if (r.json is null) {
+    return <div>
+      <div class="note">{icon("alert", "sm")}{bytes.len() > JSON_LIMIT ? "Too large to show as a tree here." : "This doesn't parse as JSON, so here it is as text."}</div>
+      {textView(bytes, null)}
+    </div>;
+  }
+  return jsonTree(r.json!, r.fold, bump);
+}
+
+/** A table, with the first row as its header and numeric columns aligned right. */
+Node tableView(string name, u8[] bytes) {
+  Table t = parseTable(bytes, name, TABLE_ROWS + 1);
+  if (t.rows.len() == 0) { return problem("it is empty"); }
+  i32 w = t.width < 60 ? t.width : 60;
+  string[] head = t.rows[0];
+  // A column is numeric when every body cell that has something in it is a number.
+  bool[] num = bool[].filled(w, true);
+  for (i32 c = 0; c < w; c++) {
+    bool any = false;
+    for (i32 r = 1; r < t.rows.len() && r < 200; r++) {
+      string cell = c < t.rows[r].len() ? t.rows[r][c] : "";
+      if (cell == "") { continue; }
+      any = true;
+      if (!numeric(cell)) { num[c] = false; break; }
+    }
+    if (!any) { num[c] = false; }
+  }
+  Node[] ths = Node[].filled(w + 1, Node.Text(""));
+  ths[0] = <th class="rn"></th>;
+  for (i32 c = 0; c < w; c++) { ths[c + 1] = <th class={num[c] ? "r" : ""}>{c < head.len() ? head[c] : ""}</th>; }
+  i32 body = t.rows.len() - 1;
+  Node[] trs = Node[].filled(body, Node.Text(""));
+  for (i32 r = 1; r <= body; r++) {
+    string[] row = t.rows[r];
+    Node[] tds = Node[].filled(w + 1, Node.Text(""));
+    tds[0] = <td class="rn">{"\{r}"}</td>;
+    for (i32 c = 0; c < w; c++) { tds[c + 1] = <td class={num[c] ? "r" : ""}>{c < row.len() ? row[c] : ""}</td>; }
+    trs[r - 1] = <tr>{tds}</tr>;
+  }
+  string sep = t.delimiter == 9 ? "tab" : (t.delimiter == ';' ? "semicolon" : "comma");
+  return <div class="anim">
+    <div class="note">{icon("layers", "sm")}{grouped((t.total - 1) as i64)} rows · {"\{t.width}"} columns · {sep}-separated
+      {t.total - 1 > TABLE_ROWS ? " · showing the first \{grouped(TABLE_ROWS as i64)}" : ""}{t.width > 60 ? " · first 60 columns" : ""}</div>
+    <div class="grid"><table><thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table></div>
+  </div>;
+}
+
+/**
+ * Code in colour — the first `HIGHLIGHT_LIMIT` bytes of it, cut at a line, with the rest as plain text:
+ * a span per token is a lot of page for a large file, and the top is what gets read first.
+ */
+Node[] coloured(u8[] text, Lang? lang) {
+  if (lang is null) { return [Node.Text(string.toUtf8(text))]; }
+  if (text.len() <= HIGHLIGHT_LIMIT) { return highlight(text, lang!); }
+  i32 cut = HIGHLIGHT_LIMIT;
+  while (cut > 0 && text[cut - 1] != '\n') { cut--; }
+  if (cut == 0) { cut = HIGHLIGHT_LIMIT; }
+  u8[] head = u8[].filled(cut, 0);
+  u8[] rest = u8[].filled(text.len() - cut, 0);
+  for (i32 i = 0; i < cut; i++) { head[i] = text[i]; }
+  for (i32 i = cut; i < text.len(); i++) { rest[i - cut] = text[i]; }
+  Node[] spans = highlight(head, lang!);
+  Node[] out = Node[].filled(spans.len() + 1, Node.Text(string.toUtf8(rest)));
+  for (i32 i = 0; i < spans.len(); i++) { out[i] = spans[i]; }
+  return out;
+}
+
+/** Text, with line numbers in a gutter that stays put while the text scrolls sideways; code in colour. */
+Node textView(u8[] bytes, Lang? lang) {
   bool cut = bytes.len() > TEXT_LIMIT;
   i32 n = cut ? TEXT_LIMIT : bytes.len();
   // Stop at a line boundary when cutting, and count lines while we are at it.
@@ -149,7 +294,7 @@ Node textView(u8[] bytes) {
     {cut ? <div class="note">{icon("alert", "sm")}Showing the first {grouped(lines as i64)} lines — save the file to see all of it.</div> : Node.Text("")}
     <div class="code mono anim">
       <pre class="gut">{gut.toStr()}</pre>
-      <pre class="src">{string.toUtf8(shown)}</pre>
+      <pre class="src">{coloured(shown, lang)}</pre>
     </div>
   </div>;
 }

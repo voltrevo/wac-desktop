@@ -1,0 +1,102 @@
+// CSV and TSV: RFC 4180 fields, read into rows of text.
+//
+// The delimiter is the one the first line uses most, among `,` `;` and tab — a European spreadsheet
+// writes `;`, because `,` is its decimal point. Quotes may hold delimiters, newlines and `""`.
+
+import { Buf, Vec } from "core";
+import { extOf } from "./bytes.wac";
+
+export struct Table {
+  string[][] rows;
+  /** How many rows the file holds; `rows` may stop short of it. */
+  i32 total;
+  /** The widest row, in cells. */
+  i32 width;
+  u8 delimiter;
+}
+
+/** The delimiter `b` uses, judged by its first line. */
+u8 delimiterOf(const u8[] b, string name) {
+  if (extOf(name) == "tsv" || extOf(name) == "tab") { return 9; }
+  i32 commas = 0;
+  i32 semis = 0;
+  i32 tabs = 0;
+  bool quoted = false;
+  for (i32 i = 0; i < b.len() && i < 65536; i++) {
+    u8 c = b[i];
+    if (c == '"') { quoted = !quoted; }
+    else if (!quoted && c == '\n') { break; }
+    else if (!quoted && c == ',') { commas++; }
+    else if (!quoted && c == ';') { semis++; }
+    else if (!quoted && c == 9) { tabs++; }
+  }
+  if (tabs > commas && tabs > semis) { return 9; }
+  if (semis > commas) { return ';'; }
+  return ',';
+}
+
+/** The rows of `b`, keeping at most `keep` of them. */
+export Table parseTable(const u8[] b, string name, i32 keep) {
+  u8 d = delimiterOf(b, name);
+  Vec<string[]> rows = Vec.create();
+  Vec<string> row = Vec.create();
+  Buf cell = Buf.create();
+  i32 total = 0;
+  i32 width = 0;
+  bool quoted = false;
+  bool any = false;          // whether the current row has anything in it yet
+  i32 i = 0;
+  while (i < b.len()) {
+    u8 c = b[i];
+    if (quoted) {
+      if (c == '"') {
+        if (i + 1 < b.len() && b[i + 1] == '"') { cell.push('"'); i += 2; continue; }
+        quoted = false;
+      } else {
+        cell.push(c);
+      }
+      i++;
+      continue;
+    }
+    if (c == '"' && cell.len == 0) { quoted = true; any = true; i++; continue; }
+    if (c == d) { row.push(string.toUtf8(cell.take())); any = true; i++; continue; }
+    if (c == '\r') { i++; continue; }
+    if (c == '\n') {
+      if (any || cell.len > 0) {
+        row.push(string.toUtf8(cell.take()));
+        if (row.len() > width) { width = row.len(); }
+        if (total < keep) { rows.push(row.toArray()); }
+        total++;
+      }
+      row = Vec.create();
+      any = false;
+      i++;
+      continue;
+    }
+    cell.push(c);
+    any = true;
+    i++;
+  }
+  if (any || cell.len > 0) {
+    row.push(string.toUtf8(cell.take()));
+    if (row.len() > width) { width = row.len(); }
+    if (total < keep) { rows.push(row.toArray()); }
+    total++;
+  }
+  return Table(rows.toArray(), total, width, d);
+}
+
+/** Whether `s` reads as a number: what decides that a column is right-aligned. */
+export bool numeric(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  i32 i = 0;
+  if (b[0] == '-' || b[0] == '+') { i = 1; }
+  bool digits = false;
+  for (; i < b.len(); i++) {
+    u8 c = b[i];
+    if (c >= '0' && c <= '9') { digits = true; }
+    else if (c != '.' && c != ',' && c != '_' && c != 'e' && c != 'E' && c != '%' && c != '-' && c != '+') { return false; }
+  }
+  return digits;
+}
