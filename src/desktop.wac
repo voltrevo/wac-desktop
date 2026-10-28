@@ -3,7 +3,7 @@
 import { Sys } from "std";
 import { Page, Ui } from "web";
 import { Desktop } from "./desk/shell.wac";
-import { boxApplet } from "../vendor/wac/packages/box/src/shrun.wac";
+import { box.boxApplet } from "wac";
 
 /**
  * What a copy of this page started by the shell runs: one of box's programs, as a process of its own in

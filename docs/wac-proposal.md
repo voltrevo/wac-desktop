@@ -4,11 +4,11 @@ The desktop is a tactical, DOM-only experiment, built in wac as an outside consu
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
 `Session`. This note lists what it needs from wac, most important first.
 
-**Status at wac master `638b4fc6a` (2026-10-28):** item 1 is merged, and so is the LICENSE from item 6.
-The cache-path request from item 6 is filed as `0368c`. Item 3 is blocked on `0369c`, which leaves
-internal package dependencies undecided. The project now pins master plus one commit, the compiler fix
-in item 2: branch `wac-desktop` at `2a6ca392`, not pushed, carried as
-`wac-patches/wac-desktop.git.bundle` and `wac-patches/0001-*.patch`.
+**Status at wac master `25a34468` (2026-10-28), which the project now pins:** items 1, 2 and 3 are
+merged, and the project has no patches and no vendored code — it imports wac's packages as
+`import { json.parse } from "wac"`. From item 6, modifier keys in `prevent`, decoders that return errors,
+and the LICENSE are merged too. Items 4 and 5 are written up upstream as design/system/0015 (proposed).
+Still open: the reader's time zone, reproducible names (`0368c`), `wac update`, and the box gaps.
 
 ## 1. Folder drops in `web` (merged)
 
@@ -135,11 +135,13 @@ The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has no
 | # | What | Where | State |
 |---|---|---|---|
 | 1 | Folder drops | `web` | merged |
-| 2 | Growable instantiation table | `wacc` | 1 commit, ready (`2a6ca392`) |
-| 3 | `from "wac"` | repo root | blocked on `0369c` |
-| 4 | Run a given module (`spawn` bytes, `load`) | `web` host | proposal |
-| 5 | Spawn via the page on `file://` | `web` host | proposal |
-| 6 | Modifier keys, time zone, decode results, `wac update`, box gaps | various | requests |
+| 2 | Growable instantiation table | `wacc` | merged (`63edaad6b`) |
+| 3 | `from "wac"` | repo root | merged (`lib.wac`); the project's `vendor/` is gone |
+| 4 | Run a given module (`spawn` bytes, `load`) | `web` host | proposed upstream, design/system/0015 |
+| 5 | Spawn via the page on `file://` | `web` host | proposed upstream, design/system/0015 |
+| 6 | Modifier keys in `prevent` | `web` | merged; used for Ctrl+S, Ctrl+L, Ctrl+A |
+| 6 | Decoders return errors | `gzip`, `zstd` | merged; used |
+| 6 | LICENSE | repo root | merged (MIT) |
 | 6 | Reproducible names | build | filed, `0368c` |
-| 6 | LICENSE | repo root | done |
-| 7 | `wac` as an applet | `wac`, `web` | depends on 3 and 4 |
+| 6 | Time zone, `wac update`, box gaps | various | open |
+| 7 | `wac` as an applet | `wac`, `web` | depends on 4 |

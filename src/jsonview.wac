@@ -7,7 +7,7 @@
 
 import { Map, hashString, stringEq } from "core";
 import { ElementEvent, Node, html.button, html.div, html.span } from "web";
-import { JsonValue } from "../vendor/wac/packages/json/src/value.wac";
+import { json.JsonValue } from "wac";
 import { grouped } from "./bytes.wac";
 
 static i32 ROW_LIMIT = 4000;

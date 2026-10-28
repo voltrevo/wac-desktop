@@ -3,7 +3,7 @@
 import { Ticket } from "core";
 import { Runner } from "web";
 import { Vfs, Got, Info, copyTree, freeName, vfsOf } from "../src/desk/vfs.wac";
-import { Fs } from "../vendor/wac/packages/fs/src/fs.wac";
+import { fs.Fs } from "wac";
 import { Desk, Win, close, dragTo, endDrag, find, focus, hintRight, minimise, newDesk, open, restore, sessionOf,
          startMove, startResize, taskbarClick, toggleMax } from "../src/desk/wm.wac";
 

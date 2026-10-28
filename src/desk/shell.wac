@@ -8,8 +8,8 @@
 import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
 import { Vfs, Got, Info, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
-import { Fs, mountSystem } from "../../vendor/wac/packages/fs/src/fs.wac";
-import { boxNames } from "../../vendor/wac/packages/box/src/shrun.wac";
+import { fs.Fs, fs.mountSystem } from "wac";
+import { box.boxNames } from "wac";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
          hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax } from "./wm.wac";
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
@@ -380,7 +380,7 @@ export Node Desktop(Ui ui, Page page) {
     start(page, d, bump, () => { ready.set(true); });
     return () => { };
   });
-  // The watchdog: decompressing that was still "in progress" when a timer ran has trapped.
+  // The watchdog: opening that was still "in progress" when a timer ran has trapped.
   ui.every(400, () => {
     if (d.trying == "") { return; }
     d.error = d.trying;

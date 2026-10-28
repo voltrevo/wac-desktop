@@ -9,17 +9,47 @@ moves things to a **Trash**. Nothing is uploaded: the page has no network access
 It is written in [wac](https://github.com/voltrevo/wac), uses the DOM for everything it draws, and builds
 to single HTML files. The standalone **Archive Explorer** it grew from is built alongside it.
 
-    wac update           # fetch the `web` package, once
+## Building it
+
+**Everything is pinned to one wac commit,
+[`25a34468`](https://github.com/voltrevo/wac/commit/25a34468293a1eeb0fa6dbd9fb8b002e98eec735).** The `wac`
+command should be built from that commit, and `wac.json5` names it as the `ref` of every wac dependency —
+`wac` itself (its packages, as `import { json.parse } from "wac"`), `web` and `webbuild` — with `wac.lock`
+agreeing. To change it, change all three refs and the lock together, and rebuild `wac` from the new
+commit; `tools/ci-build.sh` reads the commit from `wac.lock`.
+
+Getting that `wac`, on a machine with git and Node 22+:
+
+```bash
+git clone https://github.com/voltrevo/wac ~/src/wac
+```
+
+```bash
+git -C ~/src/wac checkout 25a34468293a1eeb0fa6dbd9fb8b002e98eec735
+```
+
+```bash
+cd ~/src/wac && ./bootstrap.sh --host nodejs
+```
+
+That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in this repository:
+
+    wac update           # fetch the pinned wac packages, once
     wac task build       # src/desktop.wac -> dist/index.html, src/app.wac -> dist/explorer/index.html
     wac task serve       # http://localhost:8080 — over http the desktop gets its storage
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
 
+Where `wac update` cannot reach GitHub, `sh tools/use-local-wac.sh ~/src/wac` fills the package cache
+from the clone instead.
+
+`sh tools/ci-build.sh` does all of this from nothing — clone, check out the pinned commit, bootstrap,
+fill the cache, test, build — and is what publishing runs.
+
 **Publishing:** `.github/workflows/pages.yml` builds the site and deploys it to GitHub Pages on every
 push to the default branch — set the repository's Pages source to "GitHub Actions". It runs
-`tools/ci-build.sh`, which needs nothing but this repository and GitHub: it clones wac, adds the commits
-`wac-patches/` carries, bootstraps `wac` on Node (cached after the first run) and builds.
+`tools/ci-build.sh`, caching the bootstrapped `wac` between runs, keyed on `wac.lock`.
 
 ## Where it runs
 
@@ -46,7 +76,7 @@ shares, so their pages can see each other's files.
   breadcrumbs carrying on from the disk's, and **Extract here** writing every file to a folder beside it.
 - **Moving files:** drag rows or desktop icons onto a folder row, a breadcrumb, a Files window, a desktop
   folder, Home, the desktop or the Trash; hold Ctrl as you let go to copy instead. Ctrl-click and
-  Shift-click select several. Cut, Copy and Paste are buttons beside the selection, and Ctrl+X, Ctrl+C and
+  Shift-click select several, Ctrl+A all of a folder. Cut, Copy and Paste are buttons beside the selection, and Ctrl+X, Ctrl+C and
   Ctrl+V in a listing. A window showing something that moves follows it.
 - **The Trash:** Delete (the key or the button) moves things to the Trash, with an Undo beside the note
   that says so. The Trash — on the desktop and in the launcher — shows where each item came from and
@@ -63,11 +93,10 @@ shares, so their pages can see each other's files.
   from wac's `box` — `sh` with about sixty programs (`ls`, `cat`, `grep`, `find`, `sed`, `sort`,
   `sha256sum`, `ps`, …; `help` lists them), pipes, redirects, `/bin`, `/proc` and `/dev`. It runs on the
   same disk Files shows: `echo hi > /Desktop/hi.txt` puts an icon on the desktop, and a file saved in the
-  Editor is there for `cat`. Tab completes paths, ↑/↓ recall history, Ctrl+C stops a command, and what is
+  Editor is there for `cat`. Tab completes paths, ↑/↓ recall history, Ctrl+C stops a command, Ctrl+L clears the screen, and what is
   typed while one runs waits its turn. `open <path>` shows a file or folder in a window. A terminal comes
   back in the folder it was in after a reload; its scrollback does not.
-- **The Editor** saves with its Save button: Ctrl+S cannot be caught, because a page can only prevent a key
-  by name, without its modifiers, and preventing `s` would stop it being typed.
+- **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
 ## Layout
@@ -86,9 +115,7 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
-| `vendor/wac/` | wac's `box`, `sh`, `fs`, inflate, zstd, SHA-256, JSON and everything they import — 176 files from 19 packages, in wac's own layout, copied by `tools/vendor_wac.py` until `import { … } from "wac"` lands |
-| `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh`, `use-local-wac.sh` and `vendor_wac.py` |
-| `wac-patches/` | the wac commits this needs that GitHub does not have yet, as a bundle and as patches |
+| `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `use-local-wac.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 
 ## How it is put together
@@ -105,23 +132,21 @@ shares, so their pages can see each other's files.
   editor's caret and a listing's scroll would go with it.
 - **The browser's own events do the edges.** A page cannot ask how wide it is, so the right-edge snap is
   a thin strip that is only there during a drag and says when the pointer reaches it.
-- **Damaged archives:** the vendored decompressors `trap` on bad data, and wac cannot catch a trap. Work
-  marks itself in progress; a page runs on one thread, so a timer that finds the mark still there knows
-  the work died, and says so. The loops that receive files never open anything themselves.
+- **Damaged archives:** wac's decompressors answer bad data with an error, which is shown as the
+  reason. As a backstop for this project's own parsing — a trap cannot be caught — work marks itself in
+  progress; a page runs on one thread, so a timer that finds the mark still there knows the work died,
+  and says so. The loops that receive files never open anything themselves.
 - **One disk, many shells.** The desktop makes one wac `Fs` at startup — on the browser's storage, or in
   memory — and mounts wac's system on it (`/bin`, `/proc`, `/dev`) as box does. Files, the Viewer and
   the Editor read and write it through `vfs.wac`; every terminal is `Session.startOn` that same `Fs`. A
   command that finishes bumps the disk's revision, so every Files window looks again. Programs run as
   box applets in workers: the page is built with `--spawn applet`, and `src/desktop.wac` exports one.
-- **Size.** Carrying the shell takes the page from 1.8 MB to 3.4 MB of module. It also took the build
-  past a fixed limit in wac's compiler — the number of generic instantiations one module may name — so
-  the pinned wac carries a compiler fix that lets the table grow, and the build bootstraps `wac` from it.
-  That fix is the one thing not yet on GitHub: `wac.lock` pins `2a6ca392`, which is wac's master
-  (`638b4fc6a`) plus that commit. It travels in `wac-patches/`; `tools/use-local-wac.sh <wac clone>`
-  makes the pinned commit available to `wac` on a new machine, and the Pages build does the same.
+- **Size.** Carrying the shell takes the page from 1.8 MB to about 3.6 MB of module. It also needs a
+  `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
+  `63edaad6b` — so a `wac` older than that cannot build the desktop.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until
   600 ms pass with no more. The `web` package's host walks dropped directories and passes each file's
-  path; that is in wac's master.
+  path.
 
 ## Not yet
 
@@ -129,4 +154,4 @@ Zip writing, dragging files between windows, multiple desktops,
 keyboard window switching, settings. In archives: encrypted entries and deflate64, bzip2, lzma or xz zip
 entries are listed but not opened; files over about 32 MB are not hashed. Markdown opened from the disk
 shows its images' alt text rather than the images. In the terminal: `ps` does not list the shell itself,
-there is no Ctrl+L (a page cannot prevent a key with its modifiers), and no full-screen programs.
+and there are no full-screen programs.

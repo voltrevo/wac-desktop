@@ -414,7 +414,7 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
       <div class="stats num"><span>{chosen(s).len() > 1 ? <b>{grouped(chosen(s).len() as i64)} selected · </b> : Node.Text("")}<b>{grouped(items.len() as i64)}</b> {items.len() == 1 ? "item" : "items"}</span></div>
     </div>
     <div class="thead">{head}</div>
-    <div class="rows" tabindex="0" prevent="ArrowUp ArrowDown Enter Backspace Home End F2 Delete"
+    <div class="rows" tabindex="0" prevent="ArrowUp ArrowDown Enter Backspace Home End F2 Delete Ctrl+a Meta+a"
          onkeydown={(ElementEvent e) => {
            string key = e.value;
            if (s.renaming != "") { return; }

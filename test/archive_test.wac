@@ -106,3 +106,26 @@ export string test_formatting() {
   if (unixTime(0x65E3320C) != "2024-03-02 14:05") { return unixTime(0x65E3320C); }
   return "";
 }
+
+export string test_damaged_data_is_an_error_not_a_trap() {
+  // The deflated entry's data overwritten with bytes no deflate stream starts with.
+  u8[] z = zipBasic();
+  Archive a = opened(z, "basic.zip");
+  Entry d = find(a, "src/lib/deep.txt")!;
+  u8[] bad = u8[].filled(z.len(), 0 as u8);
+  for (i32 i = 0; i < z.len(); i++) { bad[i] = z[i]; }
+  i32 start = d.offset + 30 + (z[d.offset + 26] as i32) + (z[d.offset + 28] as i32);
+  for (i32 i = 0; i < 8; i++) { bad[start + i] = 0xFF as u8; }
+  Extracted x = extract(opened(bad, "bad.zip"), find(opened(bad, "bad.zip"), "src/lib/deep.txt")!);
+  if (x.ok || x.error.indexOf("could not be decompressed") < 0) { return "deflate: \{x.ok} \{x.error}"; }
+  // A gzip stream cut short, and a zstd frame whose block is garbage.
+  u8[] gz = tarGz();
+  u8[] cut = u8[].filled(gz.len() / 2, 0 as u8);
+  for (i32 i = 0; i < cut.len(); i++) { cut[i] = gz[i]; }
+  Opened o = openArchive(cut, sniff(cut, "cut.tgz"), "cut.tgz");
+  if (o.archive is not null || o.error.indexOf("could not be decompressed") < 0) { return "gzip: \{o.error}"; }
+  u8[] zst = [0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+  Opened q = openArchive(zst, sniff(zst, "x.zst"), "x.zst");
+  if (q.archive is not null || q.error.indexOf("could not be decompressed") < 0) { return "zstd: \{q.error}"; }
+  return "";
+}

@@ -8,13 +8,10 @@
 // decompressed when opened, and an archive of one entry is what they become; if that entry is itself
 // a tar, the tar is what the user wanted, and `open` goes straight through to it.
 
-import { Buf, Vec } from "core";
+import { Buf, Result, Vec } from "core";
 import { endOfDirectory, Kind, sniff, tarHeaderAt } from "./sniff.wac";
 import { baseName, endsWith, hasAt, le16, le32, le64, sliceOf } from "./bytes.wac";
-import { inflateAt } from "../vendor/wac/packages/gzip/src/inflate.wac";
-import { crc32 } from "../vendor/wac/packages/gzip/src/crc32.wac";
-import { decompress } from "../vendor/wac/packages/zstd/src/frame.wac";
-import { gunzipBytes } from "../vendor/wac/packages/gzip/src/inflate.wac";
+import { gzip.crc32, gzip.gunzipBytesResult, gzip.inflateAtResult, zstd.decompressResult } from "wac";
 
 /** One file or directory in an archive. */
 export struct Entry {
@@ -250,7 +247,10 @@ Extracted readZip(Archive a, const Entry e) {
   if (e.methodId == 0) {
     bytes = sliceOf(b, start, start + (e.csize as! i32));
   } else if (e.methodId == 8) {
-    bytes = inflateAt(b, start).bytes;
+    match (inflateAtResult(b, start)) {
+      Ok(x): { bytes = x.bytes; }
+      Err(why): { return noBytes("its data could not be decompressed — \{why}"); }
+    }
   } else {
     return noBytes("it is compressed with \{e.method}, which the explorer cannot decompress yet");
   }
@@ -397,7 +397,12 @@ string gzipName(const u8[] b) {
 }
 
 Opened openStream(u8[] b, string name, string codec) {
-  u8[] inner = codec == "gzip" ? gunzipBytes(b) : decompress(b);
+  Result<u8[], string> got = codec == "gzip" ? gunzipBytesResult(b) : decompressResult(b);
+  u8[] inner = u8[]();
+  match (got) {
+    Ok(v): { inner = v; }
+    Err(why): { return failed("\{name} could not be decompressed: \{why}"); }
+  }
   string recorded = codec == "gzip" ? gzipName(b) : "";
   string inName = recorded != "" && string.isUtf8(recorded.toBytes()) ? cleanPath(recorded) : innerName(name, codec);
   i64 size = inner.len() as i64;

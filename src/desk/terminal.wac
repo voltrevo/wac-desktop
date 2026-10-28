@@ -15,7 +15,7 @@
 
 import { Vec } from "core";
 import { ElementEvent, MOD_CTRL, Node, Page, Ref, State, Ui, html.div, html.input, html.pre, html.span } from "web";
-import { Session } from "../../vendor/wac/packages/box/src/lib/session.wac";
+import { box.Session } from "wac";
 import { Desk, Win, close } from "./wm.wac";
 import { Got, Info, join, leafOf, parentOf } from "./vfs.wac";
 import { openPath } from "./files.wac";
@@ -158,7 +158,7 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
         <div class="tline">
           <span class="tps">{busy.get() ? "" : t.s.prompt()}</span>
           <input class="tcmd mono" ref={field} autocomplete="off" spellcheck="false" value={draft.get()}
-                 prevent="Tab ArrowUp ArrowDown"
+                 prevent="Tab ArrowUp ArrowDown Ctrl+l"
                  oninput={(ElementEvent e) => { draft.set(e.value); }}
                  onkeydown={(ElementEvent e) => {
                    bool intr = (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C");
@@ -170,6 +170,7 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
                    if (e.value == "ArrowUp" || e.value == "ArrowDown") { draft.set(t.s.recall(e.value == "ArrowUp")); return; }
                    if (e.value == "Tab") { complete(d, t, draft); return; }
                    if (intr) { t.s.interrupt(draft.get()); draft.set(""); return; }
+                   if ((e.mods & MOD_CTRL) != 0 && (e.value == "l" || e.value == "L")) { t.s.screen = ""; tick.update((i32 n) => n + 1); return; }
                    if (e.value != "Enter") { return; }
                    string line = draft.get();
                    draft.set("");

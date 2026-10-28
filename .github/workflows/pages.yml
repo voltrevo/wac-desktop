@@ -33,7 +33,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.wac
-          key: wac-${{ runner.os }}-${{ hashFiles('wac.lock', 'wac-patches/*.bundle') }}
+          key: wac-${{ runner.os }}-${{ hashFiles('wac.lock') }}
       - name: Build
         run: sh tools/ci-build.sh
       - uses: actions/configure-pages@v5

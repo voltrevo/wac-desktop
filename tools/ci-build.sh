@@ -3,9 +3,9 @@
 #
 #     sh tools/ci-build.sh          # leaves the site in dist/
 #
-# Clones wac (into $WAC_SRC, .wac-src by default), adds the commits wac-patches/ carries, bootstraps the
-# `wac` command on Node from the commit wac.lock pins — skipped when $WAC_HOME already has one, as a
-# cached CI run does — then tests and builds. Needs git, curl-free network access to GitHub, and Node 22+.
+# Clones wac (into $WAC_SRC, .wac-src by default), bootstraps the `wac` command on Node from the commit
+# wac.lock pins — the same commit the project's wac dependencies are — skipped when $WAC_HOME already has
+# one, as a cached CI run does; puts that commit in wac's package cache; then tests and builds. Needs git, curl-free network access to GitHub, and Node 22+.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"

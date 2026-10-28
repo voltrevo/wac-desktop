@@ -1,6 +1,6 @@
 // The Viewer and the Editor: one file each, read from the disk.
 
-import { ElementEvent, Node, Page, Ui, html.button, html.div, html.input, html.span, html.textarea } from "web";
+import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ui, html.button, html.div, html.input, html.span, html.textarea } from "web";
 import { Got, join, leafOf, parentOf, freeName } from "./vfs.wac";
 import { Desk, Win, open } from "./wm.wac";
 import { Model, Level, emptyModel, hasFile, iconFor, kindOf, openRoot, top } from "../model.wac";
@@ -119,7 +119,10 @@ export Node EditorApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 
       <button class="btn" title="Download a copy" onclick={(ElementEvent e) => { page.download(w.arg == "" ? (s.name == "" ? "Untitled.txt" : s.name) : leafOf(w.arg), s.text.toBytes()); }}>
         {icon("download", "sm")}</button>
     </div>
-    <textarea class="etext mono" spellcheck="false" value={s.text}
+    <textarea class="etext mono" spellcheck="false" value={s.text} prevent="Ctrl+s Meta+s"
+              onkeydown={(ElementEvent e) => {
+                if ((e.value == "s" || e.value == "S") && (e.mods & (MOD_CTRL | MOD_META)) != 0) { save(d, w, s, bump, bumpDesk); }
+              }}
               oninput={(ElementEvent e) => {
                 bool was = s.text != s.saved;
                 s.text = e.value;

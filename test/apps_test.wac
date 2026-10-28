@@ -3,7 +3,7 @@
 import { Ticket } from "core";
 import { Runner } from "web";
 import { Vfs, Got, copyInto, moveInto, vfsOf } from "../src/desk/vfs.wac";
-import { Fs } from "../vendor/wac/packages/fs/src/fs.wac";
+import { fs.Fs } from "wac";
 import { Desk, Win, canDrop, dragFilesTo, dropKey, hover, moved, newDesk, open, pressFiles } from "../src/desk/wm.wac";
 import { Origin, TRASH, deleteForGood, emptyTrash, originsText, parseOrigins, readOrigins, restoreFromTrash, toTrash,
          trashCount } from "../src/desk/trash.wac";

@@ -55,6 +55,10 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await p.textContent('.win.focus .estate')) === 'Unsaved changes', 'the editor notices a change', await p.textContent('.win.focus .estate'));
   await p.locator('.win.focus button', { hasText: 'Save' }).click(); await settle(800);
   check((await p.textContent('.win.focus .estate')) === 'Saved', 'and saves it', await p.textContent('.win.focus .estate'));
+  await p.locator('.win.focus textarea').fill('# edited\nall: wordcount\n!'); await settle(200);
+  await p.keyboard.press('Control+s'); await settle(800);
+  check((await p.textContent('.win.focus .estate')) === 'Saved' && (await p.$eval('.win.focus textarea', (e) => e.value)) === '# edited\nall: wordcount\n!', 'Ctrl+S saves too, without typing an s', await p.$eval('.win.focus textarea', (e) => e.value));
+  await p.locator('.win.focus textarea').fill('# edited\nall: wordcount\n'); await p.keyboard.press('Control+s'); await settle(800);
 
   const win = p.locator('.win.focus');
   const a = await win.boundingBox();
@@ -84,6 +88,8 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(out.includes('# edited\nall: wordcount'), 'and sees what the Editor saved', out.slice(-80));
   out = await run('grep -c word src/main.c; seq 1 100 | wc -l');
   check(/\n4\n100\n?$/.test(out.replace(/\/Desktop[^$]*\$ [^\n]*\n/g, '\n').replace(/\n+/g, '\n') + ''), 'box programs and pipes run', out.slice(-60));
+  await p.locator('.win.focus .tcmd').press('Control+l'); await settle(400);
+  check((await p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => 'x')) === '', 'Ctrl+L clears the terminal', null);
   await run('echo made by the shell > shell.txt');
   await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(800);
   check((await texts('.win.focus .row .t')).includes('shell.txt'), 'and what the shell writes appears in Files', await texts('.win.focus .row .t'));

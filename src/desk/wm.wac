@@ -9,8 +9,8 @@
 
 import { Buf, Vec } from "core";
 import { Vfs } from "./vfs.wac";
-import { JsonValue } from "../../vendor/wac/packages/json/src/value.wac";
-import { parse } from "../../vendor/wac/packages/json/src/json.wac";
+import { json.JsonValue } from "wac";
+import { json.parse } from "wac";
 
 export struct Win {
   i32 id;
@@ -99,8 +99,8 @@ export struct Desk {
   /** The layout changed and has not been saved. */
   bool dirty;
   /**
-   * What is being decompressed, and what to say if it never finishes: the decompressors trap on damaged
-   * data, and a timer that finds this still set knows the work died (see the explorer's watchdog).
+   * What is being opened, and what to say if it never finishes: a trap in the archive parsing cannot be
+   * caught, and a timer that finds this still set knows the work died (see `Model.trying`).
    */
   string trying;
   string error;

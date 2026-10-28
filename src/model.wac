@@ -15,7 +15,7 @@ import { Dir, Tree, buildTree, nameOf } from "./tree.wac";
 import { baseName, extOf, lower, percentKept, sortBy } from "./bytes.wac";
 import { Map, hashString, stringEq } from "core";
 import { Node } from "web";
-import { JsonValue } from "../vendor/wac/packages/json/src/value.wac";
+import { json.JsonValue } from "wac";
 import { Folding } from "./jsonview.wac";
 
 /**
@@ -65,9 +65,10 @@ export struct Model {
   /** Set by a key press, so the next render moves focus to the cursor row. */
   bool focusCursor;
   /**
-   * What is being decompressed right now, and what to say if it never finishes. wac cannot catch a
-   * trap, and the decompressors trap on damaged data — but a page's work runs on one thread, so a
-   * timer that finds this still set knows the work died rather than that it is still going.
+   * What is being opened right now, and what to say if it never finishes. wac's decompressors answer
+   * damaged data with an error, but a header that lies about where things are can still send this
+   * project's own parsing past the end of an array, and wac cannot catch a trap — a page's work runs on
+   * one thread, though, so a timer that finds this still set knows the work died.
    */
   string trying;
 }

@@ -11,7 +11,7 @@
 
 import { Ticket, Vec } from "core";
 import { Cli, Core, FileResult, Change, Stat } from "std";
-import { Fs } from "../../vendor/wac/packages/fs/src/fs.wac";
+import { fs.Fs } from "wac";
 
 export struct Info {
   bool isDir;
