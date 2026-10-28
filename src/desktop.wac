@@ -1,0 +1,10 @@
+// The desktop's page: windows, a taskbar and a disk of its own, in a browser tab.
+
+import { Page, Ui } from "web";
+import { Desktop } from "./desk/shell.wac";
+
+export async i32 main(Page page) {
+  page.title("Desktop");
+  page.mount((Ui ui) => <Desktop page={page}/>);
+  return 0;
+}

@@ -1,0 +1,212 @@
+// The archive browser's pieces — breadcrumbs, the listing and its keys, opening an archive inside another —
+// shared by the Archive Explorer page and the desktop's Files windows.
+
+import { ElementEvent, Node, Page, Ref, html.b, html.button, html.div, html.i, html.input, html.label, html.nav,
+         html.section, html.span } from "web";
+import { Level, Model, Row, goTo, goUp, iconFor, isFolder, openNested, opensAsArchive, rowsOf, select, top } from "./model.wac";
+import { icon } from "./preview.wac";
+import { grouped, percentKept, sizeOf } from "./bytes.wac";
+import { Dir } from "./tree.wac";
+
+/** Open entry `i` as a nested archive, with the spinner up while it decompresses. */
+export async void nested(Page page, Model m, fn<void()> bump, i32 i) {
+  m.busy = "Opening \{top(m).archive.entries[i].path}…";
+  bump();
+  await page.painted();
+  m.error = "";
+  m.trying = "\{top(m).archive.entries[i].path} could not be opened: its data is damaged";
+  openNested(m, i);
+  m.trying = "";
+  m.busy = "";
+  bump();
+}
+
+
+export Node picker(string cls, string text) {
+  return <label class={cls}>{icon("upload", "")}<span class="label">{text}</span><input type="file" class="hidden"/></label>;
+}
+
+/**
+ * A folder picker. `webkitdirectory` is not among the attributes `web`'s tags name, so the input is
+ * written as a quoted tag, which takes any attribute; every current browser understands it.
+ */
+export Node folderPicker(string cls, string text) {
+  return <label class={cls} title="Choose a folder">{icon("open", "")}<span class="label">{text}</span>
+    <"input" type="file" webkitdirectory="" class="hidden"/></label>;
+}
+
+export Node crumbs(Model m, fn<void()> bump) {
+  Node[] out = Node[]();
+  for (i32 depth = 0; depth < m.levels.len(); depth++) {
+    Level l = m.levels.get(depth);
+    bool last = depth == m.levels.len() - 1;
+    i32 d = depth;
+    if (depth > 0) { out = push(out, <span class="sep">{icon("chev", "sm")}</span>); }
+    bool here = last && l.cwd == "";
+    out = push(out, <button class={here ? "crumb level here" : "crumb level"} title={l.name}
+                            onclick={(ElementEvent e) => { goTo(m, d, ""); bump(); }}>
+                      <span class={isFolder(l) ? "ic i-folder sm c-folder" : "ic i-archive sm c-archive"}></span><span class="t">{l.name}</span></button>);
+    if (l.cwd != "") {
+      string[] parts = split(l.cwd);
+      string path = "";
+      for (i32 k = 0; k < parts.len(); k++) {
+        path = k == 0 ? parts[k] : path + "/" + parts[k];
+        string p = path;
+        bool end = last && k == parts.len() - 1;
+        out = push(out, <span class="sep">{icon("chev", "sm")}</span>);
+        out = push(out, <button class={end ? "crumb here" : "crumb"} title={p}
+                                onclick={(ElementEvent e) => { goTo(m, d, p); bump(); }}>
+                          <span class="ic i-folder sm c-folder"></span><span class="t">{parts[k]}</span></button>);
+      }
+    }
+  }
+  return <nav class="crumbs">{out}</nav>;
+}
+
+/** `3 items`, `1 item`. */
+export string plural(i32 n, string word) { return n == 1 ? "1 \{word}" : "\{grouped(n as i64)} \{word}s"; }
+
+export Node[] push(Node[] xs, Node x) {
+  Node[] out = Node[].filled(xs.len() + 1, x);
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  return out;
+}
+
+string[] split(string path) {
+  u8[] b = path.toBytes();
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '/') { n++; } }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '/') { out[k] = path.slice(start, i); k++; start = i + 1; }
+  }
+  return out;
+}
+
+// ── Listing ─────────────────────────────────────────────────────────────────
+
+string rowIcon(Row r) {
+  if (r.dir is not null) { return "folder"; }
+  return iconFor(r.name);
+}
+
+Node columns(Model m, fn<void()> bump) {
+  string[] names = ["Name", "Size", "Packed", "Modified"];
+  Node[] out = Node[].filled(4, Node.Text(""));
+  for (i32 k = 0; k < 4; k++) {
+    i32 key = k;
+    bool on = m.sortKey == k;
+    string arrow = on ? (m.desc ? " ↓" : " ↑") : "";
+    out[k] = <div class={k == 0 ? "" : "r"}>
+      <button class={on ? "on" : ""} onclick={(ElementEvent e) => {
+        if (m.sortKey == key) { m.desc = !m.desc; } else { m.sortKey = key; m.desc = key != 0; }
+        bump();
+      }}>{names[k]}{arrow}</button></div>;
+  }
+  return <div class="thead">{out}</div>;
+}
+
+export Node listing(Model m, Page page, fn<void()> bump, Ref cursorRef) {
+  Level l = top(m);
+  Row[] rows = rowsOf(m);
+  if (l.cursor >= rows.len()) { l.cursor = rows.len() - 1; }
+  if (l.cursor < 0) { l.cursor = 0; }
+  i32 shown = rows.len() < m.listRows ? rows.len() : m.listRows;
+  if (rows.len() > 0 && l.cursor >= shown) { shown = l.cursor + 1; }
+
+  // Moving the cursor previews what it lands on, as a file manager does.
+  fn<void(i32)> moveTo = (i32 k) => {
+    if (rows.len() == 0) { return; }
+    i32 c = k < 0 ? 0 : (k >= rows.len() ? rows.len() - 1 : k);
+    Row r = rows[c];
+    if (r.dir is null) { select(m, r.entry, c); } else { l.cursor = c; l.selected = -1; }
+    m.focusCursor = true;
+    bump();
+  };
+  fn<void(Row)> activate = (Row r) => {
+    if (r.dir is not null) { goTo(m, m.levels.len() - 1, r.dir!.path); }
+    else if (opensAsArchive(l, r.entry)) { nested(page, m, bump, r.entry); return; }
+    bump();
+  };
+
+  Node[] out = Node[].filled(shown, Node.Text(""));
+  for (i32 k = 0; k < shown; k++) {
+    Row r = rows[k];
+    i32 at = k;
+    bool sel = r.dir is null && r.entry == l.selected;
+    string ic = rowIcon(r);
+    bool isDir = r.dir is not null;
+    string cls = "row" + (sel ? " sel" : "") + (k == l.cursor ? " cursor" : "");
+    Node size = <div class="r dim num">{sizeOf(r.size)}</div>;
+    i32 kept = percentKept(r.size, r.csize);
+    // A tar stores without compressing, so a ratio there would only ever say 100%.
+    bool packs = r.size > 0 && (isDir ? r.csize != r.size : (l.archive.entries[r.entry].method != "" && l.archive.entries[r.entry].method != "link"));
+    Node ratio = !packs
+      ? <div class="r dim num">—</div>
+      : <div class="ratio"><span class="dim num">{kept > 100 ? "100" : "\{kept}"}%</span>
+          <span class="bar"><i style={"width:\{kept > 100 ? 100 : (kept < 3 ? 3 : kept)}%"}></i></span></div>;
+    out[k] = <div class={cls} key={isDir ? "d:\{r.dir!.path}" : "f:\{r.entry}"} tabindex="-1" title={r.name}
+                  ref={k == l.cursor ? cursorRef : null}
+                  onclick={(ElementEvent e) => {
+                    if (isDir) { activate(r); return; }
+                    select(m, r.entry, at);
+                    bump();
+                  }}
+                  ondblclick={(ElementEvent e) => { if (!isDir) { activate(r); } }}>
+      <div class="name">
+        <span class={"ic i-\{ic} c-\{ic}"}></span>
+        <span class="t">{r.name}</span>
+        {isDir ? <span class="sub">{plural(r.dir!.fileCount, "item")}</span> : Node.Text("")}
+        {r.where != "" ? <span class="sub">{r.where}</span> : Node.Text("")}
+        {!isDir && ic == "archive" ? <span class="badge">open</span> : Node.Text("")}
+      </div>
+      {size}
+      {ratio}
+      <div class="r dim num">{r.modified}</div>
+    </div>;
+  }
+
+  Dir d = l.tree.byPath.get(l.cwd) ?? l.tree.root;
+  // A folder from disk has nothing packed and no dates the browser hands over: two columns of dashes.
+  return <section class={isFolder(l) ? "pane list plain" : "pane list"}>
+    <div class="toolbar">
+      <label class="search">{icon("search", "sm")}
+        <input placeholder={l.cwd == "" ? "Filter everything…" : "Filter this folder and below…"} value={m.filter}
+               oninput={(ElementEvent e) => { m.filter = e.value; l.cursor = 0; bump(); }}
+               onkeydown={(ElementEvent e) => {
+                 if (e.value == "Escape") { m.filter = ""; bump(); }
+                 if (e.value == "ArrowDown") { moveTo(0); }
+               }} prevent="ArrowDown"/></label>
+      <div class="stats num">
+        <span><b>{grouped(d.fileCount as i64)}</b> {d.fileCount == 1 ? "file" : "files"}</span>
+        {d.csize != d.size ? <span class="wide"><b>{sizeOf(d.size)}</b> → {sizeOf(d.csize)}</span>
+                           : <span class="wide"><b>{sizeOf(d.size)}</b></span>}
+      </div>
+    </div>
+    {columns(m, bump)}
+    <div class="rows" tabindex="0" prevent="ArrowUp ArrowDown Enter Backspace Home End PageUp PageDown"
+         onkeydown={(ElementEvent e) => {
+           string key = e.value;
+           if (key == "ArrowDown") { moveTo(l.cursor + 1); }
+           else if (key == "ArrowUp") { moveTo(l.cursor - 1); }
+           else if (key == "PageDown") { moveTo(l.cursor + 12); }
+           else if (key == "PageUp") { moveTo(l.cursor - 12); }
+           else if (key == "Home") { moveTo(0); }
+           else if (key == "End") { moveTo(rows.len() - 1); }
+           else if (key == "Enter" && rows.len() > 0) { activate(rows[l.cursor]); m.focusCursor = true; }
+           else if (key == "Backspace") { goUp(m); m.focusCursor = true; bump(); }
+         }}>
+      {rows.len() == 0
+        ? <div class="empty">{m.filter != "" ? "Nothing here matches “\{m.filter}”." : "This folder is empty."}</div>
+        : Node.Text("")}
+      {out}
+      {shown < rows.len()
+        ? <button class="btn more" onclick={(ElementEvent e) => { m.listRows = m.listRows * 4; bump(); }}>
+            Show {grouped((rows.len() - shown) as i64)} more</button>
+        : Node.Text("")}
+    </div>
+  </section>;
+}
+

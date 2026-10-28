@@ -1,0 +1,349 @@
+// Windows: where they are, which is on top, and how a drag moves or resizes one.
+//
+// **A window is a record, and the desktop draws the records.** Moving one changes four numbers; the
+// window's contents are a component of their own that a move does not touch, so dragging a Files window
+// over a 4,000-row listing costs what the frame costs.
+//
+// Stacking is a z number rather than the order windows sit in the document: raising a window must not
+// move its element, or an editor's caret and a listing's scroll position would go with it.
+
+import { Buf, Vec } from "core";
+import { Vfs } from "./vfs.wac";
+import { JsonValue } from "../../vendor/json/src/value.wac";
+import { parse } from "../../vendor/json/src/json.wac";
+
+export struct Win {
+  i32 id;
+  /** Which app: "files", "viewer", "editor", "about". */
+  string app;
+  /** What it shows: a path on the disk, for every app so far. Files keeps its current folder here. */
+  string arg;
+  string title;
+  string icon;
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+  bool min;
+  bool max;
+  /** 0 floating, 1 the left half of the screen, 2 the right half. */
+  i32 snap;
+  i32 z;
+  /** Bumped when the window's contents must render again — a new `arg`, say. */
+  i32 rev;
+}
+
+export struct Drag {
+  i32 id;
+  /** "move", or the edges a resize moves: "e", "s", "se", "w", "n", "nw", "ne", "sw". */
+  string mode;
+  /** Whether the first pointer position has been seen; a resize starts measuring from it. */
+  bool started;
+  i32 px;
+  i32 py;
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+  /** Where the window would snap if dropped now: 0 nowhere, 1 left, 2 right, 3 maximised. */
+  i32 hint;
+}
+
+export struct Desk {
+  Vec<Win> wins;
+  i32 nextId;
+  i32 topZ;
+  /** The window with the focus, or -1. */
+  i32 focused;
+  Vfs fs;
+  /** Bumped whenever the disk changes, so every window showing it looks again. */
+  i32 fsRev;
+  Drag? drag;
+  bool launcher;
+  /** The layout changed and has not been saved. */
+  bool dirty;
+  /**
+   * What is being decompressed, and what to say if it never finishes: the decompressors trap on damaged
+   * data, and a timer that finds this still set knows the work died (see the explorer's watchdog).
+   */
+  string trying;
+  string error;
+  string note;
+}
+
+static i32 MIN_W = 320;
+static i32 MIN_H = 200;
+
+export Desk newDesk(Vfs fs) {
+  return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "");
+}
+
+export Win? find(Desk d, i32 id) {
+  for (i32 i = 0; i < d.wins.len(); i++) { if (d.wins.get(i).id == id) { return d.wins.get(i); } }
+  return null;
+}
+
+/** Open a window — or, when one of `app` already shows `arg`, bring that one forward instead. */
+export Win open(Desk d, string app, string arg, string title, string icon) {
+  for (i32 i = 0; i < d.wins.len(); i++) {
+    Win w = d.wins.get(i);
+    if (w.app == app && w.arg == arg && app != "files") { focus(d, w.id); return w; }
+  }
+  // Each new window steps down and right from the last, and wraps before it walks off a laptop screen.
+  i32 n = d.wins.len() % 8;
+  bool wide = app == "files";
+  // Clear of the desktop's column of icons, which is 120 pixels wide.
+  Win w = Win(d.nextId, app, arg, title, icon, 136 + n * 34, 36 + n * 30, wide ? 980 : 760, wide ? 600 : 560,
+              false, false, 0, 0, 0);
+  d.nextId++;
+  d.wins.push(w);
+  focus(d, w.id);
+  d.dirty = true;
+  return w;
+}
+
+export void focus(Desk d, i32 id) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  d.launcher = false;
+  if (d.focused == id && w!.z == d.topZ && !w!.min) { return; }
+  d.topZ++;
+  w!.z = d.topZ;
+  w!.min = false;
+  d.focused = id;
+  d.dirty = true;
+}
+
+export void close(Desk d, i32 id) {
+  for (i32 i = 0; i < d.wins.len(); i++) {
+    if (d.wins.get(i).id == id) { d.wins.remove(i); break; }
+  }
+  if (d.focused == id) { d.focused = topmost(d); }
+  d.dirty = true;
+}
+
+export void minimise(Desk d, i32 id) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  w!.min = true;
+  if (d.focused == id) { d.focused = topmost(d); }
+  d.dirty = true;
+}
+
+/** The visible window highest in the stack, or -1. */
+i32 topmost(Desk d) {
+  i32 best = -1;
+  i32 z = -1;
+  for (i32 i = 0; i < d.wins.len(); i++) {
+    Win w = d.wins.get(i);
+    if (!w.min && w.z > z) { z = w.z; best = w.id; }
+  }
+  return best;
+}
+
+export void toggleMax(Desk d, i32 id) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  if (w!.max || w!.snap != 0) { w!.max = false; w!.snap = 0; } else { w!.max = true; }
+  focus(d, id);
+  d.dirty = true;
+}
+
+/** A taskbar button: bring a window forward, or put the window in front away. */
+export void taskbarClick(Desk d, i32 id) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  if (!w!.min && d.focused == id) { minimise(d, id); } else { focus(d, id); }
+}
+
+// ── dragging ────────────────────────────────────────────────────────────────
+
+/** A title bar pressed at (`px`, `py`) on the desktop. */
+export void startMove(Desk d, i32 id, i32 px, i32 py) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  focus(d, id);
+  d.drag = Drag(id, "move", true, px, py, w!.x, w!.y, w!.w, w!.h, 0);
+}
+
+/**
+ * An edge or a corner pressed at (`px`, `py`) on the desktop. A snapped window shows a size its record
+ * does not hold, so for one of those the next pointer move is where the resize is measured from instead.
+ */
+export void startResize(Desk d, i32 id, string edges, i32 px, i32 py) {
+  Win? w = find(d, id);
+  if (w is null) { return; }
+  focus(d, id);
+  bool exact = w!.snap == 0 && !w!.max;
+  d.drag = Drag(id, edges, exact, px, py, w!.x, w!.y, w!.w, w!.h, 0);
+}
+
+bool has(string s, string c) { return s.indexOf(c) >= 0; }
+
+/** The pointer is at (`px`, `py`) on the desktop. Answers whether anything moved. */
+export bool dragTo(Desk d, i32 px, i32 py) {
+  Drag? g = d.drag;
+  if (g is null) { return false; }
+  Win? found = find(d, g!.id);
+  if (found is null) { d.drag = null; return false; }
+  Win w = found!;
+  Drag dr = g!;
+  if (!dr.started) {
+    dr.started = true;
+    dr.px = px;
+    dr.py = py;
+    // A snapped or maximised window resizes from the size it shows, which is not its record's.
+    w.max = false;
+    w.snap = 0;
+    return false;
+  }
+  i32 dx = px - dr.px;
+  i32 dy = py - dr.py;
+  if (dr.mode == "move") {
+    if (w.max || w.snap != 0) {
+      // Pulled out of a maximised or snapped place: it goes back to its own size, under the pointer.
+      if (dx * dx + dy * dy < 36) { return false; }
+      w.max = false;
+      w.snap = 0;
+      dr.x = px - w.w / 2;
+      dr.y = py - 16;
+      dr.px = px;
+      dr.py = py;
+      dx = 0;
+      dy = 0;
+    }
+    w.x = dr.x + dx;
+    w.y = dr.y + dy < 0 ? 0 : dr.y + dy;
+    dr.hint = py <= 2 ? 3 : (px <= 4 ? 1 : 0);
+  } else {
+    i32 x = dr.x;
+    i32 y = dr.y;
+    i32 ww = dr.w;
+    i32 hh = dr.h;
+    if (has(dr.mode, "e")) { ww = dr.w + dx; }
+    if (has(dr.mode, "s")) { hh = dr.h + dy; }
+    if (has(dr.mode, "w")) { ww = dr.w - dx; x = dr.x + dx; }
+    if (has(dr.mode, "n")) { hh = dr.h - dy; y = dr.y + dy; }
+    if (ww < MIN_W) { if (has(dr.mode, "w")) { x = x - (MIN_W - ww); } ww = MIN_W; }
+    if (hh < MIN_H) { if (has(dr.mode, "n")) { y = y - (MIN_H - hh); } hh = MIN_H; }
+    w.x = x;
+    w.y = y < 0 ? 0 : y;
+    w.w = ww;
+    w.h = hh;
+  }
+  return true;
+}
+
+/** The right edge was reached during a move: the desktop's width is the browser's, so it says when. */
+export void hintRight(Desk d) {
+  Drag? g = d.drag;
+  if ((g is not null) && g!.mode == "move") { g!.hint = 2; }
+}
+
+/** The pointer was let go. */
+export void endDrag(Desk d) {
+  Drag? g = d.drag;
+  d.drag = null;
+  if (g is null) { return; }
+  Win? w = find(d, g!.id);
+  if (w is null) { return; }
+  // Snapped or maximised, a window keeps the place it was dragged from, to go back to when it is restored.
+  if (g!.hint == 3) { w!.max = true; w!.x = g!.x; w!.y = g!.y; }
+  else if (g!.hint == 1 || g!.hint == 2) { w!.snap = g!.hint; w!.x = g!.x; w!.y = g!.y; }
+  d.dirty = true;
+}
+
+// ── the layout, saved ───────────────────────────────────────────────────────
+
+export static string SESSION = ".desktop/session.json";
+
+void str(Buf b, string s) {
+  b.push('"');
+  u8[] bytes = s.toBytes();
+  for (i32 i = 0; i < bytes.len(); i++) {
+    u8 c = bytes[i];
+    if (c == '"' || c == '\\') { b.push('\\'); b.push(c); }
+    else if (c < 32) { b.pushStr("\\u00"); b.push("0123456789abcdef".toBytes()[(c >> 4) as i32]); b.push("0123456789abcdef".toBytes()[(c & 15) as i32]); }
+    else { b.push(c); }
+  }
+  b.push('"');
+}
+
+/** The windows as JSON. */
+export u8[] sessionOf(Desk d) {
+  Buf b = Buf.create();
+  b.pushStr("{\"windows\":[");
+  // Saved bottom to top, so reading them back in order restores the stacking.
+  i32[] order = i32[].filled(d.wins.len(), 0);
+  for (i32 i = 0; i < order.len(); i++) { order[i] = i; }
+  for (i32 i = 1; i < order.len(); i++) {
+    i32 k = order[i];
+    i32 j = i - 1;
+    while (j >= 0 && d.wins.get(order[j]).z > d.wins.get(k).z) { order[j + 1] = order[j]; j--; }
+    order[j + 1] = k;
+  }
+  for (i32 i = 0; i < order.len(); i++) {
+    Win w = d.wins.get(order[i]);
+    if (i > 0) { b.push(','); }
+    b.pushStr("{\"app\":"); str(b, w.app);
+    b.pushStr(",\"arg\":"); str(b, w.arg);
+    b.pushStr(",\"title\":"); str(b, w.title);
+    b.pushStr(",\"icon\":"); str(b, w.icon);
+    b.pushStr(",\"x\":\{w.x},\"y\":\{w.y},\"w\":\{w.w},\"h\":\{w.h},\"snap\":\{w.snap}");
+    b.pushStr(",\"min\":\{w.min ? "true" : "false"},\"max\":\{w.max ? "true" : "false"}");
+    b.pushStr(",\"focused\":\{d.focused == w.id ? "true" : "false"}}");
+  }
+  b.pushStr("]}");
+  return b.take();
+}
+
+i32 num(JsonValue o, string k, i32 otherwise) {
+  JsonValue? v = o.member(k);
+  if (v is null) { return otherwise; }
+  return match (v!) { Number(x, raw): x as~ i32, default: otherwise };
+}
+
+string text(JsonValue o, string k) {
+  JsonValue? v = o.member(k);
+  if (v is null) { return ""; }
+  return match (v!) { Str(b): string.fromBytes(b), default: "" };
+}
+
+bool flag(JsonValue o, string k) {
+  JsonValue? v = o.member(k);
+  if (v is null) { return false; }
+  return match (v!) { Bool(b): b, default: false };
+}
+
+/** Restore windows from saved JSON; answers how many came back. A damaged file restores nothing. */
+export i32 restore(Desk d, u8[] json) {
+  JsonValue? doc = parse(json).ok();
+  if (doc is null) { return 0; }
+  JsonValue? ws = doc!.member("windows");
+  if (ws is null) { return 0; }
+  i32 n = 0;
+  i32 focusId = -1;
+  match (ws!) {
+    Array(items): {
+      for (i32 i = 0; i < items.len(); i++) {
+        JsonValue o = items.get(i);
+        string app = text(o, "app");
+        if (app == "") { continue; }
+        Win w = open(d, app, text(o, "arg"), text(o, "title"), text(o, "icon"));
+        w.x = num(o, "x", w.x);
+        w.y = num(o, "y", w.y);
+        w.w = num(o, "w", w.w) < MIN_W ? MIN_W : num(o, "w", w.w);
+        w.h = num(o, "h", w.h) < MIN_H ? MIN_H : num(o, "h", w.h);
+        w.snap = num(o, "snap", 0);
+        w.max = flag(o, "max");
+        if (flag(o, "focused")) { focusId = w.id; }
+        if (flag(o, "min")) { minimise(d, w.id); }
+        n++;
+      }
+    }
+    default: { }
+  }
+  if (focusId >= 0) { focus(d, focusId); }
+  d.dirty = false;
+  return n;
+}

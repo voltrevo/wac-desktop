@@ -1,0 +1,333 @@
+// The desktop: wallpaper and icons, windows, a taskbar, and files arriving from outside.
+//
+// **What renders when.** The desktop component draws the frames — position, size, title, stacking — and
+// every window's contents are a component of their own, handed the window record and two numbers: the
+// window's revision and the disk's. A drag changes neither, so a drag redraws frames and nothing inside
+// them; a save bumps the disk's, so every window showing the disk looks again.
+
+import { Ticket, Vec } from "core";
+import { ElementEvent, Node, Page, Picked, Ui, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
+import { Vfs, Got, Info, cliVfs, freeName, join, leafOf, memoryVfs, parentOf, usable } from "./vfs.wac";
+import { Desk, Drag, Win, SESSION, close, endDrag, find, focus, dragTo, hintRight, minimise, newDesk, open, restore,
+         sessionOf, startMove, startResize, taskbarClick, toggleMax } from "./wm.wac";
+import { FilesApp, appFor, openPath } from "./files.wac";
+import { EditorApp, ViewerApp } from "./apps.wac";
+import { deskCss } from "./style.wac";
+import { demoZip, welcomeMd } from "./seed.wac";
+import { css } from "../style.wac";
+import { icon } from "../preview.wac";
+import { iconFor } from "../model.wac";
+import { plural } from "../browse.wac";
+
+static i32 QUIET = 600;
+static i32 GRACE = 200;
+
+// ── starting up ─────────────────────────────────────────────────────────────
+
+/** Choose the disk, give a new one something to start with, and bring the last session back. */
+async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
+  if (await usable(page.sys.cli)) { d.fs = cliVfs(page.sys.cli); }
+  Vfs fs = d.fs;
+  await fs.mkdir("Desktop");
+  Got<u8[]> saved = await fs.read(SESSION);
+  if (!saved.ok) {
+    // The first time: a note and something to open.
+    Got<string[]> there = await fs.list("Desktop");
+    if (there.ok && there.value.len() == 0) {
+      await fs.write("Desktop/Welcome.md", welcomeMd());
+      await fs.write("Desktop/demo.zip", demoZip());
+    }
+    open(d, "viewer", "Desktop/Welcome.md", "Welcome.md", "text");
+  } else {
+    restore(d, saved.value);
+  }
+  d.dirty = true;
+  ready();
+  files(page, d, bump);
+}
+
+async void saveSession(Desk d) {
+  d.dirty = false;
+  await d.fs.mkdir(".desktop");
+  await d.fs.write(SESSION, sessionOf(d));
+}
+
+// ── files from outside ──────────────────────────────────────────────────────
+
+/** Where dropped files go: the folder of a Files window in front, or the desktop. */
+string target(Desk d) {
+  Win? w = find(d, d.focused);
+  if ((w is not null) && w!.app == "files" && !w!.min) { return w!.arg; }
+  return "Desktop";
+}
+
+/**
+ * Each file dropped or picked, for as long as the page lives — gathered the way the Archive Explorer
+ * gathers them, since a folder arrives a file at a time with nothing marking the last, then written to
+ * the disk. This loop only gathers; writing is a task of its own (see the explorer's `files`).
+ */
+async void files(Page page, Desk d, fn<void()> bump) {
+  Vec<Picked> batch = Vec.create();
+  Ticket<Picked> next = page.nextFile();
+  while (true) {
+    if (batch.len() == 0) {
+      await next;
+    } else {
+      bool alone = batch.len() == 1 && batch.get(0).name.indexOf("/") < 0;
+      Ticket<f64> quiet = page.sleep(alone ? GRACE : QUIET);
+      await Ticket.any(next, quiet);
+      if (!next.settled()) {
+        Vec<Picked> done = batch;
+        batch = Vec.create();
+        save(d, done, target(d), bump);
+        continue;
+      }
+    }
+    Picked f = next.value();
+    next = page.nextFile();
+    batch.push(f);
+    d.note = "Receiving \{plural(batch.len(), "file")}…";
+    bump();
+  }
+}
+
+/** Write what arrived into `dir`, each top-level name made unique there first. */
+async void save(Desk d, Vec<Picked> batch, string dir, fn<void()> bump) {
+  Vec<string> from = Vec.create();
+  Vec<string> to = Vec.create();
+  i32 written = 0;
+  i32 failed = 0;
+  bool folderRefused = false;
+  for (i32 i = 0; i < batch.len(); i++) {
+    Picked f = batch.get(i);
+    if (!f.ok) {
+      failed++;
+      if (f.error.indexOf("dropped folder") >= 0) { folderRefused = true; }
+      continue;
+    }
+    i32 cut = f.name.indexOf("/");
+    string head = cut < 0 ? f.name : f.name.slice(0, cut);
+    string rest = cut < 0 ? "" : f.name.slice(cut, f.name.len());
+    string renamed = "";
+    for (i32 k = 0; k < from.len(); k++) { if (from.get(k) == head) { renamed = to.get(k); } }
+    if (renamed == "") {
+      renamed = await freeName(d.fs, dir, head);
+      from.push(head);
+      to.push(renamed);
+    }
+    Got<bool> w = await d.fs.write(join(dir, renamed + rest), f.bytes);
+    if (w.ok) { written++; } else { failed++; }
+  }
+  string where = dir == "Desktop" ? "the desktop" : (dir == "" ? "Home" : leafOf(dir));
+  if (folderRefused) {
+    d.error = "This browser won't let a page opened from a file read a dropped folder. Use the Add files button, or serve the page.";
+  } else if (failed > 0) {
+    d.error = "\{failed} of \{batch.len()} could not be added";
+  }
+  if (written > 0) { d.note = "Added \{plural(written, "file")} to \{where}"; } else { d.note = ""; }
+  d.fsRev++;
+  bump();
+}
+
+// ── the desktop's own icons ─────────────────────────────────────────────────
+
+struct Icons {
+  Info[] infos;
+  string[] names;
+  string selected;
+}
+
+async void loadIcons(Desk d, Icons s, fn<void()> bump) {
+  Got<string[]> names = await d.fs.list("Desktop");
+  if (!names.ok) { return; }
+  Vec<string> keep = Vec.create();
+  Vec<Info> infos = Vec.create();
+  for (i32 i = 0; i < names.value.len(); i++) {
+    string n = names.value[i];
+    if (n.len() > 0 && n[0] == ".") { continue; }
+    Got<Info> st = await d.fs.stat(join("Desktop", n));
+    if (st.ok) { keep.push(n); infos.push(st.value); }
+  }
+  s.names = keep.toArray();
+  s.infos = infos.toArray();
+  bump();
+}
+
+Node DesktopIcons(Ui ui, Desk d, fn<void()> bumpDesk, i32 fsRev) {
+  Icons s = ui.memo<Icons>("", () => Icons(Info[](), string[](), ""));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("\{fsRev}", () => { loadIcons(d, s, bump); return () => { }; });
+  Node[] out = Node[].filled(s.names.len() + 1, Node.Text(""));
+  out[0] = <div class={s.selected == "\0home" ? "dicon sel" : "dicon"} title="Home"
+                onclick={(ElementEvent e) => { s.selected = "\0home"; bump(); }}
+                ondblclick={(ElementEvent e) => { open(d, "files", "", "Home", "home"); bumpDesk(); }}>
+    <div class="dtile c-folder">{icon("home", "lg")}</div><span class="dname">Home</span></div>;
+  for (i32 i = 0; i < s.names.len(); i++) {
+    string n = s.names[i];
+    bool dir = s.infos[i].isDir;
+    string ic = dir ? "folder" : iconFor(n);
+    out[i + 1] = <div class={s.selected == n ? "dicon sel" : "dicon"} key={n} title={n}
+                      onclick={(ElementEvent e) => { s.selected = n; bump(); }}
+                      ondblclick={(ElementEvent e) => { openPath(d, join("Desktop", n), dir); bumpDesk(); }}>
+      <div class={"dtile c-\{ic}"}>{icon(ic, "lg")}</div><span class="dname">{n}</span></div>;
+  }
+  return <div class="dicons" onclick={(ElementEvent e) => { }}>{out}</div>;
+}
+
+// ── a window's contents ─────────────────────────────────────────────────────
+
+Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  if (w.app == "files") { return <FilesApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
+  if (w.app == "editor") { return <EditorApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
+  return <ViewerApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>;
+}
+
+// ── the taskbar ─────────────────────────────────────────────────────────────
+
+string two(i32 n) { return n < 10 ? "0\{n}" : "\{n}"; }
+
+Node Clock(Ui ui, Page page) {
+  auto tick = ui.state(0);
+  ui.every(10000, () => { tick.update((i32 v) => v + 1); });
+  // The wall clock comes from the system, and the page is told nothing about time zones: so it says UTC.
+  i64 secs = page.sys.core.nowMillis().wait() / 1000;
+  i32 mins = ((secs / 60) % 1440) as! i32;
+  return <span class="clock num" title="The page is not told your time zone">{two(mins / 60)}:{two(mins % 60)} <span class="tz">UTC</span></span>;
+}
+
+Node taskbar(Desk d, Page page, fn<void()> bump) {
+  Node[] buttons = Node[].filled(d.wins.len(), Node.Text(""));
+  for (i32 i = 0; i < d.wins.len(); i++) {
+    Win w = d.wins.get(i);
+    i32 id = w.id;
+    string cls = "tbwin" + (d.focused == w.id && !w.min ? " on" : "") + (w.min ? " min" : "");
+    buttons[i] = <button class={cls} key={"\{w.id}"} title={w.title}
+                         onclick={(ElementEvent e) => { taskbarClick(d, id); bump(); }}>
+      <span class={"ic sm i-\{w.icon} c-\{w.icon}"}></span><span class="t">{w.title}</span></button>;
+  }
+  return <div class="taskbar">
+    <button class={d.launcher ? "tblaunch on" : "tblaunch"} title="Apps"
+            onclick={(ElementEvent e) => { d.launcher = !d.launcher; bump(); }}>{icon("grid", "")}</button>
+    <div class="tbwins">{buttons}</div>
+    <div class="tbright">
+      <span class={d.fs.persistent ? "pill" : "pill warn"}
+            title={d.fs.persistent ? "Your files are kept in this browser's storage." : "This page was opened from a file, so the browser gives it no storage: files are kept until the tab closes. Serve the page over http to keep them."}>
+        {icon(d.fs.persistent ? "shield" : "alert", "sm")}{d.fs.persistent ? "Saved in this browser" : "Not saved"}</span>
+      <Clock page={page}/>
+    </div>
+  </div>;
+}
+
+Node launcherItem(string ic, string title, string sub, fn<void()> go) {
+  return <button class="litem" onclick={(ElementEvent e) => { go(); }}>
+    <span class={"ltile c-\{ic}"}>{icon(ic, "")}</span>
+    <span class="ltext"><span class="lt">{title}</span><span class="ls">{sub}</span></span></button>;
+}
+
+Node launcher(Desk d, fn<void()> bump) {
+  return <div class="launcher anim">
+    <div class="lhead">Apps</div>
+    {launcherItem("home", "Files", "Your home folder", () => { open(d, "files", "", "Home", "home"); bump(); })}
+    {launcherItem("folder", "Desktop", "The files on your desktop", () => { open(d, "files", "Desktop", "Desktop", "folder"); bump(); })}
+    {launcherItem("edit", "Text editor", "A new text file", () => { open(d, "editor", "", "Untitled", "edit"); bump(); })}
+    {launcherItem("text", "Welcome", "What this is, and what to try", () => { open(d, "viewer", "Desktop/Welcome.md", "Welcome.md", "text"); bump(); })}
+    <div class="lfoot">{d.fs.persistent ? "Files are kept in this browser." : "Opened from a file: nothing is kept after the tab closes."}</div>
+  </div>;
+}
+
+// ── window frames ───────────────────────────────────────────────────────────
+
+Node frame(Desk d, Win w, Page page, fn<void()> bump) {
+  i32 id = w.id;
+  Drag? g = d.drag;
+  bool moving = (g is not null) && g!.id == id;
+  string cls = "win" + (d.focused == id ? " focus" : "") + (w.max ? " max" : "") + (w.snap == 1 ? " snapl" : "")
+             + (w.snap == 2 ? " snapr" : "") + (w.min ? " min" : "") + (moving ? " moving" : "");
+  string style = "left:\{w.x}px;top:\{w.y}px;width:\{w.w}px;height:\{w.h}px;z-index:\{w.z}";
+  string[] edges = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+  Node[] handles = Node[].filled(edges.len(), Node.Text(""));
+  if (!w.max) {
+    for (i32 k = 0; k < edges.len(); k++) {
+      string edge = edges[k];
+      // Where the handle sits in the window, which is where its event's x and y are measured from.
+      i32 hx = edge == "e" ? w.w - 4 : (edge == "ne" || edge == "se" ? w.w - 12 : (edge == "n" || edge == "s" ? 10 : -4));
+      i32 hy = edge == "s" ? w.h - 4 : (edge == "se" || edge == "sw" ? w.h - 12 : (edge == "e" || edge == "w" ? 10 : -4));
+      handles[k] = <div class={"rz \{edge}"} onpointerdown={(ElementEvent e) => { startResize(d, id, edge, w.x + 1 + hx + e.x, w.y + 1 + hy + e.y); bump(); }}></div>;
+    }
+  }
+  return <div class={cls} style={style} key={"w\{id}"}
+              onpointerdown={(ElementEvent e) => { if (d.focused != id || d.launcher) { focus(d, id); bump(); } }}>
+    <div class="tbar"
+         onpointerdown={(ElementEvent e) => { startMove(d, id, w.x + 1 + e.x, w.y + 1 + e.y); bump(); }}
+         ondblclick={(ElementEvent e) => { toggleMax(d, id); bump(); }}>
+      <span class={"ic sm i-\{w.icon} c-\{w.icon}"}></span>
+      <span class="tt">{w.title}</span>
+      <div class="wbtns">
+        <button class="wbtn" title="Minimise" onclick={(ElementEvent e) => { minimise(d, id); bump(); }}>{icon("min", "sm")}</button>
+        <button class="wbtn" title={w.max || w.snap != 0 ? "Restore" : "Maximise"} onclick={(ElementEvent e) => { toggleMax(d, id); bump(); }}>{icon(w.max || w.snap != 0 ? "restore" : "max", "sm")}</button>
+        <button class="wbtn close" title="Close" onclick={(ElementEvent e) => { close(d, id); bump(); }}>{icon("close", "sm")}</button>
+      </div>
+    </div>
+    <div class="wbody"><WinBody key={"b\{id}"} d={d} w={w} page={page} bumpDesk={bump} fsRev={d.fsRev} rev={w.rev}/></div>
+    {handles}
+  </div>;
+}
+
+// ── the desktop ─────────────────────────────────────────────────────────────
+
+export Node Desktop(Ui ui, Page page) {
+  Desk d = ui.memo<Desk>("", () => newDesk(memoryVfs(() => page.sys.core.nowMillis().wait())));
+  auto version = ui.state(0);
+  auto ready = ui.state(false);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("", () => {
+    start(page, d, bump, () => { ready.set(true); });
+    return () => { };
+  });
+  // The watchdog: decompressing that was still "in progress" when a timer ran has trapped.
+  ui.every(400, () => {
+    if (d.trying == "") { return; }
+    d.error = d.trying;
+    d.trying = "";
+    bump();
+  });
+  // The layout, saved a second after it changes — and notes, gone a few seconds after they appear.
+  ui.every(1000, () => {
+    if (ready.get() && d.dirty && d.drag is null) { saveSession(d); }
+  });
+  ui.effect("\{d.note}|\{d.error}", () => {
+    if (d.note == "" && d.error == "") { return () => { }; }
+    string note = d.note;
+    string error = d.error;
+    return ui.after(error != "" ? 8000 : 3500, () => {
+      if (d.note == note) { d.note = ""; }
+      if (d.error == error) { d.error = ""; }
+      bump();
+    });
+  });
+
+  Drag? g = d.drag;
+  bool dragging = g is not null;
+  Node[] frames = Node[].filled(d.wins.len(), Node.Text(""));
+  for (i32 i = 0; i < d.wins.len(); i++) { frames[i] = frame(d, d.wins.get(i), page, bump); }
+  i32 hint = dragging ? g!.hint : 0;
+  string cursor = dragging ? (g!.mode == "move" ? "" : " rz-\{g!.mode}") : "";
+
+  return <div class={"desk" + (dragging ? " dragging" : "") + cursor}
+              onpointermove={dragging ? (ElementEvent e) => { if (dragTo(d, e.x, e.y)) { bump(); } } : null}
+              onpointerup={dragging ? (ElementEvent e) => { endDrag(d); bump(); } : null}>
+    <style>{css()}</style>
+    <style>{deskCss()}</style>
+    <div class="area" onpointerdown={(ElementEvent e) => { if (d.launcher) { d.launcher = false; bump(); } }}>
+      {ready.get() ? <DesktopIcons d={d} bumpDesk={bump} fsRev={d.fsRev}/> : <div class="booting"><span class="spin"></span>Starting…</div>}
+      {frames}
+      {hint == 1 ? <div class="snapghost l"></div> : (hint == 2 ? <div class="snapghost r"></div> : (hint == 3 ? <div class="snapghost m"></div> : Node.Text("")))}
+      {dragging && g!.mode == "move" ? <div class="edge-r" onpointermove={(ElementEvent e) => { hintRight(d); bump(); }}></div> : Node.Text("")}
+    </div>
+    {d.launcher ? launcher(d, bump) : Node.Text("")}
+    {d.error != "" ? <div class="toast bad">{icon("alert", "sm")}<span>{d.error}</span></div>
+                   : (d.note != "" ? <div class="toast">{icon("check", "sm")}<span>{d.note}</span></div> : Node.Text(""))}
+    {taskbar(d, page, bump)}
+  </div>;
+}

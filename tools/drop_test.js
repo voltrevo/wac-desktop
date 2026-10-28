@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 const fs = require('fs'), os = require('os'), path = require('path'), http = require('http');
 
 const root = path.join(__dirname, '..');
-const html = path.join(root, 'dist', 'index.html');
+const html = path.join(root, 'dist', 'explorer', 'index.html');
 const zip = path.join(root, 'samples', 'demo.zip');
 // A folder to drop: demo.zip's own contents, unpacked.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drop-'));

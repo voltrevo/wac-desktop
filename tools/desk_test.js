@@ -1,0 +1,119 @@
+#!/usr/bin/env node
+// The desktop in Chromium, the way a person uses it — after `wac task build`; needs Playwright.
+//
+//     node tools/desk_test.js [screenshots-dir]
+//
+// Over http (where the browser gives the page storage): the first launch, opening demo.zip in place,
+// Extract here, editing and saving, moving, resizing and snapping windows, and a reload that brings it all
+// back. Then real drops — onto the desktop, and into a Files window — through the DevTools protocol. And
+// from file://, where there is no storage: the desktop must say so, and still work.
+
+const { chromium } = require('playwright');
+const fs = require('fs'), os = require('os'), path = require('path'), http = require('http');
+
+const root = path.join(__dirname, '..');
+const html = path.join(root, 'dist', 'index.html');
+const shots = process.argv[2];
+let failed = 0;
+const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${ok ? '' : ' — saw ' + JSON.stringify(seen)}`); };
+
+(async () => {
+  const server = http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end(fs.readFileSync(html)); }).listen(0);
+  const url = `http://localhost:${server.address().port}/`;
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(e.message));
+  const shot = async (n) => { if (shots) { await p.waitForTimeout(300); await p.screenshot({ path: path.join(shots, `desk-${n}.png`) }); } };
+  const texts = (sel) => p.$$eval(sel, (l) => l.map((x) => x.textContent.trim()));
+  const settle = (ms = 500) => p.waitForTimeout(ms);
+  const row = (name) => p.locator('.win.focus .row', { has: p.locator('.t', { hasText: new RegExp(`^${name.replace(/[.]/g, '\\.')}$`) }) }).first();
+
+  await p.goto(url);
+  await p.waitForSelector('.dicons', { timeout: 20000 });
+  await settle(800);
+  check((await texts('.dicon .dname')).join() === 'Home,Welcome.md,demo.zip', 'a new desktop has Home, Welcome.md and demo.zip', await texts('.dicon .dname'));
+  check((await texts('.win .tt')).join() === 'Welcome.md', 'and opens Welcome.md', await texts('.win .tt'));
+  check((await p.textContent('.pill')).includes('Saved in this browser'), 'over http it says files are kept', await p.textContent('.pill'));
+  await shot('1-first');
+
+  await p.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
+  await settle(1200);
+  check((await texts('.win.focus .crumb .t')).join(' > ') === 'Home > Desktop > demo.zip', 'demo.zip opens in Files, inside the archive', await texts('.win.focus .crumb .t'));
+  await p.locator('.win.focus button', { hasText: 'Extract here' }).click();
+  await settle(2500);
+  check((await p.textContent('.toast').catch(() => '')).includes('Extracted 13 files to demo'), 'Extract here writes every file', await p.textContent('.toast').catch(() => ''));
+  check((await texts('.win.focus .row .t')).includes('demo'), 'and the folder appears beside the archive', await texts('.win.focus .row .t'));
+  await shot('2-extracted');
+
+  await row('demo').dblclick(); await settle();
+  await row('wordcount').dblclick(); await settle();
+  await row('Makefile').click(); await settle();
+  await p.locator('.win.focus .pactions button', { hasText: 'Edit' }).click(); await settle(800);
+  await p.locator('.win.focus textarea').fill('# edited\nall: wordcount\n'); await settle(300);
+  check((await p.textContent('.win.focus .estate')) === 'Unsaved changes', 'the editor notices a change', await p.textContent('.win.focus .estate'));
+  await p.locator('.win.focus button', { hasText: 'Save' }).click(); await settle(800);
+  check((await p.textContent('.win.focus .estate')) === 'Saved', 'and saves it', await p.textContent('.win.focus .estate'));
+
+  const win = p.locator('.win.focus');
+  const a = await win.boundingBox();
+  await p.mouse.move(a.x + 150, a.y + 20); await p.mouse.down(); await p.mouse.move(a.x + 250, a.y + 90, { steps: 8 }); await p.mouse.up(); await settle(200);
+  const b = await win.boundingBox();
+  check(Math.round(b.x - a.x) === 100 && Math.round(b.y - a.y) === 70, 'a title bar drags the window', [b.x - a.x, b.y - a.y]);
+  await p.mouse.move(b.x + b.width - 3, b.y + b.height - 3); await p.mouse.down(); await p.mouse.move(b.x + b.width - 123, b.y + b.height - 83, { steps: 8 }); await p.mouse.up(); await settle(200);
+  const c = await win.boundingBox();
+  check(Math.abs(c.width - b.width + 120) <= 3 && Math.abs(c.height - b.height + 80) <= 3, 'a corner resizes it', [c.width - b.width, c.height - b.height]);
+  await p.mouse.move(c.x + 120, c.y + 20); await p.mouse.down(); await p.mouse.move(2, 300, { steps: 10 });
+  check(!!(await p.$('.snapghost.l')), 'the left edge shows where it will snap', null);
+  await p.mouse.up(); await settle(300);
+  const d = await win.boundingBox();
+  check(Math.round(d.x) === 0 && Math.round(d.width) === 720, 'and it fills the left half', [d.x, d.width]);
+  await p.locator('.win.focus .wbtn[title=Minimise]').click(); await settle(200);
+  check(!(await p.$('.win.focus')) || (await p.textContent('.win.focus .tt')) !== 'Makefile', 'minimise hides it', null);
+  await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(200);
+  check((await p.textContent('.win.focus .tt')) === 'Makefile', 'and the taskbar brings it back', await p.textContent('.win.focus .tt'));
+
+  // Drops: with no Files window in front, onto the desktop; with one in front, into its folder.
+  const cdp = await ctx.newCDPSession(p);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-'));
+  fs.writeFileSync(path.join(tmp, 'dropped.txt'), 'dropped on the desktop\n');
+  fs.writeFileSync(path.join(tmp, 'into-files.txt'), 'dropped on a Files window\n');
+  const drop = async (file, x, y) => { for (const type of ['dragEnter', 'dragOver', 'drop']) await cdp.send('Input.dispatchDragEvent', { type, x, y, data: { items: [], files: [file], dragOperationsMask: 1 } }); await settle(1200); };
+  await drop(path.join(tmp, 'dropped.txt'), 1300, 700);
+  check((await texts('.dicon .dname')).includes('dropped.txt'), 'a file dropped with an editor in front lands on the desktop', await texts('.dicon .dname'));
+  await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(300);
+  await drop(path.join(tmp, 'into-files.txt'), 1300, 700);
+  check((await texts('.win.focus .row .t')).includes('into-files.txt'), 'a file dropped with Files in front lands in its folder', await texts('.win.focus .row .t'));
+  await shot('3-desktop');
+
+  const before = await texts('.win .tt');
+  await settle(1500);                       // the layout is saved a second after it changes
+  await p.reload();
+  await p.waitForSelector('.dicons', { timeout: 20000 });
+  await settle(1500);
+  check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
+  check((await texts('.dicon .dname')).join() === 'Home,Welcome.md,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
+  check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
+  await shot('4-reloaded');
+
+  // From a file: no storage. It must say so, and still work.
+  const q = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  q.on('pageerror', (e) => errors.push('file:// ' + e.message));
+  await q.goto('file://' + html);
+  await q.waitForSelector('.dicons', { timeout: 20000 });
+  await q.waitForTimeout(800);
+  check((await q.textContent('.pill')).includes('Not saved'), 'from file:// it says nothing is kept', await q.textContent('.pill'));
+  check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).join() === 'Home,Welcome.md,demo.zip', 'and still starts with something to open', null);
+  await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
+  await q.waitForTimeout(1200);
+  check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);
+
+  check(errors.length === 0, 'no page errors', errors);
+  await browser.close();
+  server.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+  console.log(failed ? `${failed} failed` : 'the desktop behaved');
+  process.exit(failed ? 1 : 0);
+})();

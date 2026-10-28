@@ -1,0 +1,509 @@
+// Files: the disk as folders, and any archive on it browsable in place.
+//
+// A Files window is in one of two places: a folder on the disk, listed from the disk each time it is shown,
+// or inside an archive, where the Archive Explorer's own listing and preview take over the window and the
+// breadcrumbs carry on from the disk's into the archive's. "Extract here" turns the second into the first.
+
+import { Ticket, Vec } from "core";
+import { ElementEvent, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
+         html.span } from "web";
+import { Vfs, Got, Info, join, leafOf, parentOf, freeName } from "./vfs.wac";
+import { Desk, Win, open } from "./wm.wac";
+import { Extracted, extract } from "../archive.wac";
+import { Kind, isContainer, kindLabel, sniff } from "../sniff.wac";
+import { Level, Model, emptyModel, goUp, hasFile, iconFor, openRoot, top } from "../model.wac";
+import { crumbs, listing, nested, plural, push } from "../browse.wac";
+import { icon, preview } from "../preview.wac";
+import { extOf, grouped, lower, sizeOf, sortBy } from "../bytes.wac";
+import { unixTime } from "../archive.wac";
+
+export struct Item {
+  string name;
+  bool isDir;
+  i64 size;
+  i64 modified;
+}
+
+export struct FilesState {
+  /** The folder on the disk, "" for the root. */
+  string dir;
+  Item[] items;
+  bool loading;
+  string error;
+  /** The selected item's name, or "". */
+  string selected;
+  i32 cursor;
+  string filter;
+  i32 sortKey;
+  bool desc;
+  /** When renaming: the old name, and what has been typed. */
+  string renaming;
+  string draft;
+  /** A delete asks twice: the name it is waiting to hear about again. */
+  string confirming;
+  /** The selected file's preview, once read. */
+  Model? shown;
+  string shownName;
+  /** When browsing inside an archive: the explorer's model, and where the archive sits on the disk. */
+  Model? arch;
+  string archPath;
+  /** Bumped to list the folder again. */
+  i32 reload;
+  string busy;
+  bool focusCursor;
+}
+
+export FilesState filesState(string dir) {
+  return FilesState(dir, Item[](), true, "", "", 0, "", 0, false, "", "", "", null, "", null, "", 0, "", false);
+}
+
+// ── the disk ────────────────────────────────────────────────────────────────
+
+async void load(Vfs fs, FilesState s, fn<void()> bump) {
+  string dir = s.dir;
+  s.loading = true;
+  Got<string[]> names = await fs.list(dir);
+  if (s.dir != dir) { return; }
+  if (!names.ok) {
+    s.items = Item[]();
+    s.error = names.error;
+    s.loading = false;
+    bump();
+    return;
+  }
+  Vec<Item> out = Vec.create();
+  for (i32 i = 0; i < names.value.len(); i++) {
+    string n = names.value[i];
+    if (n.len() > 0 && n[0] == ".") { continue; }      // the desktop's own files
+    Got<Info> st = await fs.stat(join(dir, n));
+    if (st.ok) { out.push(Item(n, st.value.isDir, st.value.size, st.value.modified)); }
+  }
+  if (s.dir != dir) { return; }
+  s.items = out.toArray();
+  s.error = "";
+  s.loading = false;
+  bump();
+}
+
+Item[] sorted(FilesState s) {
+  Vec<Item> keep = Vec.create();
+  string q = lower(s.filter);
+  for (i32 i = 0; i < s.items.len(); i++) {
+    if (q == "" || lower(s.items[i].name).indexOf(q) >= 0) { keep.push(s.items[i]); }
+  }
+  Item[] xs = keep.toArray();
+  i32[] idx = i32[].filled(xs.len(), 0);
+  for (i32 i = 0; i < idx.len(); i++) { idx[i] = i; }
+  i32 key = s.sortKey;
+  bool desc = s.desc;
+  sortBy(idx, (i32 a, i32 b) => {
+    Item x = xs[a];
+    Item y = xs[b];
+    if (x.isDir != y.isDir) { return x.isDir; }
+    i32 c = 0;
+    if (key == 1) { c = x.size < y.size ? -1 : (x.size > y.size ? 1 : 0); }
+    else if (key == 3) { c = x.modified < y.modified ? -1 : (x.modified > y.modified ? 1 : 0); }
+    if (c == 0) { c = lower(x.name) < lower(y.name) ? -1 : (lower(x.name) > lower(y.name) ? 1 : 0); }
+    return desc ? c > 0 : c < 0;
+  });
+  Item[] out = Item[].filled(xs.len(), Item("", false, 0, 0));
+  for (i32 i = 0; i < idx.len(); i++) { out[i] = xs[idx[i]]; }
+  return out;
+}
+
+/** What opening a file does: archives open in place, text in the editor, everything else in a viewer. */
+export string appFor(string name) {
+  string ic = iconFor(name);
+  if (ic == "archive") { return "files"; }
+  if (ic == "text" || ic == "code") { return "editor"; }
+  return "viewer";
+}
+
+/** Open the file at `path` on the disk, from anywhere on the desktop. */
+export void openPath(Desk d, string path, bool isDir) {
+  if (isDir) { open(d, "files", path, leafOf(path) == "" ? "Home" : leafOf(path), "folder"); return; }
+  string app = appFor(leafOf(path));
+  string ic = iconFor(leafOf(path));
+  // An archive opens in a Files window of its own, already inside it.
+  open(d, app, path, leafOf(path), ic);
+}
+
+async void readPreview(Vfs fs, FilesState s, string path, fn<void()> bump) {
+  Got<u8[]> b = await fs.read(path);
+  if (join(s.dir, s.selected) != path) { return; }
+  if (!b.ok) { s.error = b.error; bump(); return; }
+  Model m = emptyModel();
+  // A container gets a card rather than a preview: opening it is a double-click away.
+  Kind k = sniff(b.value, leafOf(path));
+  if (!isContainer(k)) { openRoot(m, leafOf(path), b.value); }
+  s.shown = m;
+  s.shownName = path;
+  bump();
+}
+
+/** Open the archive at `path` inside this window. */
+async void openArchiveHere(Desk d, Page page, FilesState s, string path, fn<void()> bump) {
+  s.busy = "Opening \{leafOf(path)}…";
+  bump();
+  Got<u8[]> b = await d.fs.read(path);
+  if (!b.ok) { s.busy = ""; s.error = b.error; bump(); return; }
+  await page.painted();
+  Model m = emptyModel();
+  d.trying = "\{leafOf(path)} could not be opened: its data is damaged";
+  openRoot(m, leafOf(path), b.value);
+  d.trying = "";
+  s.busy = "";
+  if (!hasFile(m)) { s.error = m.error; bump(); return; }
+  s.arch = m;
+  s.archPath = path;
+  bump();
+}
+
+/** Every file of the archive level in view, written to a new folder beside the archive. */
+async void extractHere(Desk d, Page page, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  Model m = s.arch!;
+  Level l = top(m);
+  string base = parentOf(s.archPath);
+  string stem = l.name;
+  string[] exts = [".tar.gz", ".tar.zst", ".tgz", ".zip", ".tar", ".gz", ".zst", ".jar", ".apk", ".whl"];
+  for (i32 i = 0; i < exts.len(); i++) {
+    if (lower(stem).len() > exts[i].len() && lower(stem).slice(stem.len() - exts[i].len(), stem.len()) == exts[i]) {
+      stem = stem.slice(0, stem.len() - exts[i].len());
+      break;
+    }
+  }
+  string folder = join(base, await freeName(d.fs, base, stem));
+  i32 n = l.archive.entries.len();
+  i32 written = 0;
+  i32 failed = 0;
+  await d.fs.mkdir(folder);
+  for (i32 i = 0; i < n; i++) {
+    if (i % 25 == 0) { s.busy = "Extracting \{grouped((i + 1) as i64)} of \{grouped(n as i64)}…"; bump(); await page.sleep(0); }
+    if (l.archive.entries[i].isDir) { await d.fs.mkdir(join(folder, l.archive.entries[i].path)); continue; }
+    d.trying = "\{l.archive.entries[i].path} could not be extracted: the archive is damaged";
+    Extracted x = extract(l.archive, l.archive.entries[i]);
+    d.trying = "";
+    if (!x.ok) { failed++; continue; }
+    Got<bool> w = await d.fs.write(join(folder, l.archive.entries[i].path), x.bytes);
+    if (w.ok) { written++; } else { failed++; }
+  }
+  s.busy = "";
+  s.arch = null;
+  s.dir = parentOf(folder) == base ? base : s.dir;
+  s.selected = leafOf(folder);
+  d.note = failed == 0 ? "Extracted \{plural(written, "file")} to \{leafOf(folder)}"
+                       : "Extracted \{plural(written, "file")} to \{leafOf(folder)}; \{failed} could not be";
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+// ── the window ──────────────────────────────────────────────────────────────
+
+Node diskCrumbs(FilesState s, Win w, Desk d, fn<void()> bump) {
+  Node[] out = [<button class={s.dir == "" && s.arch is null ? "crumb level here" : "crumb level"}
+                        onclick={(ElementEvent e) => { s.arch = null; s.dir = ""; s.selected = ""; w.arg = ""; d.dirty = true; bump(); }}>
+                  <span class="ic i-home sm c-folder"></span><span class="t">Home</span></button>];
+  if (s.dir != "") {
+    u8[] b = s.dir.toBytes();
+    i32 start = 0;
+    for (i32 i = 0; i <= b.len(); i++) {
+      if (i == b.len() || b[i] == '/') {
+        string path = s.dir.slice(0, i);
+        string name = s.dir.slice(start, i);
+        bool here = i == b.len() && s.arch is null;
+        out = push(out, <span class="sep">{icon("chev", "sm")}</span>);
+        out = push(out, <button class={here ? "crumb here" : "crumb"}
+                                onclick={(ElementEvent e) => { s.arch = null; s.dir = path; s.selected = ""; w.arg = path; d.dirty = true; bump(); }}>
+                          <span class="ic i-folder sm c-folder"></span><span class="t">{name}</span></button>);
+        start = i + 1;
+      }
+    }
+  }
+  return <nav class="crumbs">{out}</nav>;
+}
+
+string kindOfItem(Item it) {
+  if (it.isDir) { return "Folder"; }
+  string ext = extOf(it.name);
+  string ic = iconFor(it.name);
+  if (ic == "archive") { return "Archive"; }
+  if (ic == "image") { return "Image"; }
+  if (ic == "code") { return ext == "" ? "Code" : "\{ext} code"; }
+  if (ic == "text") { return ext == "" ? "Text" : "\{ext} text"; }
+  return ext == "" ? "File" : "\{ext} file";
+}
+
+string when(i64 ms) { return ms <= 0 ? "" : unixTime(ms / 1000); }
+
+Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()> bump, fn<void()> bumpDesk, Ref cursorRef) {
+  if (s.cursor >= items.len()) { s.cursor = items.len() - 1; }
+  if (s.cursor < 0) { s.cursor = 0; }
+  fn<void(Item)> activate = (Item it) => {
+    string path = join(s.dir, it.name);
+    if (it.isDir) { s.dir = path; s.selected = ""; s.filter = ""; w.arg = path; d.dirty = true; bump(); return; }
+    if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
+    openPath(d, path, false);
+    bumpDesk();
+  };
+  fn<void(i32)> moveTo = (i32 k) => {
+    if (items.len() == 0) { return; }
+    i32 c = k < 0 ? 0 : (k >= items.len() ? items.len() - 1 : k);
+    s.cursor = c;
+    s.selected = items[c].name;
+    s.focusCursor = true;
+    bump();
+  };
+  string[] names = ["Name", "Size", "Kind", "Modified"];
+  Node[] head = Node[].filled(4, Node.Text(""));
+  for (i32 k = 0; k < 4; k++) {
+    i32 key = k;
+    bool on = s.sortKey == k;
+    head[k] = <div class={k == 0 ? "" : "r"}><button class={on ? "on" : ""} onclick={(ElementEvent e) => {
+      if (key == 2) { return; }
+      if (s.sortKey == key) { s.desc = !s.desc; } else { s.sortKey = key; s.desc = key != 0; }
+      bump();
+    }}>{names[k]}{on ? (s.desc ? " ↓" : " ↑") : ""}</button></div>;
+  }
+  Node[] rows = Node[].filled(items.len(), Node.Text(""));
+  for (i32 k = 0; k < items.len(); k++) {
+    Item it = items[k];
+    i32 at = k;
+    string ic = it.isDir ? "folder" : iconFor(it.name);
+    bool sel = it.name == s.selected;
+    Node name = s.renaming == it.name
+      ? <input class="rename" value={s.draft} autofocus="" prevent="Enter Escape"
+               oninput={(ElementEvent e) => { s.draft = e.value; }}
+               onkeydown={(ElementEvent e) => {
+                 if (e.value == "Escape") { s.renaming = ""; bump(); }
+                 if (e.value == "Enter") { rename(d, s, bump, bumpDesk); }
+               }}/>
+      : <span class="t">{it.name}</span>;
+    rows[k] = <div class={"row" + (sel ? " sel" : "") + (k == s.cursor ? " cursor" : "")} key={it.name} tabindex="-1"
+                   title={it.name} ref={k == s.cursor ? cursorRef : null}
+                   onclick={(ElementEvent e) => { s.selected = it.name; s.cursor = at; s.confirming = ""; bump(); }}
+                   ondblclick={(ElementEvent e) => { activate(it); }}>
+      <div class="name"><span class={"ic i-\{ic} c-\{ic}"}></span>{name}
+        {!it.isDir && ic == "archive" ? <span class="badge">open</span> : Node.Text("")}</div>
+      <div class="r dim num">{it.isDir ? "—" : sizeOf(it.size)}</div>
+      <div class="r dim">{kindOfItem(it)}</div>
+      <div class="r dim num">{when(it.modified)}</div>
+    </div>;
+  }
+  return <section class="pane list">
+    <div class="toolbar">
+      <label class="search">{icon("search", "sm")}
+        <input placeholder="Filter this folder…" value={s.filter}
+               oninput={(ElementEvent e) => { s.filter = e.value; s.cursor = 0; bump(); }}
+               onkeydown={(ElementEvent e) => { if (e.value == "Escape") { s.filter = ""; bump(); } if (e.value == "ArrowDown") { moveTo(0); } }}
+               prevent="ArrowDown"/></label>
+      <div class="stats num"><span><b>{grouped(items.len() as i64)}</b> {items.len() == 1 ? "item" : "items"}</span></div>
+    </div>
+    <div class="thead">{head}</div>
+    <div class="rows" tabindex="0" prevent="ArrowUp ArrowDown Enter Backspace Home End F2 Delete"
+         onkeydown={(ElementEvent e) => {
+           string key = e.value;
+           if (s.renaming != "") { return; }
+           if (key == "ArrowDown") { moveTo(s.cursor + 1); }
+           else if (key == "ArrowUp") { moveTo(s.cursor - 1); }
+           else if (key == "Home") { moveTo(0); }
+           else if (key == "End") { moveTo(items.len() - 1); }
+           else if (key == "Enter" && items.len() > 0) { activate(items[s.cursor]); }
+           else if (key == "Backspace" && s.dir != "") { s.selected = leafOf(s.dir); s.dir = parentOf(s.dir); w.arg = s.dir; d.dirty = true; bump(); }
+           else if (key == "F2" && s.selected != "") { s.renaming = s.selected; s.draft = s.selected; bump(); }
+           else if (key == "Delete" && s.selected != "") { remove(d, s, bump, bumpDesk); }
+         }}>
+      {s.loading && items.len() == 0 ? <div class="empty">Loading…</div> : Node.Text("")}
+      {!s.loading && items.len() == 0
+        ? <div class="empty">{s.error != "" ? s.error : (s.filter != "" ? "Nothing here matches “\{s.filter}”." : "This folder is empty. Drop files on the window to add them.")}</div>
+        : Node.Text("")}
+      {rows}
+    </div>
+  </section>;
+}
+
+async void rename(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string from = s.renaming;
+  string to = s.draft;
+  s.renaming = "";
+  if (to == "" || to == from || to.indexOf("/") >= 0) { bump(); return; }
+  Got<bool> r = await d.fs.rename(join(s.dir, from), join(s.dir, to));
+  if (!r.ok) { d.error = r.error; } else { s.selected = to; }
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+async void remove(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  if (s.confirming != s.selected) { s.confirming = s.selected; bump(); return; }
+  string name = s.selected;
+  s.confirming = "";
+  Got<bool> r = await d.fs.remove(join(s.dir, name));
+  if (!r.ok) { d.error = r.error; } else { d.note = "Deleted \{name}"; s.selected = ""; }
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+async void newFolder(Desk d, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string name = await freeName(d.fs, s.dir, "New folder");
+  Got<bool> r = await d.fs.mkdir(join(s.dir, name));
+  if (!r.ok) { d.error = r.error; bump(); return; }
+  s.selected = name;
+  s.renaming = name;
+  s.draft = name;
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+/** The pane beside a disk listing: the selected file, shown. */
+Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string path = join(s.dir, s.selected);
+  if (s.selected == "") {
+    return <div class="pane preview"><div class="placeholder"><div>{icon("layers", "")}
+      <div>Select something to see it here.<br/>Double-click to open it.</div></div></div></div>;
+  }
+  Item? found = null;
+  for (i32 i = 0; i < s.items.len(); i++) { if (s.items[i].name == s.selected) { found = s.items[i]; } }
+  if (found is null) { return <div class="pane preview"></div>; }
+  Item it = found!;
+  fn<void()> openIt = () => {
+    if (it.isDir) { s.dir = path; s.selected = ""; w.arg = path; d.dirty = true; bump(); return; }
+    if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
+    openPath(d, path, false);
+    bumpDesk();
+  };
+  Node actions = <div class="actions">
+    {!it.isDir && appFor(it.name) == "files"
+      ? <button class="btn primary" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>
+      : <button class="btn" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>}
+    {!it.isDir && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
+      ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { open(d, "editor", path, it.name, "edit"); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
+      : Node.Text("")}
+    <button class="btn" title="Rename (F2)" onclick={(ElementEvent e) => { s.renaming = it.name; s.draft = it.name; bump(); }}>{icon("rename", "sm")}<span class="label">Rename</span></button>
+    <button class={s.confirming == it.name ? "btn danger" : "btn"} title="Delete"
+            onclick={(ElementEvent e) => { remove(d, s, bump, bumpDesk); }}>{icon("trash", "sm")}<span class="label">{s.confirming == it.name ? "Delete for good?" : "Delete"}</span></button>
+  </div>;
+  if (it.isDir) {
+    return <div class="pane preview">
+      <div class="phead"><div class="tile c-folder">{icon("folder", "lg")}</div>
+        <div class="who"><div class="nm">{it.name}</div><div class="meta">Folder</div></div></div>
+      <div class="pactions">{actions}</div>
+    </div>;
+  }
+  Model? m = s.shownName == path ? s.shown : null;
+  if (m is null) {
+    return <div class="pane preview"><div class="pactions">{actions}</div><div class="placeholder"><div>Loading…</div></div></div>;
+  }
+  if (!hasFile(m!)) {
+    // An archive: what it is, and the ways in.
+    return <div class="pane preview">
+      <div class="phead"><div class="tile c-archive">{icon("archive", "lg")}</div>
+        <div class="who"><div class="nm">{it.name}</div><div class="meta num">Archive · {sizeOf(it.size)}</div></div></div>
+      <div class="pactions">{actions}</div>
+      <div class="nested anim"><div class="tile c-archive">{icon("archive", "")}</div><h3>{it.name}</h3>
+        <p>Open it to browse inside without unpacking, or open it and choose <b>Extract here</b> to unpack it into this folder.</p></div>
+    </div>;
+  }
+  return <div class="pane preview stacked">
+    <div class="pactions">{actions}</div>
+    {preview(m!, page, bump, (i32 i) => { })}
+  </div>;
+}
+
+/** A Files window's contents. */
+export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  FilesState s = ui.memo<FilesState>("", () => filesState(""));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  Ref cursorRef = ui.ref();
+  // The window's argument is where it is: a folder, or an archive to open in place.
+  ui.effect("\{rev}", () => {
+    if (appFor(leafOf(w.arg)) == "files" && w.arg != "" && iconFor(leafOf(w.arg)) == "archive") {
+      s.dir = parentOf(w.arg);
+      s.selected = leafOf(w.arg);
+      openArchiveHere(d, page, s, w.arg, bump);
+      w.arg = s.dir;
+    } else {
+      s.dir = w.arg;
+    }
+    bump();
+    return () => { };
+  });
+  ui.effect("\{s.dir}|\{fsRev}|\{s.reload}", () => { load(d.fs, s, bump); return () => { }; });
+  // The window is named for where it is: a folder, Home, or the archive it is inside.
+  Model? inArch = s.arch;
+  ui.effect("\{s.dir}|\{inArch is not null}|\{s.archPath}", () => {
+    string title = inArch is not null ? leafOf(s.archPath) : (s.dir == "" ? "Home" : leafOf(s.dir));
+    string ic = inArch is not null ? "archive" : (s.dir == "" ? "home" : "folder");
+    if (w.title != title || w.icon != ic) { w.title = title; w.icon = ic; d.dirty = true; bumpDesk(); }
+    return () => { };
+  });
+  ui.effect("\{s.dir}/\{s.selected}|\{fsRev}", () => {
+    s.shown = null;
+    s.shownName = "";
+    Item? it = null;
+    for (i32 i = 0; i < s.items.len(); i++) { if (s.items[i].name == s.selected) { it = s.items[i]; } }
+    if ((it is not null) && !it!.isDir) { readPreview(d.fs, s, join(s.dir, s.selected), bump); }
+    return () => { };
+  });
+  ui.effect("\{version.get()}", () => {
+    if (s.focusCursor) {
+      s.focusCursor = false;
+      if (cursorRef.element() is not null) { cursorRef.element()!.focus(); }
+    }
+    Model? a = s.arch;
+    if ((a is not null) && a!.focusCursor) {
+      a!.focusCursor = false;
+      if (cursorRef.element() is not null) { cursorRef.element()!.focus(); }
+    }
+    return () => { };
+  });
+
+  Node busy = s.busy != "" ? <div class="busy"><div class="card"><span class="spin"></span><span>{s.busy}</span></div></div> : Node.Text("");
+  Model? a = s.arch;
+  if (a is not null) {
+    Model m = a!;
+    if (m.busy != "") { busy = <div class="busy"><div class="card"><span class="spin"></span><span>{m.busy}</span></div></div>; }
+    if (m.error != "") { d.error = m.error; m.error = ""; bumpDesk(); }
+    bool atRoot = m.levels.len() == 1 && top(m).cwd == "";
+    return <div class="files">
+      <header class="ftop">
+        <button class="btn ghost icon" title="Up"
+                onclick={(ElementEvent e) => {
+                  if (atRoot) { s.arch = null; } else { goUp(m); }
+                  bump();
+                }}>{icon("up", "")}</button>
+        <div class="crumbs">{diskCrumbs(s, w, d, bump)}<span class="sep">{icon("chev", "sm")}</span>{crumbs(m, bump)}</div>
+        <div class="actions">
+          <button class="btn primary" title="Unpack this archive into a folder beside it"
+                  onclick={(ElementEvent e) => { extractHere(d, page, s, bump, bumpDesk); }}>{icon("download", "sm")}<span class="label">Extract here</span></button>
+        </div>
+      </header>
+      <div class="main">
+        {listing(m, page, bump, cursorRef)}
+        {preview(m, page, bump, (i32 i) => { nested(page, m, bump, i); })}
+      </div>
+      {busy}
+    </div>;
+  }
+  Item[] items = sorted(s);
+  return <div class="files">
+    <header class="ftop">
+      <button class="btn ghost icon" title="Up (Backspace)"
+              onclick={(ElementEvent e) => { if (s.dir != "") { s.selected = leafOf(s.dir); s.dir = parentOf(s.dir); w.arg = s.dir; d.dirty = true; bump(); } }}>{icon("up", "")}</button>
+      {diskCrumbs(s, w, d, bump)}
+      <div class="actions">
+        <button class="btn" title="New folder" onclick={(ElementEvent e) => { newFolder(d, s, bump, bumpDesk); }}>{icon("plus", "sm")}<span class="label">New folder</span></button>
+        <label class="btn" title="Add files from your computer">{icon("upload", "sm")}<span class="label">Add files</span><input type="file" multiple="" class="hidden"/></label>
+      </div>
+    </header>
+    <div class="main">
+      {diskListing(d, w, page, s, items, bump, bumpDesk, cursorRef)}
+      {diskPreview(d, w, page, s, bump, bumpDesk)}
+    </div>
+    {busy}
+  </div>;
+}
+

@@ -1,0 +1,117 @@
+// The Viewer and the Editor: one file each, read from the disk.
+
+import { ElementEvent, Node, Page, Ui, html.button, html.div, html.input, html.span, html.textarea } from "web";
+import { Got, join, leafOf, parentOf, freeName } from "./vfs.wac";
+import { Desk, Win } from "./wm.wac";
+import { Model, emptyModel, hasFile, openRoot } from "../model.wac";
+import { icon, preview } from "../preview.wac";
+import { sizeOf } from "../bytes.wac";
+
+// ── Viewer ──────────────────────────────────────────────────────────────────
+
+struct ViewerState {
+  Model? m;
+  string error;
+}
+
+async void readInto(Desk d, string path, ViewerState s, fn<void()> bump) {
+  Got<u8[]> b = await d.fs.read(path);
+  if (!b.ok) { s.error = b.error; bump(); return; }
+  Model m = emptyModel();
+  d.trying = "\{leafOf(path)} could not be shown: its data is damaged";
+  openRoot(m, leafOf(path), b.value);
+  d.trying = "";
+  s.m = m;
+  s.error = m.error;
+  bump();
+}
+
+/** A file, shown the way the Archive Explorer shows one: rendered, as text, as hex, with its checksums. */
+export Node ViewerApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  ViewerState s = ui.memo<ViewerState>("", () => ViewerState(null, ""));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("\{w.arg}|\{fsRev}|\{rev}", () => { readInto(d, w.arg, s, bump); return () => { }; });
+  // A watchdog of the explorer's own, for its tabs: a damaged file found while drawing one.
+  ui.every(400, () => {
+    Model? m = s.m;
+    if ((m is null) || m!.trying == "") { return; }
+    d.error = m!.trying;
+    m!.trying = "";
+    bumpDesk();
+    bump();
+  });
+  if (s.error != "") { return <div class="placeholder"><div>{icon("alert", "")}<div>{s.error}</div></div></div>; }
+  Model? m = s.m;
+  if ((m is null) || !hasFile(m!)) { return <div class="placeholder"><div>Loading…</div></div>; }
+  return <div class="viewer">{preview(m!, page, bump, (i32 i) => { })}</div>;
+}
+
+// ── Editor ──────────────────────────────────────────────────────────────────
+
+struct EditorState {
+  bool loaded;
+  string text;
+  /** The text as it is on the disk, to know whether there is anything to save. */
+  string saved;
+  string error;
+  /** For a new file: the name it will be saved as. */
+  string name;
+}
+
+async void loadText(Desk d, Win w, EditorState s, fn<void()> bump) {
+  if (w.arg == "") { s.loaded = true; bump(); return; }
+  Got<u8[]> b = await d.fs.read(w.arg);
+  if (!b.ok) { s.error = b.error; s.loaded = true; bump(); return; }
+  s.text = string.toUtf8(b.value);
+  s.saved = s.text;
+  s.loaded = true;
+  bump();
+}
+
+async void save(Desk d, Win w, EditorState s, fn<void()> bump, fn<void()> bumpDesk) {
+  string path = w.arg;
+  if (path == "") {
+    string want = s.name == "" ? "Untitled.txt" : s.name;
+    if (want.indexOf("/") >= 0) { d.error = "A name cannot contain “/”"; bumpDesk(); return; }
+    path = join("Desktop", await freeName(d.fs, "Desktop", want));
+  }
+  string text = s.text;
+  Got<bool> r = await d.fs.write(path, text.toBytes());
+  if (!r.ok) { d.error = r.error; bumpDesk(); return; }
+  s.saved = text;
+  if (w.arg != path) { w.arg = path; w.title = leafOf(path); d.dirty = true; }
+  d.note = "Saved \{leafOf(path)}";
+  d.fsRev++;
+  bumpDesk();
+  bump();
+}
+
+/** Plain text, edited and saved back. */
+export Node EditorApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  EditorState s = ui.memo<EditorState>("", () => EditorState(false, "", "", "", ""));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("\{rev}", () => { loadText(d, w, s, bump); return () => { }; });
+  bool dirty = s.text != s.saved;
+  if (!s.loaded) { return <div class="placeholder"><div>Loading…</div></div>; }
+  if (s.error != "") { return <div class="placeholder"><div>{icon("alert", "")}<div>{s.error}</div></div></div>; }
+  return <div class="editor">
+    <div class="etools">
+      {w.arg == ""
+        ? <input class="ename" placeholder="Untitled.txt" value={s.name} oninput={(ElementEvent e) => { s.name = e.value; }}/>
+        : <span class="epath" title={w.arg}>{w.arg}</span>}
+      <span class={dirty ? "estate dirty" : "estate"}>{dirty ? "Unsaved changes" : (w.arg == "" ? "New file" : "Saved")}</span>
+      <button class={dirty || w.arg == "" ? "btn primary" : "btn"} onclick={(ElementEvent e) => { save(d, w, s, bump, bumpDesk); }}>
+        {icon("save", "sm")}<span class="label">Save</span></button>
+      <button class="btn" title="Download a copy" onclick={(ElementEvent e) => { page.download(w.arg == "" ? (s.name == "" ? "Untitled.txt" : s.name) : leafOf(w.arg), s.text.toBytes()); }}>
+        {icon("download", "sm")}</button>
+    </div>
+    <textarea class="etext mono" spellcheck="false" value={s.text}
+              oninput={(ElementEvent e) => {
+                bool was = s.text != s.saved;
+                s.text = e.value;
+                if ((s.text != s.saved) != was) { bump(); }
+              }}></textarea>
+  </div>;
+}

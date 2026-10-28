@@ -1,0 +1,245 @@
+// The desktop's disk: one interface, two backings.
+//
+// **The browser's storage when it will have us, memory when it will not.** A page served over http gets the
+// Origin Private File System through `page.sys`, and what is written there is still there after a reload.
+// A page opened from a `file://` URL is refused it — Chromium answers a SecurityError — so the same desktop
+// runs on memory instead, and says so: everything works, and nothing survives the tab.
+//
+// Paths are relative to the root of the disk, `/`-separated, with no leading slash: "" is the root,
+// "Desktop/notes.md" a file. Errors are the host's own sentence, since a person is who reads them.
+
+import { Map, Ticket, Vec, hashString, stringEq } from "core";
+import { Cli, FileResult, Change, Stat } from "std";
+
+export struct Info {
+  bool isDir;
+  i64 size;
+  /** Milliseconds since the epoch; 0 when unknown. */
+  i64 modified;
+}
+
+/** A result that is either a value or why there is none. */
+export struct Got<T> {
+  bool ok;
+  T value;
+  string error;
+}
+
+export struct Vfs {
+  /** Whether what is written here outlives the tab. */
+  bool persistent;
+  fn<Ticket<Got<u8[]>>(string)> read;
+  fn<Ticket<Got<bool>>(string, u8[])> write;
+  fn<Ticket<Got<Info>>(string)> stat;
+  /** The names in a folder, unsorted. */
+  fn<Ticket<Got<string[]>>(string)> list;
+  /** Make a folder and every folder above it. */
+  fn<Ticket<Got<bool>>(string)> mkdir;
+  /** Remove a file, or a folder and everything in it. */
+  fn<Ticket<Got<bool>>(string)> remove;
+  fn<Ticket<Got<bool>>(string, string)> rename;
+}
+
+Ticket<T> done<T>(T v) {
+  Ticket<T> t;
+  t.resolve(v);
+  return t;
+}
+
+/** The folder part of a path: "a/b" for "a/b/c", "" for "c". */
+export string parentOf(string path) {
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { return path.slice(0, i); } }
+  return "";
+}
+
+/** The last part of a path. */
+export string leafOf(string path) {
+  u8[] b = path.toBytes();
+  for (i32 i = b.len() - 1; i >= 0; i--) { if (b[i] == '/') { return path.slice(i + 1, path.len()); } }
+  return path;
+}
+
+/** `name` inside `dir`. */
+export string join(string dir, string name) { return dir == "" ? name : dir + "/" + name; }
+
+// ── the browser's storage ──────────────────────────────────────────────────
+
+async Got<u8[]> cliRead(Cli cli, string p) {
+  FileResult f = await cli.readFile(p).ticket();
+  return Got(f.ok, f.bytes, f.error);
+}
+
+async Got<bool> cliChange(Ticket<Change> pending) {
+  Change c = await pending;
+  return Got(c.ok(), c.ok(), c.message);
+}
+
+/** Write a file, making the folders above it first: the browser's storage will not write into nothing. */
+async Got<bool> cliWrite(Cli cli, string p, u8[] b) {
+  string dir = parentOf(p);
+  if (dir != "") {
+    Change made = await cli.mkdir(dir, true).ticket();
+    if (!made.ok()) { return Got(false, false, made.message); }
+  }
+  Change c = await cli.writeFile(p, b).ticket();
+  return Got(c.ok(), c.ok(), c.message);
+}
+
+async Got<Info> cliStat(Cli cli, string p) {
+  Stat s = await cli.stat(p).ticket();
+  if (!s.exists) { return Got(false, Info(false, 0, 0), "\{p}: no such file or folder"); }
+  return Got(true, Info(s.isDir, s.size, s.modifiedMillis), "");
+}
+
+async Got<string[]> cliList(Cli cli, string p) {
+  string[]? names = await cli.readDir(p).ticket();
+  if (names is null) { return Got(false, string[](), "\{p}: could not be listed"); }
+  return Got(true, names!, "");
+}
+
+/** The browser's storage, through the page's system. */
+export Vfs cliVfs(Cli cli) {
+  return Vfs(
+    true,
+    (string p) => cliRead(cli, p),
+    (string p, u8[] b) => cliWrite(cli, p, b),
+    (string p) => cliStat(cli, p),
+    (string p) => cliList(cli, p),
+    (string p) => cliChange(cli.mkdir(p, true).ticket()),
+    (string p) => cliChange(cli.remove(p, true).ticket()),
+    (string a, string b) => cliChange(cli.rename(a, b).ticket()),
+  );
+}
+
+/** Whether the browser's storage answers at all: a `file://` page is refused it outright. */
+export async bool usable(Cli cli) {
+  Change c = await cli.mkdir("Desktop", true).ticket();
+  return c.ok();
+}
+
+// ── memory ──────────────────────────────────────────────────────────────────
+
+struct MemNode {
+  bool isDir;
+  u8[] bytes;
+  i64 modified;
+}
+
+struct Mem {
+  Map<string, MemNode> nodes;
+  fn<i64()> now;
+}
+
+void ensureDir(Mem m, string p) {
+  if (p == "" || m.nodes.has(p)) { return; }
+  ensureDir(m, parentOf(p));
+  m.nodes.set(p, MemNode(true, u8[](), m.now()));
+}
+
+bool inside(string p, string dir) { return p.len() > dir.len() && p.slice(0, dir.len() + 1) == dir + "/"; }
+
+/** A disk that lives in memory, for a page the browser will not give storage to. */
+export Vfs memoryVfs(fn<i64()> now) {
+  Mem m = Mem(Map.create(hashString, stringEq), now);
+  return Vfs(
+    false,
+    (string p) => {
+      MemNode? n = m.nodes.get(p);
+      if (n is null) { return done(Got<u8[]>(false, u8[](), "\{p}: no such file")); }
+      if (n!.isDir) { return done(Got<u8[]>(false, u8[](), "\{p} is a folder")); }
+      return done(Got<u8[]>(true, n!.bytes, ""));
+    },
+    (string p, u8[] b) => {
+      MemNode? n = m.nodes.get(p);
+      if ((n is not null) && n!.isDir) { return done(Got<bool>(false, false, "\{p} is a folder")); }
+      ensureDir(m, parentOf(p));
+      m.nodes.set(p, MemNode(false, b, m.now()));
+      return done(Got<bool>(true, true, ""));
+    },
+    (string p) => {
+      if (p == "") { return done(Got<Info>(true, Info(true, 0, 0), "")); }
+      MemNode? n = m.nodes.get(p);
+      if (n is null) { return done(Got<Info>(false, Info(false, 0, 0), "\{p}: no such file or folder")); }
+      return done(Got<Info>(true, Info(n!.isDir, n!.bytes.len() as i64, n!.modified), ""));
+    },
+    (string p) => {
+      if (p != "") {
+        MemNode? n = m.nodes.get(p);
+        if ((n is null) || !n!.isDir) { return done(Got<string[]>(false, string[](), "\{p}: no such folder")); }
+      }
+      Vec<string> out = Vec.create();
+      string[] keys = m.nodes.keys();
+      for (i32 i = 0; i < keys.len(); i++) {
+        if (parentOf(keys[i]) == p && keys[i] != p) { out.push(leafOf(keys[i])); }
+      }
+      return done(Got<string[]>(true, out.toArray(), ""));
+    },
+    (string p) => { ensureDir(m, p); return done(Got<bool>(true, true, "")); },
+    (string p) => {
+      if (!m.nodes.has(p)) { return done(Got<bool>(false, false, "\{p}: no such file or folder")); }
+      string[] keys = m.nodes.keys();
+      for (i32 i = 0; i < keys.len(); i++) { if (keys[i] == p || inside(keys[i], p)) { m.nodes.remove(keys[i]); } }
+      return done(Got<bool>(true, true, ""));
+    },
+    (string a, string b) => {
+      if (!m.nodes.has(a)) { return done(Got<bool>(false, false, "\{a}: no such file or folder")); }
+      if (m.nodes.has(b)) { return done(Got<bool>(false, false, "\{leafOf(b)} already exists")); }
+      ensureDir(m, parentOf(b));
+      string[] keys = m.nodes.keys();
+      for (i32 i = 0; i < keys.len(); i++) {
+        string k = keys[i];
+        if (k == a || inside(k, a)) {
+          MemNode n = m.nodes.get(k)!;
+          m.nodes.remove(k);
+          m.nodes.set(b + k.slice(a.len(), k.len()), n);
+        }
+      }
+      return done(Got<bool>(true, true, ""));
+    },
+  );
+}
+
+// ── whole-folder operations ────────────────────────────────────────────────
+
+/** Copy every file below `from` to the same place below `to`. Folders are made as they are needed. */
+export async Got<bool> copyTree(Vfs fs, string from, string to) {
+  Got<Info> s = await fs.stat(from);
+  if (!s.ok) { return Got(false, false, s.error); }
+  if (!s.value.isDir) {
+    Got<u8[]> b = await fs.read(from);
+    if (!b.ok) { return Got(false, false, b.error); }
+    return await fs.write(to, b.value);
+  }
+  Got<bool> made = await fs.mkdir(to);
+  if (!made.ok) { return made; }
+  Got<string[]> names = await fs.list(from);
+  if (!names.ok) { return Got(false, false, names.error); }
+  for (i32 i = 0; i < names.value.len(); i++) {
+    Got<bool> r = await copyTree(fs, join(from, names.value[i]), join(to, names.value[i]));
+    if (!r.ok) { return r; }
+  }
+  return Got(true, true, "");
+}
+
+/** A name in `dir` that is not taken: `name`, or `name 2`, `name 3`, … before its extension. */
+export async string freeName(Vfs fs, string dir, string name) {
+  Got<string[]> names = await fs.list(dir);
+  if (!names.ok) { return name; }
+  if (!has(names.value, name)) { return name; }
+  i32 dot = -1;
+  u8[] b = name.toBytes();
+  for (i32 i = b.len() - 1; i > 0; i--) { if (b[i] == '.') { dot = i; break; } }
+  string stem = dot > 0 ? name.slice(0, dot) : name;
+  string ext = dot > 0 ? name.slice(dot, name.len()) : "";
+  for (i32 n = 2; n < 1000; n++) {
+    string candidate = "\{stem} \{n}\{ext}";
+    if (!has(names.value, candidate)) { return candidate; }
+  }
+  return name;
+}
+
+bool has(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}

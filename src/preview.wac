@@ -128,8 +128,8 @@ export Node preview(Model m, Page page, fn<void()> bump, fn<void(i32)> openNeste
         <div class="nm" title={e.path}>{name}</div>
         <div class="meta num">{x.ok ? kindLabel(k, name) : "unreadable"} · {sizeOf(e.size)}</div>
       </div>
-      {x.ok ? <button class="btn" title="Save this file"
-                      onclick={(ElementEvent ev) => { page.download(name, x.bytes); }}>{icon("download", "sm")}<span class="label">Save</span></button>
+      {x.ok ? <button class="btn" title="Download a copy of this file"
+                      onclick={(ElementEvent ev) => { page.download(name, x.bytes); }}>{icon("download", "sm")}<span class="label">Download</span></button>
             : Node.Text("")}
     </div>
     <div class="tabs">{tabNodes}</div>

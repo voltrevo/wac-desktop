@@ -1,0 +1,157 @@
+// The desktop's core without a browser: the memory disk, and the window manager's arithmetic and memory.
+
+import { Ticket } from "core";
+import { Runner } from "web";
+import { Vfs, Got, Info, copyTree, freeName, memoryVfs } from "../src/desk/vfs.wac";
+import { Desk, Win, close, dragTo, endDrag, find, focus, hintRight, minimise, newDesk, open, restore, sessionOf,
+         startMove, startResize, taskbarClick, toggleMax } from "../src/desk/wm.wac";
+
+/** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
+T run<T>(Runner r, Ticket<T> t) {
+  r.drain();
+  if (!t.settled()) { trap "the ticket did not settle"; }
+  return t.value();
+}
+
+async string diskScenario(Vfs fs) {
+  // Writing into folders that do not exist makes them.
+  if (!(await fs.write("a/b/c.txt", "hi".toBytes())).ok) { return "nested write"; }
+  Got<Info> s = await fs.stat("a/b");
+  if (!s.ok || !s.value.isDir) { return "the folder was not made"; }
+  Got<string[]> names = await fs.list("a");
+  if (!names.ok || names.value.len() != 1 || names.value[0] != "b") { return "list: \{names.value.len()}"; }
+  if (string.fromBytes((await fs.read("a/b/c.txt")).value) != "hi") { return "read back"; }
+  // A name in use gets a number before its extension.
+  if (await freeName(fs, "a/b", "c.txt") != "c 2.txt") { return "free name: \{await freeName(fs, "a/b", "c.txt")}"; }
+  if (await freeName(fs, "a/b", "d.txt") != "d.txt") { return "free name of an unused one"; }
+  // Renaming a folder takes everything in it along.
+  if (!(await fs.rename("a", "z")).ok) { return "rename"; }
+  if (!(await fs.read("z/b/c.txt")).ok || (await fs.read("a/b/c.txt")).ok) { return "rename moved the wrong things"; }
+  if ((await fs.rename("missing", "q")).ok) { return "renaming nothing worked"; }
+  if (!(await copyTree(fs, "z", "copy")).ok || !(await fs.read("copy/b/c.txt")).ok) { return "copy"; }
+  // Removing a folder removes what is in it.
+  if (!(await fs.remove("z")).ok) { return "remove"; }
+  if ((await fs.stat("z/b")).ok || (await fs.stat("z")).ok) { return "remove left something"; }
+  if ((await fs.read("copy")).ok) { return "a folder read as a file"; }
+  return "";
+}
+
+export string test_the_memory_disk_behaves_like_a_disk() {
+  Runner r = Runner.create();
+  schedule r.take;
+  return run(r, diskScenario(memoryVfs(() => 0 as i64)));
+}
+
+Desk desk() { return newDesk(memoryVfs(() => 0 as i64)); }
+
+export string test_windows_open_cascaded_and_stack() {
+  Desk d = desk();
+  Win a = open(d, "files", "", "Home", "home");
+  Win b = open(d, "viewer", "x.md", "x.md", "text");
+  if (b.x <= a.x || b.y <= a.y) { return "not cascaded: \{a.x},\{a.y} then \{b.x},\{b.y}"; }
+  if (a.x < 120) { return "a window opened over the desktop's icons"; }
+  if (d.focused != b.id || b.z <= a.z) { return "the new window is not in front"; }
+  // The same file again is the same window, brought forward.
+  focus(d, a.id);
+  Win again = open(d, "viewer", "x.md", "x.md", "text");
+  if (again.id != b.id || d.wins.len() != 2 || d.focused != b.id) { return "a second viewer of one file"; }
+  // A Files window may be opened as often as wanted.
+  open(d, "files", "", "Home", "home");
+  if (d.wins.len() != 3) { return "a second Files window"; }
+  return "";
+}
+
+export string test_minimise_close_and_the_taskbar() {
+  Desk d = desk();
+  Win a = open(d, "files", "", "Home", "home");
+  Win b = open(d, "editor", "", "Untitled", "edit");
+  minimise(d, b.id);
+  if (!b.min || d.focused != a.id) { return "minimising did not hand the focus on"; }
+  taskbarClick(d, b.id);
+  if (b.min || d.focused != b.id) { return "the taskbar did not bring it back"; }
+  taskbarClick(d, b.id);
+  if (!b.min) { return "the taskbar did not put the front window away"; }
+  close(d, a.id);
+  if (find(d, a.id) is not null || d.wins.len() != 1) { return "close"; }
+  return "";
+}
+
+export string test_dragging_moves_and_resizing_keeps_a_minimum() {
+  Desk d = desk();
+  Win w = open(d, "files", "", "Home", "home");
+  i32 x = w.x;
+  i32 y = w.y;
+  startMove(d, w.id, x + 50, y + 10);
+  dragTo(d, x + 150, y + 70);
+  endDrag(d);
+  if (w.x != x + 100 || w.y != y + 60) { return "moved to \{w.x},\{w.y}"; }
+  // Held against the top edge, a window stops at the top; let go there, it maximises, and keeps its place.
+  i32 before = w.y;
+  startMove(d, w.id, w.x + 50, w.y + 10);
+  dragTo(d, w.x + 50, -500);
+  if (w.y != 0) { return "dragged off the top: \{w.y}"; }
+  endDrag(d);
+  if (!w.max || w.y != before) { return "let go at the top: max \{w.max}, y \{w.y}"; }
+  toggleMax(d, w.id);
+  // Resizing from the left edge moves the left side and keeps the right.
+  i32 right = w.x + w.w;
+  startResize(d, w.id, "w", w.x, w.y + 50);
+  dragTo(d, w.x - 40, w.y + 50);
+  endDrag(d);
+  if (w.x + w.w != right) { return "the right side moved"; }
+  // And never smaller than the minimum.
+  startResize(d, w.id, "se", w.x + w.w, w.y + w.h);
+  dragTo(d, w.x, w.y);
+  endDrag(d);
+  if (w.w != 320 || w.h != 200) { return "below the minimum: \{w.w}×\{w.h}"; }
+  return "";
+}
+
+export string test_snapping_and_maximising() {
+  Desk d = desk();
+  Win w = open(d, "files", "", "Home", "home");
+  i32 x = w.x;
+  startMove(d, w.id, x + 50, w.y + 10);
+  dragTo(d, 2, 300);
+  endDrag(d);
+  if (w.snap != 1) { return "a drag to the left edge did not snap left"; }
+  if (w.x != x) { return "a snapped window forgot where it was: \{w.x}"; }
+  startMove(d, w.id, 100, 10);
+  dragTo(d, 600, 300);
+  hintRight(d);
+  endDrag(d);
+  if (w.snap != 2) { return "the right edge did not snap right: \{w.snap}"; }
+  startMove(d, w.id, 900, 10);
+  dragTo(d, 700, 1);
+  endDrag(d);
+  if (!w.max) { return "a drag to the top did not maximise"; }
+  toggleMax(d, w.id);
+  if (w.max || w.snap != 0) { return "restore"; }
+  return "";
+}
+
+export string test_the_session_comes_back() {
+  Desk d = desk();
+  Win a = open(d, "files", "Desktop", "Desktop", "folder");
+  Win b = open(d, "editor", "notes \"one\".txt", "notes \"one\".txt", "edit");
+  Win c = open(d, "viewer", "x.md", "x.md", "text");
+  b.x = 300;
+  b.w = 640;
+  a.snap = 2;
+  minimise(d, c.id);
+  focus(d, b.id);
+  Desk e = desk();
+  i32 n = restore(e, sessionOf(d));
+  if (n != 3) { return "restored \{n} windows"; }
+  Win? b2 = null;
+  for (i32 i = 0; i < e.wins.len(); i++) { if (e.wins.get(i).app == "editor") { b2 = e.wins.get(i); } }
+  if (b2 is null || b2!.arg != "notes \"one\".txt" || b2!.x != 300 || b2!.w != 640) { return "the editor's place or file"; }
+  if (e.focused != b2!.id) { return "the focus" ; }
+  for (i32 i = 0; i < e.wins.len(); i++) {
+    Win w = e.wins.get(i);
+    if (w.app == "files" && w.snap != 2) { return "the snap"; }
+    if (w.app == "viewer" && !w.min) { return "minimised"; }
+  }
+  if (restore(desk(), "{ not json".toBytes()) != 0) { return "a damaged session restored something"; }
+  return "";
+}
