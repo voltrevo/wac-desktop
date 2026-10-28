@@ -1,0 +1,103 @@
+From 704c090803fac59c977026f2f531be80763db473 Mon Sep 17 00:00:00 2001
+From: Andrew Morris <andrew.morris@ethereum.org>
+Date: Tue, 27 Oct 2026 23:29:23 +0000
+Subject: [PATCH 1/4] web: hand a page the files in a dropped or picked folder,
+ named by their paths
+
+A dropped folder arrived as one item whose read failed, and a folder chosen with
+<input webkitdirectory> arrived as files named without their folders. The host now
+walks dropped directory entries and names every file by its path from what the user
+handed over; a lone file is still just its name.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01J7c8hTEmTN5s7KvmrRMqXX
+---
+ packages/web/README.md       |  2 +-
+ packages/web/src/page.wac    |  5 +++++
+ packages/web/tools/build.wac | 34 ++++++++++++++++++++++++++++------
+ 3 files changed, 34 insertions(+), 7 deletions(-)
+
+diff --git a/packages/web/README.md b/packages/web/README.md
+index bbef45c1c..d0c4c47eb 100644
+--- a/packages/web/README.md
++++ b/packages/web/README.md
+@@ -63,7 +63,7 @@ of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses
+ | `title(t)`, `log(line)` | the document's title, and a line for the console |
+ | `now()` | milliseconds, from a clock that only goes forward |
+ | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
+-| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page |
++| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page — one per file for a folder, picked with `webkitdirectory` or dropped, named by its path inside it |
+ | `download(name, bytes)` | offer bytes to the user as a file |
+ | `sys` | what the build granted — see below |
+ 
+diff --git a/packages/web/src/page.wac b/packages/web/src/page.wac
+index 14daa196e..77c74de78 100644
+--- a/packages/web/src/page.wac
++++ b/packages/web/src/page.wac
+@@ -54,6 +54,11 @@ export static i32 MOD_META = 8;
+ /** A file the user handed over — chosen with an `<input type="file">`, or dropped on the page. */
+ export struct Picked {
+   bool ok;
++  /**
++   * Its name — or, for a file inside a folder the user handed over, its path from that folder down:
++   * `photos/2024/a.jpg`. A folder dropped on the page, or chosen with `<input type="file"
++   * webkitdirectory>`, arrives as one `Picked` per file in it; the folder itself never arrives.
++   */
+   string name;
+   u8[] bytes;
+   /** Why it could not be read, when `ok` is false. */
+diff --git a/packages/web/tools/build.wac b/packages/web/tools/build.wac
+index d68a2b26e..8811ac021 100644
+--- a/packages/web/tools/build.wac
++++ b/packages/web/tools/build.wac
+@@ -685,19 +685,41 @@ export string documentSide() {
+           },
+         };
+         // Files arrive whether or not the program has asked yet; the page keeps them until it does.
+-        const take = (files) => {
+-          for (const f of files ?? []) {
+-            f.arrayBuffer().then(
+-              (buf) => emit(["file", true, f.name, new Uint8Array(buf), ""], [buf]),
+-              (e) => emit(["file", false, f.name, new Uint8Array(0), String(e?.message ?? e)]));
++        // A file's name is its path below what the user handed over — `photos/2024/a.jpg` for a file
++        // in a folder, picked with `webkitdirectory` or dropped, and `a.jpg` for a file on its own.
++        const send = (f, path) => f.arrayBuffer().then(
++          (buf) => emit(["file", true, path, new Uint8Array(buf), ""], [buf]),
++          (e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]));
++        const take = (files) => { for (const f of files ?? []) send(f, f.webkitRelativePath || f.name); };
++        // A dropped folder is a directory entry rather than a file — reading it as one fails — so it is
++        // walked. `readEntries` answers in batches, and an empty batch is the end of the directory.
++        const rel = (p) => p.startsWith("/") ? p.slice(1) : p;
++        const failed = (path, e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]);
++        const walk = (entry) => {
++          if (entry.isFile) {
++            entry.file((f) => send(f, rel(entry.fullPath)), (e) => failed(rel(entry.fullPath), e));
++          } else if (entry.isDirectory) {
++            const reader = entry.createReader();
++            const more = () => reader.readEntries(
++              (batch) => { if (batch.length > 0) { batch.forEach(walk); more(); } },
++              (e) => failed(rel(entry.fullPath), e));
++            more();
+           }
+         };
++        // The entries are taken during the event: a drop's items are unreadable once it returns. A
++        // browser without them, or a drop of something that is not a file, falls back to `files`.
++        const dropped = (dt) => {
++          const items = [...(dt?.items ?? [])].filter((it) => it.kind === "file");
++          const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
++          if (entries.length > 0 && entries.every((x) => x !== null)) entries.forEach(walk);
++          else take(dt?.files);
++        };
+         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
+         // A link to `#/somewhere`, and the browser's back and forward, move the location; the program follows.
+         addEventListener("hashchange", () => emit(["where", location.hash]));
+         // Without preventing dragover a dropped file replaces the page.
+         document.addEventListener("dragover", (ev) => ev.preventDefault());
+-        document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
++        document.addEventListener("drop", (ev) => { ev.preventDefault(); dropped(ev.dataTransfer); });
+         const apply = (m) => ops[m[0]](...m.slice(1));
+         return (m) => { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); };
+       };
+-- 
+2.43.0
+

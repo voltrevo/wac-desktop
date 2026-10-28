@@ -47,6 +47,12 @@ export struct Drag {
   i32 h;
   /** Where the window would snap if dropped now: 0 nowhere, 1 left, 2 right, 3 maximised. */
   i32 hint;
+  /**
+   * Whether the pointer has gone anywhere yet. A press on a title bar is not yet a drag — it may be the
+   * first half of a click on the window's own buttons — so until it moves, nothing about the window
+   * changes; in particular it stays clickable, which a window being dragged is not.
+   */
+  bool moved;
 }
 
 export struct Desk {
@@ -163,7 +169,7 @@ export void startMove(Desk d, i32 id, i32 px, i32 py) {
   Win? w = find(d, id);
   if (w is null) { return; }
   focus(d, id);
-  d.drag = Drag(id, "move", true, px, py, w!.x, w!.y, w!.w, w!.h, 0);
+  d.drag = Drag(id, "move", true, px, py, w!.x, w!.y, w!.w, w!.h, 0, false);
 }
 
 /**
@@ -175,7 +181,7 @@ export void startResize(Desk d, i32 id, string edges, i32 px, i32 py) {
   if (w is null) { return; }
   focus(d, id);
   bool exact = w!.snap == 0 && !w!.max;
-  d.drag = Drag(id, edges, exact, px, py, w!.x, w!.y, w!.w, w!.h, 0);
+  d.drag = Drag(id, edges, exact, px, py, w!.x, w!.y, w!.w, w!.h, 0, false);
 }
 
 bool has(string s, string c) { return s.indexOf(c) >= 0; }
@@ -199,6 +205,10 @@ export bool dragTo(Desk d, i32 px, i32 py) {
   }
   i32 dx = px - dr.px;
   i32 dy = py - dr.py;
+  if (!dr.moved) {
+    if (dx * dx + dy * dy < 16) { return false; }
+    dr.moved = true;
+  }
   if (dr.mode == "move") {
     if (w.max || w.snap != 0) {
       // Pulled out of a maximised or snapped place: it goes back to its own size, under the pointer.

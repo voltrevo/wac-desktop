@@ -74,6 +74,20 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(200);
   check((await p.textContent('.win.focus .tt')) === 'Makefile', 'and the taskbar brings it back', await p.textContent('.win.focus .tt'));
 
+  // The window's own buttons, pressed at a person's speed: a press on a title bar must not become a drag
+  // that swallows the click (it did — Playwright's instant clicks hid it).
+  const press = (title) => p.locator(`.win.focus .wbtn[title=${title}]`).click({ delay: 150 });
+  await press('Restore'); await settle(300);
+  check(!(await p.$('.win.focus.snapl')), 'a slow press on Restore un-snaps', null);
+  await press('Maximise'); await settle(300);
+  check(!!(await p.$('.win.focus.max')), 'a slow press on Maximise maximises', null);
+  await press('Restore'); await settle(300);
+  check(!(await p.$('.win.focus.max')), 'and Restore restores', null);
+  await press('Minimise'); await settle(300);
+  check(!!(await p.$('.win.min')), 'a slow press on Minimise minimises', null);
+  await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(300);
+  await p.mouse.move(c.x + 120, c.y + 20); await p.mouse.down(); await p.mouse.move(2, 300, { steps: 10 }); await p.mouse.up(); await settle(300);
+
   // Drops: with no Files window in front, onto the desktop; with one in front, into its folder.
   const cdp = await ctx.newCDPSession(p);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-'));
@@ -109,6 +123,9 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
   await q.waitForTimeout(1200);
   check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);
+
+  await q.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await q.waitForTimeout(300);
+  check(!(await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'a slow press on Close closes', null);
 
   check(errors.length === 0, 'no page errors', errors);
   await browser.close();

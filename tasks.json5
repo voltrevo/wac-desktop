@@ -3,8 +3,6 @@
   // The desktop as dist/index.html, with a disk (the browser's storage, when it is offered); and the
   // Archive Explorer on its own as dist/explorer/index.html.
   build: "wac run --allow-read --allow-write --allow-run build.wac src/desktop.wac dist --title 'Desktop' --grant read,write && wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist/explorer --title 'Archive Explorer'",
-  // dist/ onto the gh-pages branch, ready to push (it pushes nothing).
-  pages: "sh tools/pages.sh",
   serve: "wac sh --allow-read --allow-net -c 'httpd -8080 dist'",
   test: "wac test test",
   // In Chromium, against dist/ — build first; both need Playwright. The desktop, used as a person uses it:

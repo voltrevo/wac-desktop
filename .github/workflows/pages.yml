@@ -1,0 +1,52 @@
+# The desktop, built and published to GitHub Pages on every push to the default branch.
+#
+# Everything the build needs is in this repository or on GitHub: tools/ci-build.sh clones wac, adds the
+# commits wac-patches/ carries, bootstraps `wac` on Node and builds. The bootstrapped command is cached,
+# keyed on wac.lock, so a run after the first one skips straight to the build.
+#
+# In the repository's settings, under Pages, set the source to "GitHub Actions".
+
+name: Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: ~/.wac
+          key: wac-${{ runner.os }}-${{ hashFiles('wac.lock', 'wac-patches/*.bundle') }}
+      - name: Build
+        run: sh tools/ci-build.sh
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

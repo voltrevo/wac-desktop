@@ -241,7 +241,7 @@ Node launcher(Desk d, fn<void()> bump) {
 Node frame(Desk d, Win w, Page page, fn<void()> bump) {
   i32 id = w.id;
   Drag? g = d.drag;
-  bool moving = (g is not null) && g!.id == id;
+  bool moving = (g is not null) && g!.id == id && g!.moved;
   string cls = "win" + (d.focused == id ? " focus" : "") + (w.max ? " max" : "") + (w.snap == 1 ? " snapl" : "")
              + (w.snap == 2 ? " snapr" : "") + (w.min ? " min" : "") + (moving ? " moving" : "");
   string style = "left:\{w.x}px;top:\{w.y}px;width:\{w.w}px;height:\{w.h}px;z-index:\{w.z}";
@@ -308,15 +308,17 @@ export Node Desktop(Ui ui, Page page) {
   });
 
   Drag? g = d.drag;
-  bool dragging = g is not null;
+  // Pressed is listening for where the pointer goes; dragging is once it has gone somewhere.
+  bool pressed = g is not null;
+  bool dragging = pressed && g!.moved;
   Node[] frames = Node[].filled(d.wins.len(), Node.Text(""));
   for (i32 i = 0; i < d.wins.len(); i++) { frames[i] = frame(d, d.wins.get(i), page, bump); }
   i32 hint = dragging ? g!.hint : 0;
   string cursor = dragging ? (g!.mode == "move" ? "" : " rz-\{g!.mode}") : "";
 
   return <div class={"desk" + (dragging ? " dragging" : "") + cursor}
-              onpointermove={dragging ? (ElementEvent e) => { if (dragTo(d, e.x, e.y)) { bump(); } } : null}
-              onpointerup={dragging ? (ElementEvent e) => { endDrag(d); bump(); } : null}>
+              onpointermove={pressed ? (ElementEvent e) => { if (dragTo(d, e.x, e.y)) { bump(); } } : null}
+              onpointerup={pressed ? (ElementEvent e) => { endDrag(d); bump(); } : null}>
     <style>{css()}</style>
     <style>{deskCss()}</style>
     <div class="area" onpointerdown={(ElementEvent e) => { if (d.launcher) { d.launcher = false; bump(); } }}>

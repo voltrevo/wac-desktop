@@ -14,7 +14,11 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
-    wac task pages       # dist/ onto the gh-pages branch, ready to push
+
+**Publishing:** `.github/workflows/pages.yml` builds the site and deploys it to GitHub Pages on every
+push to the default branch — set the repository's Pages source to "GitHub Actions". It runs
+`tools/ci-build.sh`, which needs nothing but this repository and GitHub: it clones wac, adds the commits
+`wac-patches/` carries, bootstraps `wac` on Node (cached after the first run) and builds.
 
 ## Where it runs
 
@@ -60,7 +64,9 @@ shares, so their pages can see each other's files.
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
 | `vendor/` | inflate, CRC-32, zstd, SHA-256, JSON and number formatting, copied from wac's `packages/` at `a66fe9d51` |
-| `tools/` | test archives, the demo and seed generators, the browser tests, `pages.sh` |
+| `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `use-local-wac.sh` |
+| `wac-patches/` | the wac commits this needs that GitHub does not have yet, as a bundle and as patches |
+| `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 
 ## How it is put together
 
@@ -77,8 +83,9 @@ shares, so their pages can see each other's files.
   the work died, and says so. The loops that receive files never open anything themselves.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until
   600 ms pass with no more. This needs the `web` package's host to walk dropped directories and pass each
-  file's path, which `wac.lock` pins to a local wac commit (`0597a1e5`, on branch `web-folder-drops`) that
-  is not on GitHub yet: `wac update` cannot fetch it from elsewhere, and a hosted build cannot make it.
+  file's path, which `wac.lock` pins to a wac commit (`0597a1e5`) that is not on GitHub yet. The commits
+  travel in `wac-patches/`; `tools/use-local-wac.sh <wac clone>` makes the pinned one available to `wac`
+  on a new machine, and the Pages build does the same.
 
 ## Not yet
 
