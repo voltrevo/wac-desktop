@@ -132,7 +132,7 @@ pinned commit and the page unpacks it to `/usr/bin/wac`. Neither of the two need
 needed: the command is built from the package cache like any program, and it needs no packages of its own
 at run time for `check`, `build`, `run` and `test` of a program that imports only `std` and `core`. A
 program that imports a git dependency would still need the cache on the page's disk. The page is about
-5.4 MB of module; the estimate was 6–7. What follows is the plan as it was written.
+5.4 MB of module when it landed, and 3.5 MB once wac's later work shrank every program; the estimate was 6–7. What follows is the plan as it was written.
 
 `packages/wac/src/wac.wac` is an ordinary `main(Sys)` program, and the compiler does no I/O, so a page
 can carry the command as one more applet. With items 3 and 4 in place:

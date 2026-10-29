@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned to one wac commit,
-[`563d8828`](https://github.com/voltrevo/wac/commit/563d8828c36a5fd49fcb17346c5bf370188233c1).** The `wac`
+[`b0d60f33`](https://github.com/voltrevo/wac/commit/b0d60f33053d2e52977d8e063faf3184bf2182ab).** The `wac`
 command should be built from that commit, and `wac.json5` names it as the `ref` of every wac dependency —
 `wac` itself (its packages, as `import { json.parse } from "wac"`), `web` and `webbuild` — with `wac.lock`
 agreeing. To change it, change all three refs and the lock together, and rebuild `wac` from the new
@@ -25,7 +25,7 @@ git clone https://github.com/voltrevo/wac ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout 563d8828c36a5fd49fcb17346c5bf370188233c1
+git -C ~/src/wac checkout b0d60f33053d2e52977d8e063faf3184bf2182ab
 ```
 
 ```bash
@@ -152,8 +152,9 @@ shares, so their pages can see each other's files.
   At startup `usrbin.wac` unpacks it into a store mounted read-only at `/usr`, and every terminal has
   `WACPATH=/usr/bin`, so the shell finds `wac` and spawns it as it would any program. It is handed the shell's
   files, which is why it works on the desktop's disk.
-- **Size.** Carrying the shell takes the page from 1.8 MB to about 3.6 MB of module, and carrying `wac` to
-  about 5.4 MB. It also needs a
+- **Size.** About 3.5 MB of module, `wac` included, at wac `b0d60f33` — it was 5.4 MB at `563d8828`, before
+  wac's step 6 follow-ups shrank what a program carries, and the Archive Explorer went from 1.4 MB to 0.4 MB
+  with it. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until

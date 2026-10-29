@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `563d8828`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
+wac is pinned to one commit, `b0d60f33`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
 `wac` command itself (bootstrapped from that commit — see README). Change them together.
 
     wac task build && wac task test && wac task test:desk && wac task test:drops
