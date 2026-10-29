@@ -35,8 +35,8 @@ wac is pinned to one commit, `563d8828`, everywhere: the three refs in `wac.json
   granted"). `sh tools/use-local-wac.sh <wac clone>` fills the package cache from a clone instead.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs (about 2.5 minutes, mostly
   bootstrapping `wac`); run it on a copy of the tree with a fresh `HOME`/`WAC_HOME` to check CI.
-- Run unit tests with `wac task test`. `wac test test/one_test.wac` on its own fails to parse the
-  `html.*` imports, because it loses the project's context.
+- Run unit tests with `wac task test`, which grants what they need; `wac test --allow-read test/one_test.wac`
+  runs one file. (It used to fail to parse the `html.*` imports; it does not at the pinned wac.)
 
 ## wac things that have bitten
 
