@@ -16,6 +16,7 @@ import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropK
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { CalcApp } from "./calc.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
+import { ProgramApp } from "./program.wac";
 import { EditorApp, ViewerApp } from "./apps.wac";
 import { TerminalApp } from "./terminal.wac";
 import { deskCss } from "./style.wac";
@@ -275,6 +276,7 @@ Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i3
   if (w.app == "calc") { return <CalcApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "terminal") { return <TerminalApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "editor") { return <EditorApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
+  if (w.app == "program") { return <ProgramApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   return <ViewerApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>;
 }
 

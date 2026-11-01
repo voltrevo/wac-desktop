@@ -124,10 +124,12 @@ Item[] sorted(FilesState s) {
 }
 
 /**
- * What opening a file does: archives open in place; documents the Viewer renders — Markdown, JSON, CSV —
- * open there, with Edit a click away; other text and code open in the Editor; the rest in a Viewer.
+ * What opening a file does: a wasm module runs, in a window of its own; archives open in place; documents the
+ * Viewer renders — Markdown, JSON, CSV — open there, with Edit a click away; other text and code open in the Editor;
+ * the rest in a Viewer.
  */
 export string appFor(string name) {
+  if (extOf(name) == "wasm") { return "program"; }
   string ic = iconFor(name);
   if (ic == "archive") { return "files"; }
   string[] rendered = ["md", "markdown", "mdx", "json", "json5", "jsonc", "geojson", "ipynb", "csv", "tsv"];

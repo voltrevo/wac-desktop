@@ -10,6 +10,7 @@
 
 const { chromium } = require('playwright');
 const fs = require('fs'), os = require('os'), path = require('path'), http = require('http');
+const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const html = path.join(root, 'dist', 'index.html');
@@ -147,13 +148,32 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await texts('.win.focus .row .t')).includes('into-files.txt'), 'a file dropped with Files in front lands in its folder', await texts('.win.focus .row .t'));
   await shot('3-desktop');
 
+  // **A program from the disk, in a window**: samples/counter.wac built as a page's module, dropped on the desktop and
+  // opened. It draws in its window's body, names its window, and hears a click there.
+  const built = path.join(root, '.cache', 'counter');
+  execFileSync('wac', ['run', '--allow-read', '--allow-write', '--allow-run', 'build.wac', 'samples/counter.wac', path.relative(root, built)],
+               { cwd: root, stdio: 'pipe' });
+  fs.copyFileSync(path.join(built, 'page.wasm'), path.join(tmp, 'counter.wasm'));
+  await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(300);
+  await drop(path.join(tmp, 'counter.wasm'), 1300, 700);
+  // Behind the snapped Editor, so double-clicked where it is rather than moved to: the layout is what the later checks read.
+  await p.$eval('.dicon[title="counter.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  await p.waitForFunction(() => document.querySelector('.win.focus .program-body .count') !== null, null, { timeout: 15000 }).catch(() => {});
+  const counted = () => p.$eval('.win.focus .program-body', (e) => e.textContent).catch(() => '');
+  check((await counted()) === 'Clicks: 0 +1', 'a page module from the disk draws in its window', await counted());
+  check((await texts('.win.focus .tt')).join() === 'Counter', 'and names it', await texts('.win.focus .tt'));
+  await p.locator('.win.focus .program-body .up').click(); await settle(400);
+  check((await counted()) === 'Clicks: 1 +1', 'and a click in it reaches the program, which draws again', await counted());
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+  check(!(await texts('.win .tt')).includes('Counter'), 'closing the window ends the program', await texts('.win .tt'));
+
   const before = await texts('.win .tt');
   await settle(1500);                       // the layout is saved a second after it changes
   await p.reload();
   await p.waitForSelector('.dicons', { timeout: 20000 });
   await settle(1500);
   check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
-  check((await texts('.dicon .dname')).join() === 'Home,Trash,Welcome.md,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  check((await texts('.dicon .dname')).join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
   check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
   check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
   await shot('4-reloaded');

@@ -1,0 +1,15 @@
+// A page's program for a window of the desktop: `tools/desk_test.js` builds it with `build.wac`, drops the module on
+// the desktop as `counter.wasm`, and opens it — a program from the disk, drawing in its window and nowhere else.
+
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.p } from "web";
+
+Node Counter(Ui ui) {
+  auto n = ui.state(0);
+  return <p>Clicks: <b class="count">{"\{n.get()}"}</b> <button class="up" onclick={(ElementEvent e) => { n.set(n.get() + 1); }}>+1</button></p>;
+}
+
+export async i32 main(Page page) {
+  page.title("Counter");
+  page.mount((Ui ui) => <Counter/>);
+  return 0;
+}

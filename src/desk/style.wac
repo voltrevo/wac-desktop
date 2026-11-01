@@ -134,6 +134,10 @@ export string deskCss() {
     .rename { font: inherit; height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
               background: var(--surface); color: var(--text); outline: 0; min-width: 0; width: 100%; }
     .viewer { display: flex; flex-direction: column; height: 100%; }
+    .program { display: flex; flex-direction: column; height: 100%; }
+    .program-body { flex: 1; overflow: auto; min-height: 0; }
+    .program-status { padding: 6px 10px; color: var(--muted); border-top: 1px solid var(--line); }
+    .program-said { margin: 0; padding: 8px 10px; max-height: 40%; overflow: auto; border-top: 1px solid var(--line); white-space: pre-wrap; }
     .viewer > .pane.preview { flex: 1; min-height: 0; }
     /* The window's title names the file and the toolbar says what it is: the preview's own header goes. */
     .viewer .phead { display: none; }

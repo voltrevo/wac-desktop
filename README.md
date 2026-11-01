@@ -11,21 +11,21 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 
 ## Building it
 
-**Everything is pinned to one wac commit,
-[`b0d60f33`](https://github.com/voltrevo/wac/commit/b0d60f33053d2e52977d8e063faf3184bf2182ab).** The `wac`
-command should be built from that commit, and `wac.json5` names it as the `ref` of every wac dependency —
-`wac` itself (its packages, as `import { json.parse } from "wac"`), `web` and `webbuild` — with `wac.lock`
-agreeing. To change it, change all three refs and the lock together, and rebuild `wac` from the new
-commit; `tools/ci-build.sh` reads the commit from `wac.lock`.
+**Everything is pinned in `wac.lock`**: wac at `25d20719e` — the `wac` command should be built from that commit, and
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `c32d1a8`. Both are
+repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
+its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
+together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
+from `wac.lock`.
 
 Getting that `wac`, on a machine with git and Node 22+:
 
 ```bash
-git clone https://github.com/voltrevo/wac ~/src/wac
+git clone https://git.voltrevo.com/wac.git ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout b0d60f33053d2e52977d8e063faf3184bf2182ab
+git -C ~/src/wac checkout 25d20719ebd5df91f11b222218e068e7ea434a9c
 ```
 
 ```bash
@@ -34,22 +34,25 @@ cd ~/src/wac && ./bootstrap.sh --host nodejs
 
 That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in this repository:
 
-    wac update           # fetch the pinned wac packages, once
+    sh tools/fill-cache.sh   # the pinned wac and web, into wac's package cache, once
     wac task build       # src/desktop.wac -> dist/index.html, src/app.wac -> dist/explorer/index.html
     wac task serve       # http://localhost:8080 — over http the desktop gets its storage
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
 
-Where `wac update` cannot reach GitHub, `sh tools/use-local-wac.sh ~/src/wac` fills the package cache
-from the clone instead.
+**`tools/fill-cache.sh` rather than `wac update`**, because `git.voltrevo.com` answers wac's own fetcher 401:
+`git` has the credentials, so the script fetches each commit `wac.lock` pins with `git` and puts it where `wac`
+looks. Where the host is reachable without them, `wac update` does the same.
 
 `sh tools/ci-build.sh` does all of this from nothing — clone, check out the pinned commit, bootstrap,
 fill the cache, test, build — and is what publishing runs.
 
 **Publishing:** `.github/workflows/pages.yml` builds the site and deploys it to GitHub Pages on every
 push to the default branch — set the repository's Pages source to "GitHub Actions". It runs
-`tools/ci-build.sh`, caching the bootstrapped `wac` between runs, keyed on `wac.lock`.
+`tools/ci-build.sh`, caching the bootstrapped `wac` between runs, keyed on `wac.lock`. **It needs
+`git.voltrevo.com` reachable from GitHub's runners, with credentials**, since wac and `web` live there now; the
+repository itself lives there too, and goes to GitHub only when the owner says so.
 
 ## Where it runs
 
@@ -100,6 +103,10 @@ shares, so their pages can see each other's files.
   disk, and a program `wac build` writes runs by its path (`./hello.wasm`). It is the `wac` command itself,
   built from the commit the project pins, and runs as any program on the disk would — the page starts the
   module in a worker of its own — from a page opened as a file too.
+- **A program from the disk runs in a window.** Open a `.wasm` — a page's module, as the `web` package's builder
+  makes it (`page.wasm`) — and it starts as a process of its own and draws in the window's body, which is all of
+  the page it can reach; its title names the window, and closing the window stops it. A module that is not a page
+  runs too, and the window shows what it wrote. `samples/counter.wac` is the one the browser test runs.
 - **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
@@ -112,6 +119,7 @@ shares, so their pages can see each other's files.
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
+| `src/desk/program.wac` | a program from the disk in a window: its module started with `wac.page` provided by `web`'s `PageServer` |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |
@@ -120,7 +128,8 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
-| `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `use-local-wac.sh` |
+| `samples/` | `demo.zip`'s source, and `counter.wac`, a page's program the browser test builds and runs in a window |
+| `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `fill-cache.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 
 ## How it is put together
@@ -152,14 +161,19 @@ shares, so their pages can see each other's files.
   At startup `usrbin.wac` unpacks it into a store mounted read-only at `/usr`, and every terminal has
   `WACPATH=/usr/bin`, so the shell finds `wac` and spawns it as it would any program. It is handed the shell's
   files, which is why it works on the desktop's disk.
-- **Size.** About 3.5 MB of module, `wac` included, at wac `b0d60f33` — it was 5.4 MB at `563d8828`, before
-  wac's step 6 follow-ups shrank what a program carries, and the Archive Explorer went from 1.4 MB to 0.4 MB
-  with it. It also needs a
+- **Size.** About 2.6 MB of module, `wac` included, at wac `25d20719e` — 3.5 MB at `b0d60f33`, and 5.4 MB at
+  `563d8828`, before wac's step 6 follow-ups shrank what a program carries; the Archive Explorer is 0.3 MB. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until
   600 ms pass with no more. The `web` package's host walks dropped directories and passes each file's
   path.
+- **A program in a window** is `Procs.spawnProviding` with one capability, `wac.page`, answered by `web`'s
+  `PageServer` into the window's body: the child's handle 0 is that element, every element it makes is made under it
+  through the desktop's own handles, and a request the child should not make — a `<script>`, an `on…` attribute, a
+  handle it does not hold — is refused and noted rather than trapped on. Its changes arrive as one batch a turn,
+  and its request for its next event stays open across the parent's other answers, which needs a wac whose parent
+  answers a provided capability's requests as each settles (`25d20719e` has it).
 
 ## Not yet
 

@@ -1,39 +1,42 @@
-// The explorer driven with no browser: a `TestDoc` stands in for the document, files arrive the way the
-// host delivers them, and the timers and frames the page asks for are fired by hand.
+// The explorer driven with no browser: a `TestDoc` is the page's host, files arrive the way a host hands them
+// over, and the sleeps and frames the page asks for are answered by hand.
 
-import { Vec } from "core";
-import { Dom, Page, TestDoc, fileArrived, timerFired } from "web";
+import { Page, TestDoc } from "web";
 import { main } from "../src/app.wac";
 import { tarGz, zipBasic } from "./fixtures.wac";
 
-struct Harness { TestDoc doc; Page page; Vec<i32> pending; }
+struct Harness { TestDoc doc; Page page; }
 
 Harness started() {
   TestDoc doc = TestDoc.create();
-  Vec<i32> pending = Vec.create();
-  Dom d = doc.dom();
-  d.timer = (i32 id, i32 ms) => { pending.push(id); };
-  d.frame = (i32 id) => { pending.push(id); };
-  Page page = Page.create(d);
-  doc.attach(page);
+  Page page = doc.page();
   schedule page.take;
   main(page);
   page.drain();
   page.turn();
-  return Harness(doc, page, pending);
+  return Harness(doc, page);
 }
 
-/** Fire what the page is waiting on, a few rounds — the watchdog's timer asks again every time. */
+/**
+ * Answer what the page is waiting on, a few rounds — every frame, and the clock moved on until each sleep asked
+ * for so far is over. The watchdog's sleep asks again every time it wakes.
+ */
 void settle(Harness h) {
   for (i32 round = 0; round < 4; round++) {
-    i32[] now = h.pending.toArray();
-    h.pending.clear();
-    for (i32 i = 0; i < now.len(); i++) { timerFired(h.page, now[i]); }
+    f64 last = h.doc.now;
+    for (i32 i = 0; i < h.doc.sleepDue.len(); i++) {
+      if (h.doc.sleepDue.get(i) > last) { last = h.doc.sleepDue.get(i); }
+    }
+    h.doc.paint();
+    h.doc.advance((last - h.doc.now) as~ i32);
   }
 }
 
+/** A file handed over — or, with `ok` false, one that could not be read, saying why — as a host hands it. */
+void hand(Harness h, bool ok, string name, u8[] bytes, string error) { h.doc.hand(ok, name, ok ? bytes : error.toBytes()); }
+
 void drop(Harness h, string name, u8[] bytes) {
-  fileArrived(h.page, true, name, bytes, "");
+  hand(h, true, name, bytes, "");
   settle(h);
 }
 
@@ -82,9 +85,9 @@ export string test_a_filter_that_matches_nothing_says_so() {
 export string test_a_folder_arrives_file_by_file_and_opens_as_one() {
   Harness h = started();
   // As the host delivers a dropped folder: one file at a time, each named by its path.
-  fileArrived(h.page, true, "proj/notes.txt", "folder notes\n".toBytes(), "");
-  fileArrived(h.page, true, "proj/src/basic.zip", zipBasic(), "");
-  fileArrived(h.page, false, "proj/locked.bin", u8[](), "NotReadableError");
+  hand(h, true, "proj/notes.txt", "folder notes\n".toBytes(), "");
+  hand(h, true, "proj/src/basic.zip", zipBasic(), "");
+  hand(h, false, "proj/locked.bin", u8[](), "NotReadableError");
   if (!showing(h, "Reading 3 files")) { return "while gathering: \{page(h).slice(0, 200)}"; }
   settle(h);
   if (!showing(h, "proj") || !showing(h, "notes.txt") || !showing(h, "src")) { return "folder: \{page(h).slice(0, 300)}"; }
@@ -100,7 +103,7 @@ export string test_a_folder_arrives_file_by_file_and_opens_as_one() {
 
 export string test_a_single_file_after_a_folder_still_opens_alone() {
   Harness h = started();
-  fileArrived(h.page, true, "proj/a.txt", "a".toBytes(), "");
+  hand(h, true, "proj/a.txt", "a".toBytes(), "");
   settle(h);
   drop(h, "basic.zip", zipBasic());
   if (!showing(h, "basic.zip") || !showing(h, "readme.txt")) { return "after a folder: \{page(h).slice(0, 300)}"; }
@@ -110,14 +113,14 @@ export string test_a_single_file_after_a_folder_still_opens_alone() {
 export string test_files_dropped_together_open_together() {
   Harness h = started();
   // A folder and a loose file, dropped at once: the loose file tends to arrive first.
-  fileArrived(h.page, true, "notes.txt", "loose\n".toBytes(), "");
-  fileArrived(h.page, true, "proj/a.txt", "a".toBytes(), "");
+  hand(h, true, "notes.txt", "loose\n".toBytes(), "");
+  hand(h, true, "proj/a.txt", "a".toBytes(), "");
   settle(h);
   if (!showing(h, "Dropped items") || !showing(h, "notes.txt") || !showing(h, "proj")) { return "together: \{page(h).slice(0, 300)}"; }
   // Two archives at once are a folder of two archives.
   Harness g = started();
-  fileArrived(g.page, true, "one.zip", zipBasic(), "");
-  fileArrived(g.page, true, "two.tgz", tarGz(), "");
+  hand(g, true, "one.zip", zipBasic(), "");
+  hand(g, true, "two.tgz", tarGz(), "");
   settle(g);
   if (!showing(g, "Dropped items") || !showing(g, "one.zip") || !showing(g, "two.tgz")) { return "two archives: \{page(g).slice(0, 300)}"; }
   return "";

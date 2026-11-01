@@ -1,0 +1,88 @@
+// A program from the disk, in a window: its module started as a process of its own, with the window's body as its
+// page.
+//
+// **The desktop is the program's host** (the handover's design point 1). The module is started with
+// `spawnProviding`, and the one capability it is provided is `wac.page`, answered by a `PageServer` into the window's
+// body — so a page's program draws there and nowhere else, and hears only what happens there. It is handed no files
+// and no other authority yet: what a program may ask for is the grants work still to come (design point 6).
+//
+// **A module that is not a page** — one that never asks for `wac.page` — runs all the same, and the window shows
+// what it wrote, once it is done. Closing the window stops the process.
+
+import { Authority, Child, Launch } from "std";
+import { Element, Node, Page, PageServer, Ref, Ui, html.div, html.pre } from "web";
+import { Got } from "./vfs.wac";
+import { Desk, Win } from "./wm.wac";
+
+/** What a program window keeps between renders: the process, once started, and what it said. */
+struct ProgramState {
+  Child? child;
+  PageServer? server;
+  string status;
+  string said;
+  bool closed;
+}
+
+/** Start the module at `w.arg` drawing into `body`; `bump` renders the window again, `retitle` names it. */
+async void start(Desk d, Win w, Page page, Element body, ProgramState s, fn<void()> bump, fn<void(string)> retitle) {
+  Got<u8[]> read = await d.fs.read(w.arg);
+  if (!read.ok) {
+    s.status = "could not read " + w.arg + ": " + read.error;
+    bump();
+    return;
+  }
+  PageServer server = PageServer.into(page, body, retitle, (string line) => { page.log(w.title + ": " + line); });
+  s.server = server;
+  auto started = await page.sys.procs().spawnProviding(read.value, string[](), Authority.none(), [server.provider()],
+                                                       Launch.plain());
+  if (started.isErr()) {
+    s.status = "could not start " + w.arg + ": \{started.err()!}";
+    bump();
+    return;
+  }
+  Child child = started.ok()!;
+  s.child = child;
+  if (s.closed) {
+    child.stop();
+    return;
+  }
+  s.status = "";
+  bump();
+  // What it writes is shown once it is done: a page's program never is, and writes nothing a window would show.
+  string out = string.fromBytes((await child.output().readAll()).orElse(u8[]()));
+  string errs = string.fromBytes((await child.errors().readAll()).orElse(u8[]()));
+  i32 code = (await child.exit()).orElse(0 - 1);
+  if (s.closed) { return; }
+  s.said = out + errs;
+  s.status = code == 0 ? "finished" : "exited with \{code}";
+  s.child = null;
+  bump();
+}
+
+export Node ProgramApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  ProgramState s = ui.memo<ProgramState>("", () => ProgramState(null, null, "starting " + w.arg, "", false));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  Ref body = ui.ref();
+  // Started once, when the window first draws, and stopped when it closes: the effect's cleanup is the window going.
+  ui.effect("", () => {
+    Element? e = body.element();
+    if (e is not null) {
+      start(d, w, page, e!, s, bump, (string t) => {
+        w.title = t;
+        bumpDesk();
+      });
+    }
+    return () => {
+      s.closed = true;
+      if (s.child is not null) { s.child!.stop(); }
+    };
+  });
+  // **The body is drawn once and never again with children of its own**: what is in it is the program's, made
+  // through the server's handles, and this view must not render over it.
+  return <div class="program">
+    <div class="program-body" ref={body}></div>
+    {s.status != "" ? <div class="program-status">{s.status}</div> : Node.Text("")}
+    {s.said != "" ? <pre class="program-said mono">{s.said}</pre> : Node.Text("")}
+  </div>;
+}

@@ -1,3 +1,4 @@
 dist/
 .wac-src/
 src/desk/wacbin.wac
+.cache/

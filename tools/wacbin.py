@@ -2,7 +2,7 @@
 """Writes src/desk/wacbin.wac: the `wac` command, as a module, for the desktop's /usr/bin.
 
 Built from the commit wac.lock pins — the same one as everything else here — by the `wac` on PATH, out of the
-package cache `wac update` (or tools/use-local-wac.sh) filled. The module is about 3.6 MB; gzipped and in base64 it
+package cache tools/fill-cache.sh (or `wac update`, where it can reach the host) filled. The module is about 3.6 MB; gzipped and in base64 it
 is a string of about 1.3 MB, which is how it rides in the page: a page fetches nothing, and a string literal is one
 token to the compiler where an array of bytes would be a million.
 
@@ -18,7 +18,7 @@ entry = lock["imports"]["wac"]
 home = os.environ.get("WAC_HOME") or os.path.join(os.environ["HOME"], ".wac")
 src = os.path.join(home, "cache", "git", urllib.parse.quote(entry["git"], safe=""), entry["commit"])
 if not os.path.isfile(os.path.join(src, "packages", "wac", "src", "wac.wac")):
-    sys.exit("wacbin.py: wac %s is not in the package cache at %s — run `wac update`" % (entry["commit"][:9], src))
+    sys.exit("wacbin.py: wac %s is not in the package cache at %s — run `sh tools/fill-cache.sh`" % (entry["commit"][:9], src))
 
 with tempfile.TemporaryDirectory() as tmp:
     stem = os.path.join(tmp, "wac")

@@ -23,25 +23,27 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `b0d60f33`, everywhere: the three refs in `wac.json5`, `wac.lock`, and the
-`wac` command itself (bootstrapped from that commit — see README). Change them together.
+wac is pinned to one commit, `25d20719e`, and `web` to `c32d1a8`, in `wac.json5` and `wac.lock`; the `wac` command
+should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
-    wac task build && wac task test && wac task test:desk && wac task test:drops
+    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
 
+- **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
+  own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (36 unit tests, 69 desktop checks, 18 drop cases). The build also
-  compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time.
-- `wac update` could not reach GitHub from the container this was made in ("network access not
-  granted"). `sh tools/use-local-wac.sh <wac clone>` fills the package cache from a clone instead.
-- `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs (about 2.5 minutes, mostly
-  bootstrapping `wac`); run it on a copy of the tree with a fresh `HOME`/`WAC_HOME` to check CI.
+  All of them pass at the latest commit (36 unit tests, 73 desktop checks, 18 drop cases). The build also
+  compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time; `test:desk` builds
+  `samples/counter.wac` and runs it in a window, so it needs `wac` on `PATH`.
+- `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs; it needs git access to git.voltrevo.com.
 - Run unit tests with `wac task test`, which grants what they need; `wac test --allow-read test/one_test.wac`
-  runs one file. (It used to fail to parse the `html.*` imports; it does not at the pinned wac.)
+  runs one file. A test file importing a namespace member from `"wac"` (`fs.ProcTable`) needs a wac from
+  `3792c730d` on: before it, its tests taking a `Sys` were silently skipped.
 
 ## wac things that have bitten
 
 - **The terminal's `wac` is the page's own work, not a special case.** A program the shell finds on
-  `$WACPATH` is spawned as a module in a worker (wac's `packages/web`, `moduleSide`), so a bug in how
+  `$WACPATH` is spawned as a module in a worker (`web`'s `tools/build.wac`, `moduleSide` — the desktop's own page
+  is run that way too, since `web` d0ad98a), so a bug in how
   `wac` runs there is usually in that driver or in a `.wait()` the command makes — a page cannot wait, and
   aborts a program that asks it to. `wac run` was one such; `packages/wac` awaits it now.
 - **The page's program runs in a worker**, so the DOM updates a moment after an event. A browser test
@@ -63,10 +65,11 @@ wac is pinned to one commit, `b0d60f33`, everywhere: the three refs in `wac.json
   the box gaps. Everything the desktop asked of design/system/0015 is built, `file://` included.
 - **`wac` in the terminal** runs programs that import `std` and `core`. One importing a git dependency
   needs that dependency in a package cache on the page's disk, which nothing provides yet.
-- **Shelved by the owner:** building apps as separate modules. The direction discussed was a process
-  per app holding a connection to the desktop, asking it for *surfaces* with roles (window, dialog,
-  popup, notification, status item, drag image), each surface an `Element` grant, passable between
-  processes. It needs wac to run a given module and to hand an `Element` to another worker.
+- **Apps as separate modules: started.** The handover in `https://git.voltrevo.com/notes.git` (2026-10-29) is the
+  agreed direction: the desktop is a program's host, a program asks for capabilities by name, and a window is a
+  page's program answered by `PageServer` (`src/desk/program.wac`). Next there: `wac.desktop` (opening windows,
+  dialogs, the clipboard, a file picker whose answer is the grant), files handed to a program, grants agreed once
+  and remembered (the owner's answer), and the built-in apps moving out as modules on a read-only HTTP mount.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up
   and restore the whole disk), search across the disk, Editor find/replace and Markdown preview, terminal
   scrollback that survives a reload, settings (wallpaper, theme), quarter snapping.
