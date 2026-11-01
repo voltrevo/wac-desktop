@@ -1,0 +1,43 @@
+// The last step of the build: the site's programs where the desktop starts them, and the site's `index.json`.
+//
+//     wac run --allow-read --allow-write site.wac dist
+//
+// **A built-in app is a program on the site.** The Archive Explorer's build leaves its module as
+// `dist/explorer/page.wasm`; it is copied to `dist/apps/explorer.wasm`, which the desktop, served over http, reads
+// as `/site/apps/explorer.wasm` and starts as it starts any program — its folder `.apps/explorer` named after it.
+// Then `index.json` (web's `indexSite`), which is how the desktop lists the site and knows its sizes, since a site
+// can only be asked for a file.
+
+import { Sys } from "std";
+import { flatten } from "core";
+import { indexSite } from "webbuild";
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() != 1) {
+    sys.stderr().line("usage: site.wac <site-dir>");
+    return 2;
+  }
+  string root = args[0];
+  auto module = flatten(sys.files().readFile(root + "/explorer/page.wasm").wait());
+  if (module.isErr()) {
+    sys.stderr().line("site.wac: \{root}/explorer/page.wasm: \{module.err()!} — build the Archive Explorer first");
+    return 1;
+  }
+  auto made = flatten(sys.files().mkdir(root + "/apps", true).wait());
+  if (made.isErr()) {
+    sys.stderr().line("site.wac: \{root}/apps: \{made.err()!}");
+    return 1;
+  }
+  auto wrote = flatten(sys.files().writeFile(root + "/apps/explorer.wasm", module.ok()!).wait());
+  if (wrote.isErr()) {
+    sys.stderr().line("site.wac: \{root}/apps/explorer.wasm: \{wrote.err()!}");
+    return 1;
+  }
+  string why = indexSite(sys.files(), sys.stdout(), root);
+  if (why != "") {
+    sys.stderr().line("site.wac: " + why);
+    return 1;
+  }
+  return 0;
+}

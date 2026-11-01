@@ -1,8 +1,9 @@
 {
   // The desktop as dist/index.html, with a disk (the browser's storage, when it is offered) and the `wac` command
   // in /usr/bin (tools/wacbin.py writes it into src/desk/wacbin.wac first); and the Archive Explorer on its own as
-  // dist/explorer/index.html.
-  build: "python3 tools/wacbin.py && wac run --allow-read --allow-write --allow-run build.wac src/desktop.wac dist --title 'Desktop' --grant read,write --spawn applet && wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist/explorer --title 'Archive Explorer'",
+  // dist/explorer/index.html — whose module site.wac copies to dist/apps/explorer.wasm, for the desktop to start from
+  // its site, before writing the site's index.json.
+  build: "python3 tools/wacbin.py && wac run --allow-read --allow-write --allow-run build.wac src/desktop.wac dist --title 'Desktop' --grant read,write --spawn applet && wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist/explorer --title 'Archive Explorer' && wac run --allow-read --allow-write site.wac dist",
   serve: "wac sh --allow-read --allow-net -c 'httpd -8080 dist'",
   // The disk tests stand on a `MemoryStore`, whose clock is the host's, so they take `Sys`; and a test that takes
   // `Sys` runs only under some grant. Reading is the least of them, and nothing here reads a file.

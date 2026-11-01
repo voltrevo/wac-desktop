@@ -19,7 +19,15 @@ let failed = 0;
 const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${ok ? '' : ' — saw ' + JSON.stringify(seen)}`); };
 
 (async () => {
-  const server = http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end(fs.readFileSync(html)); }).listen(0);
+  // dist/ as a static server serves it: the desktop's own site, `/site` on its disk, is what is really there.
+  const types = { '.html': 'text/html', '.json': 'application/json', '.wasm': 'application/wasm' };
+  const server = http.createServer((q, r) => {
+    const rel = decodeURIComponent(new URL(q.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
+    const file = path.join(root, 'dist', rel);
+    if (rel.split('/').includes('..') || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { r.statusCode = 404; r.end(); return; }
+    r.setHeader('content-type', types[path.extname(file)] || 'application/octet-stream');
+    r.end(fs.readFileSync(file));
+  }).listen(0);
   const url = `http://localhost:${server.address().port}/`;
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -371,6 +379,23 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await texts('.win.focus .chrow .cha')).join() === '42,9,0.3', 'the sums worked out are kept above', await texts('.win.focus .chrow .cha'));
   await shot('6-calculator');
 
+  // **The desktop's own site**, over http: read-only at /site, and the Archive Explorer started from it, a
+  // program like any other.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click(); await settle(800);
+  await p.locator('.win.focus .tcmd').fill('ls /site/apps; wc -c /site/apps/explorer.wasm; echo x > /site/x'); await p.locator('.win.focus .tcmd').press('Enter');
+  await settle(2500);
+  const siteOut = await p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
+  const wasmSize = fs.statSync(path.join(root, 'dist', 'apps', 'explorer.wasm')).size;
+  check(siteOut.includes('explorer.wasm') && siteOut.includes(String(wasmSize)), 'over http, the site is at /site', siteOut.slice(-200));
+  check(/read-only/i.test(siteOut), 'and cannot be written', siteOut.slice(-200));
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Archive Explorer' }).click();
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body'); return e !== null && e.textContent.includes('Drop a file or folder'); }, null, { timeout: 15000 }).catch(() => {});
+  check((await p.textContent('.win.focus .program-body').catch(() => '')).includes('Drop a file or folder'), 'the Archive Explorer starts from the site, in a window', await p.textContent('.win.focus').catch(() => ''));
+  check((await p.textContent('.win.focus .tt').catch(() => '')) === 'Archive Explorer', 'titled as it titles itself', await p.textContent('.win.focus .tt').catch(() => ''));
+  await shot('7-explorer');
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+
   // From a file: no storage. It must say so, and still work.
   const q = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
   q.on('pageerror', (e) => errors.push('file:// ' + e.message));
@@ -382,6 +407,9 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
   await q.waitForTimeout(1200);
   check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);
+  await q.locator('.tblaunch').click();
+  check(!(await q.$$eval('.litem .lt', (l) => l.map((x) => x.textContent))).includes('Archive Explorer'), 'from file:// there is no site, so no program from it', null);
+  await q.locator('.tblaunch').click();
 
   // The shell on the in-memory disk: the same files Files shows, and its programs still run.
   await q.locator('.tblaunch').click(); await q.locator('.litem', { hasText: 'Terminal' }).click(); await q.waitForTimeout(800);

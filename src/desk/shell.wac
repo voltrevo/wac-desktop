@@ -5,10 +5,10 @@
 // window's revision and the disk's. A drag changes neither, so a drag redraws frames and nothing inside
 // them; a save bumps the disk's, so every window showing the disk looks again.
 
-import { Ticket, Vec } from "core";
-import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.b, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
+import { Result, Ticket, Vec } from "core";
+import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.b, html.button, html.div, html.input, html.label, html.span, html.style, Site, siteFiles } from "web";
 import { Vfs, Got, Info, nowMillis, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
-import { Files, MemoryStore } from "std";
+import { Files, MemoryStore, Mount } from "std";
 import { fs.ProcTable, fs.systemFiles } from "wac";
 import { box.boxNames } from "wac";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
@@ -29,6 +29,9 @@ import { icon } from "../preview.wac";
 import { iconFor } from "../model.wac";
 import { plural } from "../browse.wac";
 
+/** The Archive Explorer, as the site's build leaves it: a program like any other, started from the site. */
+static string EXPLORER = "site/apps/explorer.wasm";
+
 static i32 QUIET = 600;
 static i32 GRACE = 200;
 
@@ -38,7 +41,8 @@ static i32 GRACE = 200;
 async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   // One filesystem for every window: the browser's storage if it is offered, memory if not, with the
   // system a shell expects mounted on it — `/bin` with box's programs, `/dev`, `/proc`, and `/usr/bin` with the
-  // `wac` command (`usrbin.wac`).
+  // `wac` command (`usrbin.wac`) — and, served over http, `/site`: the site the desktop came from, read-only, which
+  // is where the programs it was built with are (`site/apps/`).
   bool persistent = await usable(page.sys.files());
   Vec<string> argv = Vec.create();
   argv.push("desktop");
@@ -46,6 +50,11 @@ async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   table.current = table.start(0, argv, nowMillis(page));
   MemoryStore usr = MemoryStore.create(page.sys.clock());
   Files system = withUsr(systemFiles(filesystem(page.sys, persistent), page.sys.random(), table, boxNames()), usr);
+  Result<Site, string> site = await Site.of(page.sys);
+  if (site.isOk()) {
+    system = Files.mounted([Mount("/site", siteFiles(site.ok()!)), Mount("/", system)]);
+    d.site = true;
+  }
   d.fs = vfsOf(system, table, persistent);
   Vfs fs = d.fs;
   await fs.mkdir("Desktop");
@@ -433,6 +442,9 @@ Node launcher(Desk d, fn<void()> bump) {
     <div class="lhead">Apps</div>
     {launcherItem("home", "Files", "Your home folder", () => { open(d, "files", "", "Home", "home"); bump(); })}
     {launcherItem("folder", "Desktop", "The files on your desktop", () => { open(d, "files", "Desktop", "Desktop", "folder"); bump(); })}
+    {d.site ? launcherItem("layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser",
+                           () => { d.launcher = false; if (d.launch is not null) { d.launch!(EXPLORER); } bump(); })
+            : Node.Text("")}
     {launcherItem("terminal", "Terminal", "A shell on this desktop's disk", () => { open(d, "terminal", "Desktop", "Terminal", "terminal"); bump(); })}
     {launcherItem("edit", "Text editor", "A new text file", () => { open(d, "editor", "", "Untitled", "edit"); bump(); })}
     {launcherItem("calc", "Calculator", "Sums, typed or clicked", () => { open(d, "calc", "", "Calculator", "calc"); bump(); })}

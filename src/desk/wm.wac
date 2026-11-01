@@ -127,6 +127,8 @@ export struct Desk {
   i32 nextRun;
   /** Start the program at a path — set once the desktop has a page to start programs from. */
   fn<void(string)>? launch;
+  /** Whether the desktop was served from a site, which is mounted at `/site` with the programs built with it. */
+  bool site;
 }
 
 /** How many windows a program may have open at once: its share of `wac.page`'s numbers is this many slices. */
@@ -222,7 +224,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null, null, Vec.create(), 1, null);
+              Vec.create(), null, null, Vec.create(), 1, null, false);
 }
 
 export Win? find(Desk d, i32 id) {
