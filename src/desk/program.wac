@@ -169,9 +169,16 @@ void ended(Desk d, Running r) {
   }
 }
 
-/** Window `slice` of program `r` has drawn into `body`: its server, and everything that waited for it. */
+/**
+ * Window `slice` of program `r` has drawn into `body`: its server, and everything that waited for it.
+ *
+ * **The program's page is a shadow root of the window's body** (`Element.shadow`): its stylesheets apply inside its
+ * window and nowhere else, and the desktop's — or another program's — do not reach in. Without it, any program's
+ * `<style>` could restyle the desktop, the consent dialog included, and two programs' rules for one class name
+ * fought. The body contains its layout and paint too (`style.wac`), so even `position: fixed` stays in the window.
+ */
 void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void()> bumpDesk) {
-  PageServer server = PageServer.into(page, body, (string t) => {
+  PageServer server = PageServer.into(page, body.shadow(), (string t) => {
     w.title = t;
     if (slice == 0 || r.title == "") { r.title = t; }
     bumpDesk();

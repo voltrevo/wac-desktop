@@ -432,6 +432,7 @@ Node launcher(Desk d, fn<void()> bump) {
     {launcherItem("folder", "Desktop", "The files on your desktop", () => { open(d, "files", "Desktop", "Desktop", "folder"); bump(); })}
     {siteItem(d, bump, "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", "explorer", "")}
     {siteItem(d, bump, "terminal", "Terminal", "A shell on this desktop's disk", "terminal", "Desktop")}
+    {siteItem(d, bump, "code", "wac IDE", "Write wac, checked as you type, in Projects", "ide", "Projects")}
     {siteItem(d, bump, "edit", "Text editor", "A new text file", "editor", "")}
     {siteItem(d, bump, "calc", "Calculator", "Sums, typed or clicked", "calc", "")}
     {launcherItem("trash", "Trash", "What was deleted, to restore or let go", () => { open(d, "files", TRASH, "Trash", "trash"); bump(); })}

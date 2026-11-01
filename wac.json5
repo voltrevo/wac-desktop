@@ -2,10 +2,12 @@
   imports: {
     // The rest of wac, as one dependency — `import { json.parse, fs.Fs } from "wac"` — read only as far
     // as a program reaches into it.
-    wac: { git: 'https://git.voltrevo.com/wac.git', ref: '955dbf6986bfaf084db65b742b2e07a23351bd82' },
+    wac: { git: 'https://git.voltrevo.com/wac.git', ref: 'c405f554da08b10461211e3cb9a934d746cc1e10' },
     // The page a program is handed — `import { Page, Event } from "web"` — a repository of its own since 2026-10-29.
-    web: { git: 'https://git.voltrevo.com/web.git', ref: '8b45bf5728db9994e0aab18e5d24bf6a5854df3d' },
+    web: { git: 'https://git.voltrevo.com/web.git', ref: '0abc650422e5de12416d51f4dcfbeb4bb7223ac6' },
+    // The wac IDE, which the build makes one of the desktop's programs (`src/apps/ide.wac`).
+    ide: { git: 'https://git.voltrevo.com/wac-ide.git', ref: 'eea26f1b2000efde60753999402554fd3d8177a1' },
     // The page builder `build.wac` calls — a program, so building needs nothing but `wac`.
-    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: '8b45bf5728db9994e0aab18e5d24bf6a5854df3d', subdir: './tools' },
+    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: '0abc650422e5de12416d51f4dcfbeb4bb7223ac6', subdir: './tools' },
   },
 }

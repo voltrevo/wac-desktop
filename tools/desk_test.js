@@ -31,6 +31,16 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   const url = `http://localhost:${server.address().port}/`;
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // **A program's window draws in a shadow root of its body** (web's `Element.shadow`), which a page's own
+  // `querySelector` does not look into: `__deep('A >>> B')` is B inside the shadow root of the first A. Playwright's
+  // selectors look into it already; this is for what a test reads in the page itself.
+  await ctx.addInitScript(() => {
+    window.__deep = (sel) => {
+      const [outer, inner] = sel.split(' >>> ');
+      const host = document.querySelector(outer);
+      return inner === undefined ? host : (host?.shadowRoot?.querySelector(inner) ?? null);
+    };
+  });
   const p = await ctx.newPage();
   const errors = [];
   p.on('pageerror', (e) => errors.push(e.message));
@@ -175,8 +185,8 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await drop(path.join(tmp, 'counter.wasm'), 1300, 700);
   // Behind the snapped Editor, so double-clicked where it is rather than moved to: the layout is what the later checks read.
   await p.$eval('.dicon[title="counter.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
-  await p.waitForFunction(() => document.querySelector('.win.focus .program-body .count') !== null, null, { timeout: 15000 }).catch(() => {});
-  const counted = () => p.$eval('.win.focus .program-body', (e) => e.textContent).catch(() => '');
+  await p.waitForFunction(() => __deep('.win.focus .program-body >>> .count') !== null, null, { timeout: 15000 }).catch(() => {});
+  const counted = () => p.$eval('.win.focus .program-body', (e) => (e.shadowRoot ?? e).textContent).catch(() => '');
   check((await counted()) === 'Clicks: 0 +1', 'a page module from the disk draws in its window', await counted());
   check((await texts('.win.focus .tt')).join() === 'Counter', 'and names it', await texts('.win.focus .tt'));
   await p.locator('.win.focus .program-body .up').click(); await settle(400);
@@ -198,7 +208,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
     await row('notes.wasm').dblclick();
   }
   const inNotes = (sel) => p.$eval(`.win.focus .program-body ${sel}`, (e) => e.textContent).catch(() => '');
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .welcome'); return e !== null && e.textContent !== '…'; }, null, { timeout: 15000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .welcome'); return e !== null && e.textContent !== '…'; }, null, { timeout: 15000 }).catch(() => {});
   check((await inNotes('.launches')) === '1', 'a program keeps what it keeps in its own folder', await inNotes('.launches'));
   check((await inNotes('.welcome')) === 'refused', 'and may not read what it was not handed', await inNotes('.welcome'));
   await p.locator('.win.focus .program-body .pick').click();
@@ -207,7 +217,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(asked === 'Notes asks for a note to read', 'the picker says who asks, and for what', asked);
   await p.locator('.pick .prow[title="Welcome.md"]').click(); await settle(200);
   await p.locator('.pick .btn.primary').click();
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .text'); return e !== null && e.textContent !== ''; }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .text'); return e !== null && e.textContent !== ''; }, null, { timeout: 10000 }).catch(() => {});
   const picked = await inNotes('.text');
   check(picked.startsWith('/Desktop/Welcome.md\n') && picked.length > 40, 'what the person chose is the program\'s to read', picked.slice(0, 80));
   check((await p.$$('.pick-shade')).length === 0, 'and the picker is gone', null);
@@ -232,10 +242,10 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   };
   build('two.wac', 'two');
   await openDropped('two.wasm');
-  await p.waitForFunction(() => document.querySelector('.program-body .second') !== null, null, { timeout: 15000 }).catch(() => {});
+  await p.waitForFunction(() => [...document.querySelectorAll('.program-body')].some((b) => b.shadowRoot?.querySelector('.second')), null, { timeout: 15000 }).catch(() => {});
   const titles = async () => (await texts('.win .tt')).filter((t) => t === 'Two' || t === 'Second').sort().join();
   check((await titles()) === 'Second,Two', 'a program opens a second window of its own', await texts('.win .tt'));
-  const firstHas = await p.$$eval('.win', (ws) => ws.filter((w) => w.querySelector('.tt')?.textContent === 'Two').map((w) => w.querySelector('.program-body')?.textContent).join());
+  const firstHas = await p.$$eval('.win', (ws) => ws.filter((w) => w.querySelector('.tt')?.textContent === 'Two').map((w) => w.querySelector('.program-body')?.shadowRoot?.textContent).join());
   check(firstHas === 'the first window', 'and each window shows only what was drawn in it', firstHas);
   const closeTitled = (t) => p.$$eval('.win', (ws, t) => { const w = ws.find((w) => w.querySelector('.tt')?.textContent === t); w?.querySelector('.wbtn[title=Close]')?.click(); }, t);
   await closeTitled('Second'); await settle(400);
@@ -261,7 +271,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(question === 'Reader asks to read Desktop', 'a program asking for more is asked about, naming what', question);
   await p.locator('.consent .btn.primary').click();
   const listedIn = () => p.$eval('.win.focus .program-body .listed', (e) => e.textContent).catch(() => '');
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
   check((await listedIn()).split(',').includes('Welcome.md'), 'and once allowed, it reads what it asked for', await listedIn());
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
   if ((await texts('.dicon .dname')).includes('reader.wasm')) {
@@ -269,7 +279,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   } else {
     await row('reader.wasm').dblclick();
   }
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
   check((await p.$$('.consent')).length === 0 && (await listedIn()).split(',').includes('Welcome.md'),
         'started again, it is not asked again', { asked: (await p.$$('.consent')).length, listed: await listedIn() });
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
@@ -290,7 +300,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.waitForSelector('.consent', { timeout: 15000 }).catch(() => {});
   check((await p.$$('.consent')).length === 1, 'started again, it is asked again', null);
   await p.locator('.consent .btn', { hasText: "Don't allow" }).click();
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
   check((await listedIn()).startsWith('refused'), 'and refused, it cannot read', await listedIn());
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
 
@@ -392,7 +402,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.keyboard.press('Escape'); await p.keyboard.type('5+5'); await settle(400);
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Calculator' }).click();
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .csub'); return e !== null && e.textContent === '= 10'; }, null, { timeout: 15000 }).catch(() => {});
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .csub'); return e !== null && e.textContent === '= 10'; }, null, { timeout: 15000 }).catch(() => {});
   check((await p.textContent('.win.focus .csub').catch(() => '')) === '= 10', 'started again, the Calculator has the sum it had', await p.textContent('.win.focus .csub').catch(() => ''));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
 
@@ -414,6 +424,30 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.locator('.win.focus .tcmd').fill('exit'); await p.locator('.win.focus .tcmd').press('Enter'); await settle(1200);
   check((await texts('.win .tt')).filter((t) => t === 'Terminal').length === terms - 1, '`exit` ends the Terminal and closes its window', await texts('.win .tt'));
 
+  // **The wac IDE is a program on the site**, its projects a folder of the desktop's disk: a new project checks in
+  // the IDE's own checker process, and Build writes the module beside its source, where Files shows it.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'wac IDE' }).click();
+  await p.waitForSelector('.win.focus .home .btn.primary', { timeout: 30000 }).catch(() => {});
+  await p.locator('.win.focus .home .btn.primary').click();
+  const ideChecked = async () => {
+    await settle(600);
+    await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .status'); return e !== null && !e.textContent.includes('Checking') && !e.textContent.includes('Not checked'); }, null, { timeout: 90000 }).catch(() => {});
+    return p.textContent('.win.focus .status').catch(() => '');
+  };
+  check((await ideChecked()) === 'No problems', 'the wac IDE makes a project and checks it', await p.textContent('.win.focus .status').catch(() => ''));
+  await p.locator('.win.focus .btn', { hasText: 'Build' }).click();
+  await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .toast'); return e !== null && /Built|could not|did not/.test(e.textContent); }, null, { timeout: 90000 }).catch(() => {});
+  check((await p.textContent('.win.focus .toast').catch(() => '')).includes('Built main.wasm —'), 'and Build writes the module beside its source', await p.textContent('.win.focus .toast').catch(() => ''));
+  await shot('8-ide');
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Files' }).first().click(); await settle(800);
+  await row('Projects').dblclick(); await settle(600);
+  await row('hello').dblclick(); await settle(600);
+  const projectRows = await texts('.win.focus .row .t');
+  check(projectRows.includes('main.wac') && projectRows.includes('main.wasm'),
+        'the project is a folder Files shows, the module beside its source', projectRows);
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+
   // **The desktop's own site**, over http: read-only at /site, and the Archive Explorer started from it, a
   // program like any other.
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click(); await settle(800);
@@ -425,8 +459,8 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(/read-only/i.test(siteOut), 'and cannot be written', siteOut.slice(-200));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Archive Explorer' }).click();
-  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body'); return e !== null && e.textContent.includes('Drop a file or folder'); }, null, { timeout: 15000 }).catch(() => {});
-  check((await p.textContent('.win.focus .program-body').catch(() => '')).includes('Drop a file or folder'), 'the Archive Explorer starts from the site, in a window', await p.textContent('.win.focus').catch(() => ''));
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body'); return e !== null && (e.shadowRoot ?? e).textContent.includes('Drop a file or folder'); }, null, { timeout: 15000 }).catch(() => {});
+  check((await p.$eval('.win.focus .program-body', (e) => (e.shadowRoot ?? e).textContent).catch(() => '')).includes('Drop a file or folder'), 'the Archive Explorer starts from the site, in a window', await p.textContent('.win.focus').catch(() => ''));
   check((await p.textContent('.win.focus .tt').catch(() => '')) === 'Archive Explorer', 'titled as it titles itself', await p.textContent('.win.focus .tt').catch(() => ''));
   await shot('7-explorer');
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);

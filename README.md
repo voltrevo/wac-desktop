@@ -3,8 +3,8 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, and a **Calculator** — each a program of
-its own on the site the desktop is served from, started in windows it opens itself. Deleting moves things to a
+**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, and the **wac IDE** —
+each a program of its own on the site the desktop is served from, started in windows it opens itself. Deleting moves things to a
 **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
 It is written in [wac](https://github.com/voltrevo/wac), uses the DOM for everything it draws, and builds
@@ -12,8 +12,8 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 
 ## Building it
 
-**Everything is pinned in `wac.lock`**: wac at `955dbf698` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `6ff6b30`. Both are
+**Everything is pinned in `wac.lock`**: wac at `c405f554d` — the `wac` command should be built from that commit, and
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `0abc650` — and the wac IDE at `eea26f1`. All are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -26,7 +26,7 @@ git clone https://git.voltrevo.com/wac.git ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout 955dbf6986bfaf084db65b742b2e07a23351bd82
+git -C ~/src/wac checkout c405f554da08b10461211e3cb9a934d746cc1e10
 ```
 
 ```bash
@@ -133,6 +133,14 @@ shares, so their pages can see each other's files.
   the size their windows suit. A session keeps their windows as the app and what it showed, and a reload starts
   them again. Each is also a page on its own, in `dist/apps/<name>/`. Files and Permissions stay the desktop's own:
   one is how it shows its disk, and the other governs what programs may reach.
+- **The wac IDE** (https://git.voltrevo.com/wac-ide.git, pinned as `ide` and built by `src/apps/ide.wac`) is one of
+  them: wac's compiler checking as you type, in a process of its own, and the name at the caret explained. Its
+  projects are the folders in `Projects` on the desktop's disk, which it is handed — so Files and the Terminal see
+  them, a dropped folder or archive becomes one, and Build writes the module beside its source, where a
+  double-click runs it.
+- **A program's page is a shadow root of its window**, so its stylesheet applies in its window and nowhere else:
+  no program can restyle the desktop — its consent dialog included — or another program, and the desktop's rules do
+  not reach in. The window's body contains its layout and paint, so `position: fixed` stays in the window too.
 - **The Editor** saves with Ctrl+S or its Save button. A new file is saved on the Desktop, under the name typed or
   the first free one like it (`Desktop.newFile`); the Viewer's Edit opens its file in the Editor (`Desktop.edit`).
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
@@ -148,6 +156,7 @@ shares, so their pages can see each other's files.
 | `src/desk/files.wac` | Files |
 | `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
 | `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
+| `src/apps/ide.wac` | the wac IDE, from the pinned `ide` package, with its checker as `--spawn checker` |
 | `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |
 | `src/desk/grants.wac`, `src/desk/services.wac`, `src/desk/remember.wac`, `src/desk/allowed.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, asking, windows, open, note, the clipboard; what each program was allowed, remembered, and the Permissions window to take it back |
 | `src/desk/trash.wac` | the Trash and its note of where things came from |
@@ -188,9 +197,9 @@ shares, so their pages can see each other's files.
 - **`wac` on the site.** `tools/wacbin.py`, run by `wac task build`, compiles the pinned commit's `wac` command
   (2.5 MB) into `dist/bin/wac`. Every terminal has `WACPATH=/site/bin`, so the shell finds `wac` and spawns it as it
   would any program, handed the shell's files, which is why it works on the desktop's disk.
-- **Size.** The desktop is about 0.9 MB of module at wac `955dbf698` — 2.6 MB while it carried the Terminal and
+- **Size.** The desktop is about 0.9 MB of module at wac `c405f554d` — 2.6 MB while it carried the Terminal and
   `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
-  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, and `wac` 2.5 MB, each fetched
+  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
   when it is first started. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.

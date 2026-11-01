@@ -1,5 +1,5 @@
-// The desktop's own apps — the Calculator, the Viewer and the Editor, the Terminal and the Archive Explorer — as
-// programs on the site it was served from.
+// The desktop's own apps — the Calculator, the Viewer and the Editor, the Terminal, the Archive Explorer and the wac
+// IDE — as programs on the site it was served from.
 //
 // **Each is a program like any other**, built beside the desktop into `dist/apps/<name>.wasm` and started from
 // `/site/apps/` by `launch`, in windows it opens itself. What makes one the desktop's own is only how it is started:
@@ -42,8 +42,16 @@ export Start builtin(string app, string arg) {
     w = 980;
     h = 600;
     ic = "layers";
+  } else if (app == "ide") {
+    // **The IDE's projects are a folder of the disk** — `Projects`, from the launcher — each project a folder in
+    // it, which Files and the Terminal see too. It is handed that folder to change, and what is dropped on it,
+    // which it imports as a project.
+    g.grant(arg, true);
+    w = 1180;
+    h = 720;
+    ic = "code";
   }
-  return Start(appPath(app), args, g, w, h, ic, app == "explorer", app, arg, null);
+  return Start(appPath(app), args, g, w, h, ic, app == "explorer" || app == "ide", app, arg, null);
 }
 
 /** Running app `app`, if one is, with a window. */

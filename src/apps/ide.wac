@@ -1,0 +1,15 @@
+// The wac IDE (https://git.voltrevo.com/wac-ide.git), as one of the desktop's programs: its page, and the copy of it
+// that checks code in a process of its own, which the build names with `--spawn checker`.
+//
+// **Nothing of it is here**: the IDE is a package the desktop pins (`wac.json5`), built into the site as
+// `dist/apps/ide.wasm` like the desktop's own apps, and started with `Projects` — a folder of the desktop's disk —
+// as its folder of projects (`src/desk/builtin.wac`). It runs on its own just the same.
+
+import { Sys } from "std";
+import { Page } from "web";
+import { checker as checks, main as ide } from "ide";
+
+export async i32 main(Page page) { return await ide(page); }
+
+/** What a copy of this module started by the IDE runs: its checker. */
+export async i32 checker(Sys sys) { return await checks(sys); }

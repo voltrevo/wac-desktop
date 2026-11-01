@@ -52,7 +52,8 @@ string icons() {
 /** The whole stylesheet. Tokens first, so the dark theme is a second set of the same names. */
 export string css() {
   return """
-    :root {
+    /* `:host` too: in a window of wac's desktop a page is a shadow root, where `:root` matches nothing. */
+    :root, :host {
       --bg: #f5f6f8; --bg-grad: #eceefe;
       --surface: #ffffff; --surface-2: #f9fafb; --sunken: #f1f3f6;
       --line: #e6e8ee; --line-strong: #d6d9e1;
@@ -68,7 +69,7 @@ export string css() {
       color-scheme: light;
     }
     @media (prefers-color-scheme: dark) {
-      :root {
+      :root, :host {
         --bg: #0c0e13; --bg-grad: #17163a;
         --surface: #13161d; --surface-2: #171a22; --sunken: #0f1117;
         --line: #232733; --line-strong: #2f3443;

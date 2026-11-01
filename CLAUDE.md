@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `955dbf698`, and `web` to `8b45bf5`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `c405f554d`, `web` to `0abc650` and the wac IDE (`ide`) to `eea26f1`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
@@ -31,7 +31,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
   own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (42 unit tests, 98 desktop checks, 18 drop cases). The build makes the
+  All of them pass at the latest commit (42 unit tests, 101 desktop checks, 18 drop cases). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
   runs them, so it needs `wac` on `PATH`.
@@ -75,7 +75,10 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   is asked once and an "Allow" is remembered (`remember.wac`), as are picks. Permissions (`allowed.wac`) lists what
   was allowed and takes it back. The Viewer, Editor, Terminal, Calculator and Archive Explorer are programs on the
   desktop's site (`builtin.wac`, `src/apps/`), served over http only — the owner's choice: from a file there are
-  none. Next there: a program describing itself — name, icon, file types, what it will ask for — so the question
+  none. The wac IDE is one of them too, pinned as `ide`. Each program's page is a shadow root of its window
+  (`program.wac`, web's `Element.shadow`), so stylesheets do not cross between programs and the desktop; a browser
+  test reads inside one through Playwright's selectors, or `__deep` (`tools/desk_test.js`). Next there: a program
+  describing itself — name, icon, file types, what it will ask for — so the question
   can come before it runs.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up
   and restore the whole disk), search across the disk, Editor find/replace and Markdown preview, terminal
