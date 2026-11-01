@@ -142,6 +142,11 @@ export string appFor(string name) {
 export void openPath(Desk d, string path, bool isDir) {
   if (isDir) { open(d, "files", path, leafOf(path) == "" ? "Home" : leafOf(path), "folder"); return; }
   string app = appFor(leafOf(path));
+  // **A program is started, not shown**: it opens its own windows, if it has anything to show.
+  if (app == "program") {
+    if (d.launch is not null) { d.launch!(path); }
+    return;
+  }
   string ic = iconFor(leafOf(path));
   // An archive opens in a Files window of its own, already inside it.
   open(d, app, path, leafOf(path), ic);

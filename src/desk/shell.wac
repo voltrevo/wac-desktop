@@ -17,7 +17,7 @@ import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropK
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { CalcApp } from "./calc.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
-import { ProgramApp } from "./program.wac";
+import { ProgramApp, launch } from "./program.wac";
 import { EditorApp, ViewerApp } from "./apps.wac";
 import { TerminalApp } from "./terminal.wac";
 import { deskCss } from "./style.wac";
@@ -471,6 +471,7 @@ export Node Desktop(Ui ui, Page page) {
   auto version = ui.state(0);
   auto ready = ui.state(false);
   fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  if (d.launch is null) { d.launch = (string path) => { launch(d, page, path, bump); }; }
   ui.effect("", () => {
     start(page, d, bump, () => { ready.set(true); });
     return () => { };

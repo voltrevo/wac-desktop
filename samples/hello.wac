@@ -1,0 +1,8 @@
+// A program with nothing to show: it opens no window, and the desktop says what it wrote when it is done.
+
+import { Sys } from "std";
+
+export i32 main(Sys sys) {
+  sys.stdout().line("hello from a program with no window");
+  return 0;
+}

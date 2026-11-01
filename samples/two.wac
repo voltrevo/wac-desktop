@@ -1,0 +1,23 @@
+// A page's program with a second window of its own: `tools/desk_test.js` builds it and opens it. Its page is its
+// first window; it asks the desktop for the second with `Desktop.openWindow`, and draws in each separately.
+
+import { Desktop, Node, Page, Ui, html.p } from "web";
+
+async void second(Page page) {
+  match (await Desktop.of(page.sys)) {
+    Ok(d): {
+      match (await d.openWindow("Second")) {
+        Ok(w): { w.mount((Ui ui) => <p class="second">the second window</p>); }
+        Err(why): { page.log("no second window: " + why); }
+      }
+    }
+    Err(why): { page.log("no desktop: " + why); }
+  }
+}
+
+export async i32 main(Page page) {
+  page.title("Two");
+  page.mount((Ui ui) => <p class="first">the first window</p>);
+  second(page);
+  return 0;
+}

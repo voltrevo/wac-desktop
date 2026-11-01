@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned in `wac.lock`**: wac at `25d20719e` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `ed87134`. Both are
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `de36beb`. Both are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -103,10 +103,12 @@ shares, so their pages can see each other's files.
   disk, and a program `wac build` writes runs by its path (`./hello.wasm`). It is the `wac` command itself,
   built from the commit the project pins, and runs as any program on the disk would — the page starts the
   module in a worker of its own — from a page opened as a file too.
-- **A program from the disk runs in a window.** Open a `.wasm` — a page's module, as the `web` package's builder
-  makes it (`page.wasm`) — and it starts as a process of its own and draws in the window's body, which is all of
-  the page it can reach; its title names the window, and closing the window stops it. A module that is not a page
-  runs too, and the window shows what it wrote. `samples/counter.wac` is the one the browser test runs.
+- **A program from the disk runs, and opens its own windows.** Open a `.wasm` and it starts as a process of its
+  own, with no window. A page's module, as the `web` package's builder makes it (`page.wasm`), opens its first
+  window by opening its page, and any program opens more with `Desktop.openWindow`; each window's body is all of a
+  page it can reach, its title names the window, closing the last stops the program, and when it ends its windows
+  close. A program with nothing to show opens none, and the desktop's note says what it wrote. `samples/counter.wac`,
+  `two.wac` and `hello.wac` are the ones the browser test runs.
 - **A program reaches only what it is handed.** Its files are its own folder, `.apps/<name>`, where its relative
   paths go, and what the person hands it: a file chosen in the desktop's picker when the program asks (`Desktop.pick`
   in `web`), or files dropped on its window, which are the program's and are not written to the disk. Through
@@ -124,7 +126,7 @@ shares, so their pages can see each other's files.
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
-| `src/desk/program.wac` | a program from the disk in a window: its module started with `wac.page` provided by `web`'s `PageServer` |
+| `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |
 | `src/desk/grants.wac`, `src/desk/services.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, open, note, the clipboard |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
@@ -134,7 +136,7 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
-| `samples/` | `demo.zip`'s source; `counter.wac` and `notes.wac`, programs the browser test builds and runs in windows |
+| `samples/` | `demo.zip`'s source; `counter.wac`, `notes.wac`, `two.wac` and `hello.wac`, programs the browser test runs |
 | `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `fill-cache.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 

@@ -198,6 +198,43 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await inNotes('.got')).includes('into-files.txt (26 bytes)'), 'a file dropped on a program\'s window is handed to it', await inNotes('.got'));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
 
+  // **A program opens its own windows**: samples/two.wac's page is its first, and it asks for a second. Each draws
+  // apart; closing one leaves the other, and closing the last stops the program.
+  const build = (sample, stem) => {
+    const out = path.join(root, '.cache', stem);
+    execFileSync('wac', ['run', '--allow-read', '--allow-write', '--allow-run', 'build.wac', `samples/${sample}`, path.relative(root, out)], { cwd: root, stdio: 'pipe' });
+    fs.copyFileSync(path.join(out, 'page.wasm'), path.join(tmp, `${stem}.wasm`));
+  };
+  const openDropped = async (name) => {
+    await drop(path.join(tmp, name), 1300, 700);
+    if ((await texts('.dicon .dname')).includes(name)) {
+      await p.$eval(`.dicon[title="${name}"]`, (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    } else {
+      await row(name).dblclick();
+    }
+  };
+  build('two.wac', 'two');
+  await openDropped('two.wasm');
+  await p.waitForFunction(() => document.querySelector('.program-body .second') !== null, null, { timeout: 15000 }).catch(() => {});
+  const titles = async () => (await texts('.win .tt')).filter((t) => t === 'Two' || t === 'Second').sort().join();
+  check((await titles()) === 'Second,Two', 'a program opens a second window of its own', await texts('.win .tt'));
+  const firstHas = await p.$$eval('.win', (ws) => ws.filter((w) => w.querySelector('.tt')?.textContent === 'Two').map((w) => w.querySelector('.program-body')?.textContent).join());
+  check(firstHas === 'the first window', 'and each window shows only what was drawn in it', firstHas);
+  const closeTitled = (t) => p.$$eval('.win', (ws, t) => { const w = ws.find((w) => w.querySelector('.tt')?.textContent === t); w?.querySelector('.wbtn[title=Close]')?.click(); }, t);
+  await closeTitled('Second'); await settle(400);
+  check((await titles()) === 'Two', 'closing one of its windows leaves the other', await texts('.win .tt'));
+  await closeTitled('Two'); await settle(400);
+  check((await titles()) === '', 'and closing the last ends it', await texts('.win .tt'));
+
+  // **A program with nothing to show opens no window**: samples/hello.wac writes a line, and the desktop says it.
+  execFileSync('wac', ['build', 'samples/hello.wac', '-o', path.join(tmp, 'hello')], { cwd: root, stdio: 'pipe' });
+  const windowsBefore = (await texts('.win .tt')).length;
+  await openDropped('hello.wasm');
+  await p.waitForFunction(() => (document.querySelector('.toast')?.textContent ?? '').includes('hello from'), null, { timeout: 15000 }).catch(() => {});
+  check((await p.$eval('.toast', (e) => e.textContent).catch(() => '')).includes('hello.wasm: hello from a program with no window'),
+        'a program with nothing to show opens no window, and its words are the desktop\'s note', await p.$eval('.toast', (e) => e.textContent).catch(() => ''));
+  check((await texts('.win .tt')).length === windowsBefore, 'and no window opened for it', await texts('.win .tt'));
+
   const before = await texts('.win .tt');
   await settle(1500);                       // the layout is saved a second after it changes
   await p.reload();
@@ -205,7 +242,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await settle(1500);
   check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
   // notes.wasm is here only if it was dropped with nothing in front that takes files.
-  check((await texts('.dicon .dname')).filter((n) => n !== 'notes.wasm').join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  check((await texts('.dicon .dname')).filter((n) => !['notes.wasm', 'two.wasm', 'hello.wasm'].includes(n)).join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
   check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
   check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
   await shot('4-reloaded');

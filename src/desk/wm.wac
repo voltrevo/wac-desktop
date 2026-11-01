@@ -7,7 +7,10 @@
 // Stacking is a z number rather than the order windows sit in the document: raising a window must not
 // move its element, or an editor's caret and a listing's scroll position would go with it.
 
-import { Buf, Vec } from "core";
+import { Buf, Ticket, Vec } from "core";
+import { Answer, Child } from "std";
+import { PageServer } from "web";
+import { Grants } from "./grants.wac";
 import { Vfs } from "./vfs.wac";
 import { json.JsonValue } from "wac";
 import { json.parse } from "wac";
@@ -117,6 +120,61 @@ export struct Desk {
   Vec<Hand> hands;
   /** A program's request to choose a file, while the person is choosing: the picker shows over everything. */
   Picking? picking;
+  /** The programs running, each with its windows (`program.wac`). */
+  Vec<Running> running;
+  i32 nextRun;
+  /** Start the program at a path — set once the desktop has a page to start programs from. */
+  fn<void(string)>? launch;
+}
+
+/** How many windows a program may have open at once: its share of `wac.page`'s numbers is this many slices. */
+export static i32 MAX_WINDOWS = 16;
+/** A program's window slot that has not been opened, and one the person closed. */
+export static i32 NO_WINDOW = 0 - 1;
+export static i32 CLOSED_WINDOW = 0 - 2;
+
+/** A request for a window that has not drawn yet: answered through the window's server once it has. */
+export struct Pending {
+  i32 slice;
+  i32 k;
+  i64 a;
+  i64 b;
+  string text;
+  u8[] bytes;
+  Ticket<Answer> answer;
+}
+
+/**
+ * A program started from the disk: what it may reach, its process, and its windows — by slot, each the desktop's
+ * window for it (`NO_WINDOW`, `CLOSED_WINDOW`), the server drawing into it once it has drawn, and what waits for it.
+ */
+export struct Running {
+  i32 id;
+  string path;
+  /** What the picker and the notes call it: its first window's title, or its file's name until it has one. */
+  string title;
+  Grants grants;
+  Child? child;
+  Vec<i32> wins;
+  Vec<PageServer?> servers;
+  Vec<Pending> waiting;
+  /** Whether it has had a window at all — one that never has is a program with nothing to show. */
+  bool shown;
+  bool done;
+}
+
+/** Program `id`, if it is still running. */
+export Running? runningOf(Desk d, i32 id) {
+  for (i32 i = 0; i < d.running.len(); i++) { if (d.running.get(i).id == id) { return d.running.get(i); } }
+  return null;
+}
+
+/** Open the window in slot `slice` of program `r`, titled. Its body draws itself, and its requests wait until then. */
+export Win openWindowFor(Desk d, Running r, i32 slice, string title) {
+  Win w = open(d, "program", "\{r.id}/\{slice}", title, "terminal");
+  r.wins.set(slice, w.id);
+  r.shown = true;
+  return w;
 }
 
 /** A program window that takes the files dropped on it: `give` hands one over, as the page's `nextFile`. */
@@ -154,7 +212,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null);
+              Vec.create(), null, Vec.create(), 1, null);
 }
 
 export Win? find(Desk d, i32 id) {
@@ -426,9 +484,13 @@ export u8[] sessionOf(Desk d) {
     while (j >= 0 && d.wins.get(order[j]).z > d.wins.get(k).z) { order[j + 1] = order[j]; j--; }
     order[j + 1] = k;
   }
+  i32 wrote = 0;
   for (i32 i = 0; i < order.len(); i++) {
     Win w = d.wins.get(order[i]);
-    if (i > 0) { b.push(','); }
+    // A program's window is its process's, which a reload does not bring back.
+    if (w.app == "program") { continue; }
+    if (wrote > 0) { b.push(','); }
+    wrote++;
     b.pushStr("{\"app\":"); str(b, w.app);
     b.pushStr(",\"arg\":"); str(b, w.arg);
     b.pushStr(",\"title\":"); str(b, w.title);
