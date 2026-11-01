@@ -11,8 +11,8 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 
 ## Building it
 
-**Everything is pinned in `wac.lock`**: wac at `25d20719e` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `e3ffeb9`. Both are
+**Everything is pinned in `wac.lock`**: wac at `955dbf698` — the `wac` command should be built from that commit, and
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `6ff6b30`. Both are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -25,7 +25,7 @@ git clone https://git.voltrevo.com/wac.git ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout 25d20719ebd5df91f11b222218e068e7ea434a9c
+git -C ~/src/wac checkout 955dbf6986bfaf084db65b742b2e07a23351bd82
 ```
 
 ```bash
@@ -182,7 +182,7 @@ shares, so their pages can see each other's files.
   At startup `usrbin.wac` unpacks it into a store mounted read-only at `/usr`, and every terminal has
   `WACPATH=/usr/bin`, so the shell finds `wac` and spawns it as it would any program. It is handed the shell's
   files, which is why it works on the desktop's disk.
-- **Size.** About 2.6 MB of module, `wac` included, at wac `25d20719e` — 3.5 MB at `b0d60f33`, and 5.4 MB at
+- **Size.** About 2.6 MB of module, `wac` included, at wac `955dbf698` — 3.5 MB at `b0d60f33`, and 5.4 MB at
   `563d8828`, before wac's step 6 follow-ups shrank what a program carries; the Archive Explorer is 0.3 MB. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.

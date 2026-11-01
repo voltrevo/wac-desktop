@@ -1,6 +1,6 @@
 {
   "imports": {
-    "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "25d20719ebd5df91f11b222218e068e7ea434a9c", "commit": "25d20719ebd5df91f11b222218e068e7ea434a9c" },
+    "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "955dbf6986bfaf084db65b742b2e07a23351bd82", "commit": "955dbf6986bfaf084db65b742b2e07a23351bd82" },
     "web": { "git": "https://git.voltrevo.com/web.git", "ref": "6ff6b30ec7eaa2e06e0d87fe87a2b19912455177", "commit": "6ff6b30ec7eaa2e06e0d87fe87a2b19912455177" },
     "webbuild": { "git": "https://git.voltrevo.com/web.git", "ref": "6ff6b30ec7eaa2e06e0d87fe87a2b19912455177", "subdir": "./tools", "commit": "6ff6b30ec7eaa2e06e0d87fe87a2b19912455177" }
   }
