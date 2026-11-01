@@ -135,6 +135,17 @@ export string deskCss() {
               background: var(--surface); color: var(--text); outline: 0; min-width: 0; width: 100%; }
     .viewer { display: flex; flex-direction: column; height: 100%; }
     .program { display: flex; flex-direction: column; height: 100%; }
+    .pick-shade { position: fixed; inset: 0; background: rgb(20 16 40 / .28); display: flex; align-items: center; justify-content: center; z-index: 100000; }
+    .pick { width: 460px; max-width: calc(100vw - 32px); max-height: 70vh; display: flex; flex-direction: column; background: var(--surface);
+            border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 18px 50px -18px rgb(20 16 60 / .45); }
+    .phead { padding: 14px 16px 6px; }
+    .ppath { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+    .plist { flex: 1; overflow: auto; min-height: 120px; padding: 4px 0; }
+    .prow { display: flex; align-items: center; gap: 8px; padding: 5px 14px; cursor: default; }
+    .prow:hover { background: var(--surface-2); }
+    .prow.sel { background: var(--accent-soft); }
+    .pfoot { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+    .pnote { flex: 1; color: var(--muted); font-size: 12px; }
     .program-body { flex: 1; overflow: auto; min-height: 0; }
     .program-status { padding: 6px 10px; color: var(--muted); border-top: 1px solid var(--line); }
     .program-said { margin: 0; padding: 8px 10px; max-height: 40%; overflow: auto; border-top: 1px solid var(--line); white-space: pre-wrap; }

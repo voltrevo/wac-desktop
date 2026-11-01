@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `25d20719e`, and `web` to `c32d1a8`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `25d20719e`, and `web` to `ed87134`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
@@ -31,9 +31,9 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
   own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (36 unit tests, 73 desktop checks, 18 drop cases). The build also
+  All of them pass at the latest commit (39 unit tests, 79 desktop checks, 18 drop cases). The build also
   compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time; `test:desk` builds
-  `samples/counter.wac` and runs it in a window, so it needs `wac` on `PATH`.
+  `samples/counter.wac` and `samples/notes.wac` and runs them in windows, so it needs `wac` on `PATH`.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs; it needs git access to git.voltrevo.com.
 - Run unit tests with `wac task test`, which grants what they need; `wac test --allow-read test/one_test.wac`
   runs one file. A test file importing a namespace member from `"wac"` (`fs.ProcTable`) needs a wac from
@@ -67,9 +67,11 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   needs that dependency in a package cache on the page's disk, which nothing provides yet.
 - **Apps as separate modules: started.** The handover in `https://git.voltrevo.com/notes.git` (2026-10-29) is the
   agreed direction: the desktop is a program's host, a program asks for capabilities by name, and a window is a
-  page's program answered by `PageServer` (`src/desk/program.wac`). Next there: `wac.desktop` (opening windows,
-  dialogs, the clipboard, a file picker whose answer is the grant), files handed to a program, grants agreed once
-  and remembered (the owner's answer), and the built-in apps moving out as modules on a read-only HTTP mount.
+  page's program answered by `PageServer` (`src/desk/program.wac`). A program's files are what it was granted
+  (`grants.wac`): its own folder, what it picked in the desktop's picker, what was dropped on its window; and
+  `wac.desktop` (`services.wac`) is the picker, open, note and the clipboard. Next there: a program opening windows
+  of its own (it gets one at launch today), grants agreed once and remembered (the owner's answer, which needs a
+  program's self-description), and the built-in apps moving out as modules on a read-only HTTP mount.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up
   and restore the whole disk), search across the disk, Editor find/replace and Markdown preview, terminal
   scrollback that survives a reload, settings (wallpaper, theme), quarter snapping.

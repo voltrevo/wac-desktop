@@ -1,0 +1,75 @@
+// A page's program that asks the desktop for things: `tools/desk_test.js` builds it, drops the module on the desktop
+// as `notes.wasm`, and opens it.
+//
+// It keeps a count of its launches in its own folder, where it starts; it tries to read the desktop's welcome note,
+// which it was not handed and may not; it asks the person to choose a note with the desktop's picker, and reads the
+// one chosen; and it lists the files dropped on its window.
+
+import { Sys } from "std";
+import { Result, Ticket } from "core";
+import { Desktop, ElementEvent, Node, Page, Picked, Ui, html.button, html.div, html.p, html.pre, html.span } from "web";
+
+async string launches(Sys sys) {
+  i32 n = 1;
+  auto before = await sys.files().readFile("launches");
+  if (before.isOk()) { n = string.fromBytes(before.ok()!).len() + 1; }
+  string marks = "";
+  for (i32 i = 0; i < n; i++) { marks = marks + "|"; }
+  auto wrote = await sys.files().writeFile("launches", marks.toBytes());
+  return wrote.isOk() ? "\{n}" : "could not write: \{wrote.err()!}";
+}
+
+async string unhanded(Sys sys) {
+  auto r = await sys.files().readFile("/Desktop/Welcome.md");
+  return r.isOk() ? "read it" : "refused";
+}
+
+async void chooseAndRead(Page page, fn<void(string)> show) {
+  match (await Desktop.of(page.sys)) {
+    Ok(d): {
+      Result<string, string> path = await d.pick("a note to read");
+      if (path.isErr()) {
+        show("nothing chosen");
+        return;
+      }
+      auto r = await page.sys.files().readFile(path.ok()!);
+      show(r.isOk() ? path.ok()! + "\n" + string.fromBytes(r.ok()!) : "could not read " + path.ok()! + ": \{r.err()!}");
+    }
+    Err(why): { show("no desktop: " + why); }
+  }
+}
+
+async void dropped(Page page, fn<void(string)> got) {
+  while (true) {
+    Picked f = await page.nextFile();
+    got(f.ok ? "\{f.name} (\{f.bytes.len()} bytes)" : "\{f.name}: \{f.error}");
+  }
+}
+
+Node Notes(Ui ui, Page page) {
+  auto count = ui.state("…");
+  auto welcome = ui.state("…");
+  auto text = ui.state("");
+  auto got = ui.state("");
+  ui.effect("start", () => {
+    tellWhen(launches(page.sys), (string s) => { count.set(s); });
+    tellWhen(unhanded(page.sys), (string s) => { welcome.set(s); });
+    dropped(page, (string s) => { got.set(got.get() + s + ";"); });
+    return () => { };
+  });
+  return <div>
+    <p>Launches: <span class="launches">{count.get()}</span></p>
+    <p>The welcome note: <span class="welcome">{welcome.get()}</span></p>
+    <button class="pick" onclick={(ElementEvent e) => { chooseAndRead(page, (string s) => { text.set(s); }); }}>Open a note</button>
+    <pre class="text">{text.get()}</pre>
+    <p>Dropped here: <span class="got">{got.get()}</span></p>
+  </div>;
+}
+
+async void tellWhen(Ticket<string> t, fn<void(string)> f) { f(await t); }
+
+export async i32 main(Page page) {
+  page.title("Notes");
+  page.mount((Ui ui) => <Notes page={page}/>);
+  return 0;
+}

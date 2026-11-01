@@ -111,13 +111,50 @@ export struct Desk {
   bool clipCut;
   /** What the last delete put in the Trash, for the Undo beside its note. */
   string[] undo;
+  /** The desktop's clipboard of text, which programs copy to and paste from through `wac.desktop`. */
+  string clipText;
+  /** How to hand each running program's window the files dropped on it. */
+  Vec<Hand> hands;
+  /** A program's request to choose a file, while the person is choosing: the picker shows over everything. */
+  Picking? picking;
+}
+
+/** A program window that takes the files dropped on it: `give` hands one over, as the page's `nextFile`. */
+export struct Hand {
+  i32 win;
+  fn<void(bool, string, u8[])> give;
+}
+
+/** The picker, open for a program: who asked and what for, the folder shown, and what to tell with the choice. */
+export struct Picking {
+  string who;
+  string what;
+  string dir;
+  /** The path chosen, from the disk's root — or `""` for nothing. */
+  fn<void(string)> chose;
+}
+
+/** How to hand files to window `id`, if it is a program's that takes them. */
+export Hand? handFor(Desk d, i32 id) {
+  for (i32 i = 0; i < d.hands.len(); i++) { if (d.hands.get(i).win == id) { return d.hands.get(i); } }
+  return null;
+}
+
+export void dropHand(Desk d, i32 id) {
+  for (i32 i = 0; i < d.hands.len(); i++) {
+    if (d.hands.get(i).win == id) {
+      d.hands.remove(i);
+      return;
+    }
+  }
 }
 
 static i32 MIN_W = 320;
 static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
-  return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[]());
+  return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
+              Vec.create(), null);
 }
 
 export Win? find(Desk d, i32 id) {

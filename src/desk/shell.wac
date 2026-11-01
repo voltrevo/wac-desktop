@@ -6,13 +6,14 @@
 // them; a save bumps the disk's, so every window showing the disk looks again.
 
 import { Ticket, Vec } from "core";
-import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
+import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.b, html.button, html.div, html.input, html.label, html.span, html.style } from "web";
 import { Vfs, Got, Info, nowMillis, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
 import { Files, MemoryStore } from "std";
 import { fs.ProcTable, fs.systemFiles } from "wac";
 import { box.boxNames } from "wac";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
-         hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax } from "./wm.wac";
+         hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax,
+         Hand, Picking, handFor } from "./wm.wac";
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { CalcApp } from "./calc.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
@@ -99,6 +100,19 @@ async void files(Page page, Desk d, fn<void()> bump) {
       if (!next.settled()) {
         Vec<Picked> done = batch;
         batch = Vec.create();
+        // **Dropped on a program's window, they are the program's**: handed to it as its page's files, and not
+        // written to the disk, which the program could not read unless it had been handed it too.
+        Hand? h = handFor(d, d.focused);
+        if (h is not null) {
+          for (i32 i = 0; i < done.len(); i++) {
+            Picked f = done.get(i);
+            h!.give(f.ok, f.name, f.ok ? f.bytes : f.error.toBytes());
+          }
+          Win? w = find(d, d.focused);
+          d.note = "Handed \{plural(done.len(), "file")} to " + (w is not null ? w!.title : "the program");
+          bump();
+          continue;
+        }
         save(d, done, target(d), bump);
         continue;
       }
@@ -147,6 +161,78 @@ async void save(Desk d, Vec<Picked> batch, string dir, fn<void()> bump) {
   if (written > 0) { d.note = "Added \{plural(written, "file")} to \{where}"; } else { d.note = ""; }
   d.fsRev++;
   bump();
+}
+
+// ── the picker ──────────────────────────────────────────────────────────────
+
+/** A folder's entries as the picker shows them: folders first, each with whether it is one. */
+struct PickList {
+  Vec<string> names;
+  Vec<bool> dirs;
+  string error;
+}
+
+async void loadPick(Desk d, string dir, PickList l, fn<void()> bump) {
+  Got<string[]> names = await d.fs.list(dir);
+  l.names.clear();
+  l.dirs.clear();
+  l.error = names.ok ? "" : names.error;
+  if (names.ok) {
+    for (i32 pass = 0; pass < 2; pass++) {
+      for (i32 i = 0; i < names.value.len(); i++) {
+        string n = names.value[i];
+        // The desktop's own folders are not the person's to hand over: `.desktop`, `.apps`.
+        if (n.len() > 0 && n.slice(0, 1) == ".") { continue; }
+        Got<Info> s = await d.fs.stat(join(dir, n));
+        bool isDir = s.ok && s.value.isDir;
+        if ((pass == 0) != isDir) { continue; }
+        l.names.push(n);
+        l.dirs.push(isDir);
+      }
+    }
+  }
+  bump();
+}
+
+/**
+ * **A program asking the person to choose a file** (`services.wac`), over everything else: it names who asked and
+ * what for, and what is chosen is handed to that program and to nothing else.
+ */
+Node Picker(Ui ui, Desk d, Picking p, string dir, i32 fsRev, fn<void()> bumpDesk) {
+  PickList l = ui.memo<PickList>("", () => PickList(Vec.create(), Vec.create(), ""));
+  auto version = ui.state(0);
+  auto chosen = ui.state("");
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("\{dir}|\{fsRev}", () => {
+    chosen.set("");
+    loadPick(d, dir, l, bump);
+    return () => { };
+  });
+  Node[] rows = Node[].filled(l.names.len(), Node.Text(""));
+  for (i32 i = 0; i < l.names.len(); i++) {
+    string name = l.names.get(i);
+    bool isDir = l.dirs.get(i);
+    rows[i] = <div class={"prow" + (chosen.get() == name ? " sel" : "")} title={name}
+                   onclick={(ElementEvent e) => { if (isDir) { p.dir = join(p.dir, name); bumpDesk(); } else { chosen.set(name); } }}
+                   ondblclick={(ElementEvent e) => { if (!isDir) { p.chose(join(p.dir, name)); } }}>
+      {icon(isDir ? "folder" : iconFor(name), "sm")}<span class="pname">{name}</span>
+    </div>;
+  }
+  return <div class="pick-shade">
+    <div class="pick" role="dialog">
+      <div class="phead"><b>{p.who}</b> asks for {p.what}</div>
+      <div class="ppath">
+        <button class="btn" title="Up" disabled={dir == "" ? "" : null} onclick={(ElementEvent e) => { p.dir = parentOf(p.dir); bumpDesk(); }}>{icon("up", "sm")}</button>
+        <span class="mono">{dir == "" ? "Home" : dir}</span>
+      </div>
+      <div class="plist">{l.error != "" ? <div class="placeholder">{l.error}</div> : (l.names.len() == 0 ? <div class="placeholder">Nothing here</div> : <div>{rows}</div>)}</div>
+      <div class="pfoot">
+        <span class="pnote">Only what you choose is handed to {p.who}.</span>
+        <button class="btn" onclick={(ElementEvent e) => { p.chose(""); }}>Cancel</button>
+        <button class="btn primary" disabled={chosen.get() == "" ? "" : null} onclick={(ElementEvent e) => { p.chose(join(p.dir, chosen.get())); }}>Choose</button>
+      </div>
+    </div>
+  </div>;
 }
 
 // ── the desktop's own icons ─────────────────────────────────────────────────
@@ -465,5 +551,6 @@ export Node Desktop(Ui ui, Page page) {
                                    : Node.Text(""))}
     {ghost}
     {taskbar(d, page, bump)}
+    {d.picking is not null ? <Picker d={d} p={d.picking!} dir={d.picking!.dir} fsRev={d.fsRev} bumpDesk={bump}/> : Node.Text("")}
   </div>;
 }

@@ -1,0 +1,158 @@
+// What a program started from the disk may reach of it: its own folder, and what the person handed it.
+//
+// **Nothing is ambient** (the handover's design point 1). A program's files are the desktop's disk seen through
+// `Grants`: every path is checked against what was granted before it reaches the disk, and anything else is refused
+// as `NotGranted`, in the words the program's own `Files` would use. What is granted grows while the program runs —
+// a file picked with `wac.desktop`'s picker is the grant — so the check is made on every call, not once.
+//
+// **What a program gets without asking** is its own folder, `.apps/<name>`, to read and write: somewhere to keep
+// what it keeps. Above a granted path it may look — stat a folder, list it — so a program handed `Desktop/a.txt`
+// can find it, but not read what is beside it.
+
+import { FileOps, Files, Input, NotGranted, Output, Stat, ReadFault, WriteFault, LookFault, MkdirFault, MoveFault,
+         ModeFault } from "std";
+import { Result, Ticket, Vec } from "core";
+
+/** Paths granted, each with whether it may be changed. A path covers everything under it. */
+export struct Grants {
+  Vec<string> paths;
+  Vec<bool> writable;
+
+  Grants create() { return Grants(Vec.create(), Vec.create()); }
+
+  /** Grant `path` — and everything under it — for reading, and for changing too when `write`. */
+  void grant(this, string path, bool write) {
+    string p = normal(path);
+    if (p == "\0") { return; }
+    for (i32 i = 0; i < this.paths.len(); i++) {
+      if (this.paths.get(i) == p) {
+        if (write) { this.writable.set(i, true); }
+        return;
+      }
+    }
+    this.paths.push(p);
+    this.writable.push(write);
+  }
+
+  /** Whether `path` may be read — or changed, when `write`. */
+  bool allows(const this, string path, bool write) {
+    string p = normal(path);
+    if (p == "\0") { return false; }
+    for (i32 i = 0; i < this.paths.len(); i++) {
+      if (under(p, this.paths.get(i)) && (!write || this.writable.get(i))) { return true; }
+    }
+    return false;
+  }
+
+  /** Whether `path` is a folder above something granted: one that may be looked at, though not into. */
+  bool leadsTo(const this, string path) {
+    string p = normal(path);
+    if (p == "\0") { return false; }
+    for (i32 i = 0; i < this.paths.len(); i++) {
+      if (under(this.paths.get(i), p)) { return true; }
+    }
+    return false;
+  }
+}
+
+/**
+ * `path` as the disk names it — no leading `/`, no `.` parts, no trailing `/` — or `"\0"` for one that climbs out
+ * with `..`, which nothing granted can cover.
+ */
+export string normal(string path) {
+  string out = "";
+  i32 start = 0;
+  for (i32 i = 0; i <= path.len(); i++) {
+    if (i < path.len() && path.slice(i, i + 1) != "/") { continue; }
+    string part = path.slice(start, i);
+    start = i + 1;
+    if (part == "" || part == ".") { continue; }
+    if (part == "..") { return "\0"; }
+    out = out == "" ? part : out + "/" + part;
+  }
+  return out;
+}
+
+/** Whether `p` is `root` or under it. The empty root is the whole disk. */
+bool under(string p, string root) {
+  if (root == "") { return true; }
+  return p == root || (p.len() > root.len() && p.slice(0, root.len()) == root && p.slice(root.len(), root.len() + 1) == "/");
+}
+
+string refusal(string p) { return p + ": Not granted to this application: the desktop has not handed it this"; }
+
+async Result<u8[], ReadFault> readRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<Input, ReadFault> openRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<void, WriteFault> writeRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<Output, WriteFault> outputRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<Stat, LookFault> statRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<string[], LookFault> listRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<void, MkdirFault> mkdirRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<void, MoveFault> moveRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+async Result<void, ModeFault> modeRefused(string p) { return Result.Err(NotGranted(refusal(p))); }
+
+/**
+ * A folder above something granted, listed: only the names that lead to a grant. A program handed one file in
+ * `Desktop` sees that one name there, not everything else on the desktop.
+ */
+async Result<string[], LookFault> listLeading(Files disk, Grants g, string p) {
+  Result<string[], LookFault> all = await disk.readDir(p);
+  if (all.isErr()) { return all; }
+  Vec<string> kept = Vec.create();
+  string[] names = all.ok()!;
+  string base = normal(p);
+  for (i32 i = 0; i < names.len(); i++) {
+    string child = base == "" ? names[i] : base + "/" + names[i];
+    if (g.allows(child, false) || g.leadsTo(child)) { kept.push(names[i]); }
+  }
+  return Result.Ok(kept.toArray());
+}
+
+/**
+ * `disk` as a program holding `g` sees it, **its relative paths under `home`**: the served files are handed each path
+ * as the program wrote it, so a name with no `/` before it is resolved here, in the program's own folder.
+ */
+export Files grantedFiles(Files disk, Grants g, string home) {
+  return Files.of(seen(disk, g, home), disk.user);
+}
+
+/** A path as the disk knows it: an absolute one as it is, a relative one under `home`. */
+string resolved(string home, string p) { return p.len() > 0 && p.slice(0, 1) == "/" ? p : "/" + home + "/" + p; }
+
+FileOps seen(Files disk, Grants g, string home) {
+  FileOps ops = granted(disk, g);
+  return FileOps(
+    (string p) => ops.readFile(resolved(home, p)),
+    (string p, u8[] b) => ops.writeFile(resolved(home, p), b),
+    (string p) => ops.openRead(resolved(home, p)),
+    (string p) => ops.openWrite(resolved(home, p)),
+    (string p) => ops.openAppend(resolved(home, p)),
+    (string p) => ops.stat(resolved(home, p)),
+    (string p) => ops.linkStat(resolved(home, p)),
+    (string p) => ops.readDir(resolved(home, p)),
+    (string p, bool parents) => ops.mkdir(resolved(home, p), parents),
+    (string p, bool recursive) => ops.remove(resolved(home, p), recursive),
+    (string from, string to) => ops.rename(resolved(home, from), resolved(home, to)),
+    (string p, i32 mode) => ops.chmod(resolved(home, p), mode),
+    (string p, bool on) => ops.setExecutable(resolved(home, p), on),
+    (string p, string owner) => ops.chown(resolved(home, p), owner));
+}
+
+/** Every operation, checked against `g` before it reaches `disk`. */
+FileOps granted(Files disk, Grants g) {
+  return FileOps(
+    (string p) => g.allows(p, false) ? disk.readFile(p) : readRefused(p),
+    (string p, u8[] b) => g.allows(p, true) ? disk.writeFile(p, b) : writeRefused(p),
+    (string p) => g.allows(p, false) ? disk.openRead(p) : openRefused(p),
+    (string p) => g.allows(p, true) ? disk.openWrite(p) : outputRefused(p),
+    (string p) => g.allows(p, true) ? disk.openAppend(p) : outputRefused(p),
+    (string p) => g.allows(p, false) || g.leadsTo(p) ? disk.stat(p) : statRefused(p),
+    (string p) => g.allows(p, false) || g.leadsTo(p) ? disk.linkStat(p) : statRefused(p),
+    (string p) => g.allows(p, false) ? disk.readDir(p) : (g.leadsTo(p) ? listLeading(disk, g, p) : listRefused(p)),
+    (string p, bool parents) => g.allows(p, true) ? disk.mkdir(p, parents) : mkdirRefused(p),
+    (string p, bool recursive) => g.allows(p, true) ? disk.remove(p, recursive) : moveRefused(p),
+    (string from, string to) => g.allows(from, true) && g.allows(to, true) ? disk.rename(from, to) : moveRefused(g.allows(from, true) ? to : from),
+    (string p, i32 mode) => g.allows(p, true) ? disk.chmod(p, mode) : modeRefused(p),
+    (string p, bool on) => g.allows(p, true) ? disk.setExecutable(p, on) : modeRefused(p),
+    (string p, string owner) => modeRefused(p));
+}

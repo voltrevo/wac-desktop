@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned in `wac.lock`**: wac at `25d20719e` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `c32d1a8`. Both are
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `ed87134`. Both are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -107,6 +107,11 @@ shares, so their pages can see each other's files.
   makes it (`page.wasm`) — and it starts as a process of its own and draws in the window's body, which is all of
   the page it can reach; its title names the window, and closing the window stops it. A module that is not a page
   runs too, and the window shows what it wrote. `samples/counter.wac` is the one the browser test runs.
+- **A program reaches only what it is handed.** Its files are its own folder, `.apps/<name>`, where its relative
+  paths go, and what the person hands it: a file chosen in the desktop's picker when the program asks (`Desktop.pick`
+  in `web`), or files dropped on its window, which are the program's and are not written to the disk. Through
+  `wac.desktop` it can also show a file it holds in the desktop's app for it, say something in the desktop's note,
+  and use the desktop's text clipboard. `samples/notes.wac` does each of these.
 - **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
@@ -120,6 +125,7 @@ shares, so their pages can see each other's files.
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
 | `src/desk/program.wac` | a program from the disk in a window: its module started with `wac.page` provided by `web`'s `PageServer` |
+| `src/desk/grants.wac`, `src/desk/services.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, open, note, the clipboard |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |
@@ -128,7 +134,7 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
-| `samples/` | `demo.zip`'s source, and `counter.wac`, a page's program the browser test builds and runs in a window |
+| `samples/` | `demo.zip`'s source; `counter.wac` and `notes.wac`, programs the browser test builds and runs in windows |
 | `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `fill-cache.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 

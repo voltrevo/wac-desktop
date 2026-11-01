@@ -167,13 +167,45 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
   check(!(await texts('.win .tt')).includes('Counter'), 'closing the window ends the program', await texts('.win .tt'));
 
+  // **A program asks the desktop for things** (samples/notes.wac): it may write its own folder and nothing it was not
+  // handed; the picker hands it what the person chooses; and a file dropped on its window is its own.
+  const notesBuilt = path.join(root, '.cache', 'notes');
+  execFileSync('wac', ['run', '--allow-read', '--allow-write', '--allow-run', 'build.wac', 'samples/notes.wac', path.relative(root, notesBuilt)],
+               { cwd: root, stdio: 'pipe' });
+  fs.copyFileSync(path.join(notesBuilt, 'page.wasm'), path.join(tmp, 'notes.wasm'));
+  // Dropped wherever a drop goes now — the folder of a Files window in front, or the desktop — and opened from there.
+  await drop(path.join(tmp, 'notes.wasm'), 1300, 700);
+  if ((await texts('.dicon .dname')).includes('notes.wasm')) {
+    await p.$eval('.dicon[title="notes.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  } else {
+    await row('notes.wasm').dblclick();
+  }
+  const inNotes = (sel) => p.$eval(`.win.focus .program-body ${sel}`, (e) => e.textContent).catch(() => '');
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .welcome'); return e !== null && e.textContent !== '…'; }, null, { timeout: 15000 }).catch(() => {});
+  check((await inNotes('.launches')) === '1', 'a program keeps what it keeps in its own folder', await inNotes('.launches'));
+  check((await inNotes('.welcome')) === 'refused', 'and may not read what it was not handed', await inNotes('.welcome'));
+  await p.locator('.win.focus .program-body .pick').click();
+  await p.waitForSelector('.pick-shade', { timeout: 5000 }).catch(() => {});
+  const asked = await p.$eval('.pick .phead', (e) => e.textContent).catch(() => '');
+  check(asked === 'Notes asks for a note to read', 'the picker says who asks, and for what', asked);
+  await p.locator('.pick .prow[title="Welcome.md"]').click(); await settle(200);
+  await p.locator('.pick .btn.primary').click();
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .text'); return e !== null && e.textContent !== ''; }, null, { timeout: 10000 }).catch(() => {});
+  const picked = await inNotes('.text');
+  check(picked.startsWith('/Desktop/Welcome.md\n') && picked.length > 40, 'what the person chose is the program\'s to read', picked.slice(0, 80));
+  check((await p.$$('.pick-shade')).length === 0, 'and the picker is gone', null);
+  await drop(path.join(tmp, 'into-files.txt'), 900, 400);
+  check((await inNotes('.got')).includes('into-files.txt (26 bytes)'), 'a file dropped on a program\'s window is handed to it', await inNotes('.got'));
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+
   const before = await texts('.win .tt');
   await settle(1500);                       // the layout is saved a second after it changes
   await p.reload();
   await p.waitForSelector('.dicons', { timeout: 20000 });
   await settle(1500);
   check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
-  check((await texts('.dicon .dname')).join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  // notes.wasm is here only if it was dropped with nothing in front that takes files.
+  check((await texts('.dicon .dname')).filter((n) => n !== 'notes.wasm').join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
   check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
   check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
   await shot('4-reloaded');

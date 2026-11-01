@@ -1,0 +1,77 @@
+// `wac.desktop`, answered: what the desktop does for one program it started (the client is `web`'s `Desktop`).
+//
+// **The picker is the grant** (the handover's design point 4). A program asks the person to choose a file; the
+// picker shows over everything, naming the program and what it asked for; and the path chosen is added to that
+// program's `Grants` — readable and writable, since the person chose it for the program to work on — before the
+// program hears it. Nothing else of the disk changes hands. `open` shows a path only if the program could read it
+// itself, so it cannot use the desktop to look where it may not.
+
+import { Answer, FAULT_NOT_GRANTED, FAULT_UNSUPPORTED, Provider } from "std";
+import { Ticket } from "core";
+import { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
+         DESKTOP_VERSION } from "web";
+import { Grants, normal } from "./grants.wac";
+import { Got, Info } from "./vfs.wac";
+import { Desk, Picking, Win } from "./wm.wac";
+import { openPath } from "./files.wac";
+
+Answer said(string text) { return Answer(0, text, u8[](), 0 as i64, 0 as i64, 0); }
+
+Ticket<Answer> now(Answer a) {
+  Ticket<Answer> t;
+  t.resolve(a);
+  return t;
+}
+
+/** What `Procs.spawnProviding` is handed, so the program in window `w`, holding `g`, finds the desktop. */
+export Provider desktopProvider(Desk d, Win w, Grants g, fn<void()> bumpDesk) {
+  return Provider(DESKTOP_CAPABILITY(), DESKTOP_VERSION(), DESKTOP_COUNT,
+                  (i32 k, i64 a, i64 b, string text, u8[] bytes) => answerDesktop(d, w, g, bumpDesk, k, text));
+}
+
+Ticket<Answer> answerDesktop(Desk d, Win w, Grants g, fn<void()> bumpDesk, i32 k, string text) {
+  if (k == DESKTOP_PICK) {
+    Ticket<Answer> t;
+    if (d.picking is not null) {
+      t.resolve(Answer(FAULT_UNSUPPORTED(), "the desktop is already asking the person to choose", u8[](), 0 as i64, 0 as i64, 0));
+      return t;
+    }
+    d.picking = Picking(w.title, text, "Desktop", (string path) => {
+      d.picking = null;
+      if (path == "") {
+        t.resolve(Answer(0, "", u8[](), 0 as i64, 0 as i64, 1));
+      } else {
+        g.grant(path, true);
+        t.resolve(said("/" + normal(path)));
+      }
+      bumpDesk();
+    });
+    bumpDesk();
+    return t;
+  }
+  if (k == DESKTOP_OPEN) { return opened(d, g, bumpDesk, text); }
+  if (k == DESKTOP_NOTE) {
+    d.note = w.title + ": " + text;
+    bumpDesk();
+    return now(said(""));
+  }
+  if (k == DESKTOP_COPY) {
+    d.clipText = text;
+    return now(said(""));
+  }
+  if (k == DESKTOP_PASTE) { return now(said(d.clipText)); }
+  return now(Answer(FAULT_UNSUPPORTED(), "wac.desktop has no request \{k}", u8[](), 0 as i64, 0 as i64, 0));
+}
+
+/** Show `path` in the desktop's app for it — if the program could read it itself. */
+async Answer opened(Desk d, Grants g, fn<void()> bumpDesk, string path) {
+  if (!g.allows(path, false)) {
+    return Answer(FAULT_NOT_GRANTED(), path + ": Not granted to this application", u8[](), 0 as i64, 0 as i64, 0);
+  }
+  string p = normal(path);
+  Got<Info> s = await d.fs.stat(p);
+  if (!s.ok) { return Answer(FAULT_UNSUPPORTED(), path + ": " + s.error, u8[](), 0 as i64, 0 as i64, 0); }
+  openPath(d, p, s.value.isDir);
+  bumpDesk();
+  return said("");
+}

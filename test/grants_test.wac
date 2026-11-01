@@ -1,0 +1,70 @@
+// What a program from the disk may reach of it: its own folder, and what it was handed — over a disk in memory.
+
+import { Result, Ticket } from "core";
+import { Runner } from "web";
+import { Files, MemoryStore, Sys } from "std";
+import { Grants, grantedFiles, normal } from "../src/desk/grants.wac";
+import { appFolder } from "../src/desk/program.wac";
+
+/** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
+T run<T>(Runner r, Ticket<T> t) {
+  r.drain();
+  if (!t.settled()) { trap "the ticket did not settle"; }
+  return t.value();
+}
+
+export string test_a_path_is_named_as_the_disk_names_it_and_climbing_out_is_refused() {
+  if (normal("/Desktop//a.txt/") != "Desktop/a.txt") { return "slashes: " + normal("/Desktop//a.txt/"); }
+  if (normal("./.apps/./x") != ".apps/x") { return "dots: " + normal("./.apps/./x"); }
+  if (normal("/") != "") { return "the root"; }
+  if (normal(".apps/x/../../Desktop") != "\0") { return "climbing out was allowed"; }
+  if (appFolder("Desktop/counter.wasm") != ".apps/counter") { return "app folder: " + appFolder("Desktop/counter.wasm"); }
+  return "";
+}
+
+export string test_a_grant_covers_what_is_under_it_and_nothing_beside() {
+  Grants g = Grants.create();
+  g.grant(".apps/notes", true);
+  g.grant("Desktop/a.txt", false);
+  if (!g.allows(".apps/notes/state.json", true)) { return "its own folder is not writable"; }
+  if (!g.allows("/Desktop/a.txt", false)) { return "the handed file is not readable"; }
+  if (g.allows("Desktop/a.txt", true)) { return "the handed file was writable"; }
+  if (g.allows("Desktop/a.txt.bak", false)) { return "a name that only starts the same was granted"; }
+  if (g.allows("Desktop/b.txt", false)) { return "its neighbour was readable"; }
+  if (!g.leadsTo("Desktop") || !g.leadsTo("")) { return "the folders above a grant cannot be looked at"; }
+  if (g.leadsTo("Documents")) { return "a folder leading nowhere granted could be looked at"; }
+  g.grant("Desktop/a.txt", true);
+  if (!g.allows("Desktop/a.txt", true)) { return "granted again with writing, it is still read-only"; }
+  return "";
+}
+
+async string throughGrants(Files disk) {
+  await disk.mkdir("Desktop", true);
+  await disk.mkdir(".apps/notes", true);
+  await disk.writeFile("Desktop/a.txt", "handed".toBytes());
+  await disk.writeFile("Desktop/b.txt", "not handed".toBytes());
+  Grants g = Grants.create();
+  g.grant(".apps/notes", true);
+  g.grant("Desktop/a.txt", false);
+  Files seen = grantedFiles(disk, g, ".apps/notes");
+  auto a = await seen.readFile("/Desktop/a.txt");
+  if (a.isErr() || string.fromBytes(a.ok()!) != "handed") { return "the handed file could not be read"; }
+  auto b = await seen.readFile("/Desktop/b.txt");
+  if (b.isOk()) { return "its neighbour was read"; }
+  if ("\{b.err()!}".indexOf("Not granted") < 0) { return "refused, but not as NotGranted: \{b.err()!}"; }
+  auto listed = await seen.readDir("/Desktop");
+  if (listed.isErr() || listed.ok()!.len() != 1 || listed.ok()![0] != "a.txt") { return "the desktop's listing showed more than was handed"; }
+  if ((await seen.writeFile("/Desktop/a.txt", "x".toBytes())).isOk()) { return "a file handed to read was written"; }
+  if ((await seen.writeFile("state.json", "{}".toBytes())).isErr()) { return "a relative path is not in its own folder"; }
+  auto back = await disk.readFile(".apps/notes/state.json");
+  if (back.isErr() || string.fromBytes(back.ok()!) != "{}") { return "what it wrote there is not in its folder on the disk"; }
+  if ((await seen.readFile("../../Desktop/b.txt")).isOk()) { return "climbing out of its folder read the neighbour"; }
+  if ((await seen.rename("/Desktop/a.txt", "a.txt")).isOk()) { return "a file it may only read was moved"; }
+  return "";
+}
+
+export string test_a_programs_files_are_the_disk_as_its_grants_let_it_see_it(Sys sys) {
+  Runner r = Runner.create();
+  schedule r.take;
+  return run(r, throughGrants(MemoryStore.create(sys.clock()).asUser("root")));
+}

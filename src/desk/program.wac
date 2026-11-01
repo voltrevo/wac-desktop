@@ -2,17 +2,20 @@
 // page.
 //
 // **The desktop is the program's host** (the handover's design point 1). The module is started with
-// `spawnProviding`, and the one capability it is provided is `wac.page`, answered by a `PageServer` into the window's
-// body — so a page's program draws there and nowhere else, and hears only what happens there. It is handed no files
-// and no other authority yet: what a program may ask for is the grants work still to come (design point 6).
+// `spawnProviding` and two capabilities: `wac.page`, answered by a `PageServer` into the window's body — so a page's
+// program draws there and nowhere else, and hears only what happens there — and `wac.desktop` (`services.wac`). Its
+// files are the disk as its `Grants` let it see it (`grants.wac`): its own folder, `.apps/<name>`, which is where it
+// starts, and whatever the person hands it — a file picked for it, or one dropped on its window.
 //
 // **A module that is not a page** — one that never asks for `wac.page` — runs all the same, and the window shows
 // what it wrote, once it is done. Closing the window stops the process.
 
 import { Authority, Child, Launch } from "std";
 import { Element, Node, Page, PageServer, Ref, Ui, html.div, html.pre } from "web";
-import { Got } from "./vfs.wac";
-import { Desk, Win } from "./wm.wac";
+import { Grants, grantedFiles } from "./grants.wac";
+import { desktopProvider } from "./services.wac";
+import { Got, leafOf } from "./vfs.wac";
+import { Desk, Hand, Win, dropHand } from "./wm.wac";
 
 /** What a program window keeps between renders: the process, once started, and what it said. */
 struct ProgramState {
@@ -23,8 +26,16 @@ struct ProgramState {
   bool closed;
 }
 
+/** The folder a program keeps what it keeps in: `.apps/` and its file's name, without `.wasm`. */
+export string appFolder(string path) {
+  string leaf = leafOf(path);
+  string name = leaf.len() > 5 && leaf.slice(leaf.len() - 5, leaf.len()) == ".wasm" ? leaf.slice(0, leaf.len() - 5) : leaf;
+  return ".apps/" + name;
+}
+
 /** Start the module at `w.arg` drawing into `body`; `bump` renders the window again, `retitle` names it. */
-async void start(Desk d, Win w, Page page, Element body, ProgramState s, fn<void()> bump, fn<void(string)> retitle) {
+async void start(Desk d, Win w, Page page, Element body, ProgramState s, fn<void()> bump, fn<void(string)> retitle,
+                 fn<void()> bumpDesk) {
   Got<u8[]> read = await d.fs.read(w.arg);
   if (!read.ok) {
     s.status = "could not read " + w.arg + ": " + read.error;
@@ -33,8 +44,14 @@ async void start(Desk d, Win w, Page page, Element body, ProgramState s, fn<void
   }
   PageServer server = PageServer.into(page, body, retitle, (string line) => { page.log(w.title + ": " + line); });
   s.server = server;
-  auto started = await page.sys.procs().spawnProviding(read.value, string[](), Authority.none(), [server.provider()],
-                                                       Launch.plain());
+  string home = appFolder(w.arg);
+  await d.fs.fs.mkdir(home, true);
+  Grants g = Grants.create();
+  g.grant(home, true);
+  d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); }));
+  auto started = await page.sys.procs().spawnProviding(read.value, string[](), Authority(grantedFiles(d.fs.fs, g, home), null, null, null),
+                                                       [server.provider(), desktopProvider(d, w, g, bumpDesk)],
+                                                       Launch("/" + home, false, false, false));
   if (started.isErr()) {
     s.status = "could not start " + w.arg + ": \{started.err()!}";
     bump();
@@ -71,10 +88,11 @@ export Node ProgramApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32
       start(d, w, page, e!, s, bump, (string t) => {
         w.title = t;
         bumpDesk();
-      });
+      }, bumpDesk);
     }
     return () => {
       s.closed = true;
+      dropHand(d, w.id);
       if (s.child is not null) { s.child!.stop(); }
     };
   });
