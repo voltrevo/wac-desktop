@@ -18,6 +18,7 @@ import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { CalcApp } from "./calc.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
 import { ProgramApp, launch } from "./program.wac";
+import { AllowedApp } from "./allowed.wac";
 import { EditorApp, ViewerApp } from "./apps.wac";
 import { TerminalApp } from "./terminal.wac";
 import { deskCss } from "./style.wac";
@@ -381,6 +382,7 @@ Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i3
   if (w.app == "terminal") { return <TerminalApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "editor") { return <EditorApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "program") { return <ProgramApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
+  if (w.app == "allowed") { return <AllowedApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   return <ViewerApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>;
 }
 
@@ -435,6 +437,7 @@ Node launcher(Desk d, fn<void()> bump) {
     {launcherItem("edit", "Text editor", "A new text file", () => { open(d, "editor", "", "Untitled", "edit"); bump(); })}
     {launcherItem("calc", "Calculator", "Sums, typed or clicked", () => { open(d, "calc", "", "Calculator", "calc"); bump(); })}
     {launcherItem("trash", "Trash", "What was deleted, to restore or let go", () => { open(d, "files", TRASH, "Trash", "trash"); bump(); })}
+    {launcherItem("shield", "Permissions", "What programs were allowed, to take back", () => { open(d, "allowed", "", "Permissions", "shield"); bump(); })}
     {launcherItem("text", "Welcome", "What this is, and what to try", () => { open(d, "viewer", "Desktop/Welcome.md", "Welcome.md", "text"); bump(); })}
     <div class="lfoot">{d.fs.persistent ? "Files are kept in this browser." : "Opened from a file: nothing is kept after the tab closes."}</div>
   </div>;

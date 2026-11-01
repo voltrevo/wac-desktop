@@ -118,6 +118,8 @@ shares, so their pages can see each other's files.
   what and whether it would change it; "Allow" is remembered for that program in `.desktop/grants.json`, as is a
   file chosen for it in the picker, so started again it holds them and is not asked again. The desktop's own
   `.desktop` and another program's folder are never given. `samples/reader.wac` asks to read the desktop.
+  **Permissions**, in the launcher, lists what each program was allowed, and Take back forgets it — from a running
+  program at once, and from the next start.
 - **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
@@ -131,7 +133,7 @@ shares, so their pages can see each other's files.
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
 | `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |
-| `src/desk/grants.wac`, `src/desk/services.wac`, `src/desk/remember.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, asking, windows, open, note, the clipboard; what each program was allowed, remembered |
+| `src/desk/grants.wac`, `src/desk/services.wac`, `src/desk/remember.wac`, `src/desk/allowed.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, asking, windows, open, note, the clipboard; what each program was allowed, remembered, and the Permissions window to take it back |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |

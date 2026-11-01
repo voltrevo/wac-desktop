@@ -1,0 +1,56 @@
+// What each program was allowed, to see and to take back: the Permissions window.
+//
+// **An answer the person gave is theirs to take back.** Every path a program was allowed — asked for and agreed to,
+// or chosen for it in the picker — is listed under the program, with whether it may change what is there; taking one
+// back forgets it (`remember.wac`) and takes it from the program now, if it is running, as well as the next time.
+
+import { ElementEvent, Node, Page, Ui, html.button, html.div, html.span } from "web";
+import { Allowed, allowed, forget } from "./remember.wac";
+import { leafOf } from "./vfs.wac";
+import { Desk, Win } from "./wm.wac";
+import { icon } from "../preview.wac";
+
+struct AllowedState {
+  Allowed[] all;
+  bool loaded;
+}
+
+async void load(Desk d, AllowedState s, fn<void()> bump) {
+  s.all = await allowed(d);
+  s.loaded = true;
+  bump();
+}
+
+/** Take `a` back: forgotten, and taken from the program now if it is running. */
+async void takeBack(Desk d, Allowed a, AllowedState s, fn<void()> bump) {
+  await forget(d, a.program, a.path);
+  for (i32 i = 0; i < d.running.len(); i++) {
+    if (d.running.get(i).path == a.program) { d.running.get(i).grants.revoke(a.path); }
+  }
+  d.note = leafOf(a.program) + " may no longer reach " + (a.path == "" ? "the whole disk" : a.path);
+  await load(d, s, bump);
+}
+
+export Node AllowedApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
+  AllowedState s = ui.memo<AllowedState>("", () => AllowedState(Allowed[](), false));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); bumpDesk(); };
+  ui.effect("\{fsRev}|\{rev}", () => {
+    load(d, s, bump);
+    return () => { };
+  });
+  if (!s.loaded) { return <div class="placeholder"><div>Loading…</div></div>; }
+  if (s.all.len() == 0) {
+    return <div class="placeholder"><div>{icon("shield", "")}<div>No program has been allowed anything beyond its own folder.</div></div></div>;
+  }
+  Node[] rows = Node[].filled(s.all.len(), Node.Text(""));
+  for (i32 i = 0; i < s.all.len(); i++) {
+    Allowed a = s.all[i];
+    rows[i] = <div class="arow" title={a.program}>
+      <span class="aprog">{leafOf(a.program)}</span>
+      <span class="awhat">{a.write ? "may read and change" : "may read"} <span class="mono">{a.path == "" ? "everything" : a.path}</span></span>
+      <button class="btn" onclick={(ElementEvent e) => { takeBack(d, a, s, bump); }}>Take back</button>
+    </div>;
+  }
+  return <div class="allowed">{rows}</div>;
+}

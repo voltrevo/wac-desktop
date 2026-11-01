@@ -17,7 +17,7 @@ import { json.parse } from "wac";
 
 export struct Win {
   i32 id;
-  /** Which app: "files", "viewer", "editor", "calc", "terminal", or "program" — a module from the disk, running. */
+  /** Which app: "files", "viewer", "editor", "calc", "terminal", "allowed" — the Permissions window — or "program", a module from the disk, running. */
   string app;
   /** What it shows: a path on the disk, for every app so far. Files keeps its current folder here. */
   string arg;

@@ -257,6 +257,26 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
         'started again, it is not asked again', { asked: (await p.$$('.consent')).length, listed: await listedIn() });
   await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
 
+  // **And what was allowed can be taken back**: the Permissions window lists it, Take back forgets it, and the
+  // program started again is asked again — and refused, cannot read.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Permissions' }).click(); await settle(600);
+  const grants = await texts('.win.focus .arow');
+  check(grants.some((g) => g.startsWith('reader.wasmmay read Desktop')), 'Permissions lists what a program was allowed', grants);
+  await p.locator('.win.focus .arow', { hasText: 'reader.wasm' }).locator('.btn').click(); await settle(600);
+  check(!(await texts('.win.focus .arow')).some((g) => g.startsWith('reader.wasm')), 'and Take back forgets it', await texts('.win.focus .arow'));
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+  if ((await texts('.dicon .dname')).includes('reader.wasm')) {
+    await p.$eval('.dicon[title="reader.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  } else {
+    await row('reader.wasm').dblclick();
+  }
+  await p.waitForSelector('.consent', { timeout: 15000 }).catch(() => {});
+  check((await p.$$('.consent')).length === 1, 'started again, it is asked again', null);
+  await p.locator('.consent .btn', { hasText: "Don't allow" }).click();
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  check((await listedIn()).startsWith('refused'), 'and refused, it cannot read', await listedIn());
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+
   const before = await texts('.win .tt');
   await settle(1500);                       // the layout is saved a second after it changes
   await p.reload();

@@ -68,6 +68,21 @@ export async void remember(Desk d, string program, string path, bool write) {
     }
   }
   if (!found) { kept.push(Allowed(program, p, write)); }
+  await store(d, kept);
+}
+
+/** Forget that `program` was allowed `path`: started again, it holds it no more, and asking again asks. */
+export async void forget(Desk d, string program, string path) {
+  Allowed[] all = await allowed(d);
+  Vec<Allowed> kept = Vec.create();
+  string p = normal(path);
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!(all[i].program == program && all[i].path == p)) { kept.push(all[i]); }
+  }
+  await store(d, kept);
+}
+
+async void store(Desk d, Vec<Allowed> kept) {
   Buf b = Buf.create();
   b.pushStr("{\"grants\":[");
   for (i32 i = 0; i < kept.len(); i++) {

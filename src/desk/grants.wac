@@ -34,6 +34,18 @@ export struct Grants {
     this.writable.push(write);
   }
 
+  /** Take back `path`, granted exactly so: what was granted under it or above it stays as it was. */
+  void revoke(this, string path) {
+    string p = normal(path);
+    for (i32 i = 0; i < this.paths.len(); i++) {
+      if (this.paths.get(i) == p) {
+        this.paths.remove(i);
+        this.writable.remove(i);
+        return;
+      }
+    }
+  }
+
   /** Whether `path` may be read — or changed, when `write`. */
   bool allows(const this, string path, bool write) {
     string p = normal(path);
