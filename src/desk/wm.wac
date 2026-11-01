@@ -125,11 +125,57 @@ export struct Desk {
   /** The programs running, each with its windows (`program.wac`). */
   Vec<Running> running;
   i32 nextRun;
-  /** Start the program at a path — set once the desktop has a page to start programs from. */
-  fn<void(string)>? launch;
+  /** Start a program — set once the desktop has a page to start programs from. */
+  fn<void(Start)>? launch;
   /** Whether the desktop was served from a site, which is mounted at `/site` with the programs built with it. */
   bool site;
+  /** A program changed the disk, and the windows showing it are about to look again (`program.wac`). */
+  bool lookSoon;
 }
+
+/** Where a window goes, and how it was: what a session keeps of one, to put it back. */
+export struct Placed {
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+  i32 snap;
+  bool min;
+  bool max;
+  bool focused;
+}
+
+/**
+ * How a program is started: its module, its arguments, and what it is handed besides its own folder and what it
+ * was allowed before. The desktop's own apps (`builtin.wac`) are started so; a module from the disk is handed
+ * nothing (`startOf`).
+ */
+export struct Start {
+  string path;
+  string[] args;
+  /** Granted for this run only: never remembered, and gone when the program ends. */
+  Grants given;
+  /** Its first window's size, `0` for the desktop's choice; its icon on the window and the taskbar. */
+  i32 width;
+  i32 height;
+  string icon;
+  /**
+   * Whether files dropped on its windows are its (its page's `nextFile`). A program from the disk might want them,
+   * so it has them; one of the desktop's own apps that does nothing with them leaves them to land on the desktop.
+   */
+  bool takesFiles;
+  /**
+   * Which of the desktop's own apps it is, and what it was opened on — `""` for a module from the disk. A session
+   * keeps a desktop app's window as these, and starts it again; a module from the disk is not started again.
+   */
+  string app;
+  string arg;
+  /** Where its first window goes, when a session is putting it back. */
+  Placed? place;
+}
+
+/** A module from the disk, started as itself: no arguments, and nothing handed it. */
+export Start startOf(string path) { return Start(path, string[](), Grants.create(), 0, 0, "terminal", true, "", "", null); }
 
 /** How many windows a program may have open at once: its share of `wac.page`'s numbers is this many slices. */
 export static i32 MAX_WINDOWS = 16;
@@ -158,6 +204,8 @@ export struct Running {
   /** What the picker and the notes call it: its first window's title, or its file's name until it has one. */
   string title;
   Grants grants;
+  /** How it was started, which a session keeps for one of the desktop's own apps. */
+  Start start;
   Child? child;
   Vec<i32> wins;
   Vec<PageServer?> servers;
@@ -175,7 +223,26 @@ export Running? runningOf(Desk d, i32 id) {
 
 /** Open the window in slot `slice` of program `r`, titled. Its body draws itself, and its requests wait until then. */
 export Win openWindowFor(Desk d, Running r, i32 slice, string title) {
-  Win w = open(d, "program", "\{r.id}/\{slice}", title, "terminal");
+  // A window a session puts back arrives after the rest, as its program starts: it is not to take the focus from the
+  // window that had it unless it had it itself.
+  i32 before = d.focused;
+  Win w = open(d, "program", "\{r.id}/\{slice}", title, r.start.icon);
+  if (slice == 0) {
+    Placed? p = r.start.place;
+    if (p is not null) {
+      w.x = p!.x;
+      w.y = p!.y;
+      w.w = p!.w < MIN_W ? MIN_W : p!.w;
+      w.h = p!.h < MIN_H ? MIN_H : p!.h;
+      w.snap = p!.snap;
+      w.max = p!.max;
+      if (p!.min) { minimise(d, w.id); }
+      if (!p!.focused && before >= 0 && before != w.id) { focus(d, before); }
+    } else {
+      if (r.start.width > 0) { w.w = r.start.width; }
+      if (r.start.height > 0) { w.h = r.start.height; }
+    }
+  }
   r.wins.set(slice, w.id);
   r.shown = true;
   return w;
@@ -224,7 +291,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null, null, Vec.create(), 1, null, false);
+              Vec.create(), null, null, Vec.create(), 1, null, false, false);
 }
 
 export Win? find(Desk d, i32 id) {
@@ -499,12 +566,20 @@ export u8[] sessionOf(Desk d) {
   i32 wrote = 0;
   for (i32 i = 0; i < order.len(); i++) {
     Win w = d.wins.get(order[i]);
-    // A program's window is its process's, which a reload does not bring back.
-    if (w.app == "program") { continue; }
+    // A program's window is its process's, which a reload does not bring back — except the first window of one of
+    // the desktop's own apps, which is kept as the app and what it was opened on, and started again.
+    string app = w.app;
+    string arg = w.arg;
+    if (app == "program") {
+      Running? r = programOf(d, w);
+      if (r is null || r!.start.app == "" || r!.wins.get(0) != w.id) { continue; }
+      app = "start:" + r!.start.app;
+      arg = r!.start.arg;
+    }
     if (wrote > 0) { b.push(','); }
     wrote++;
-    b.pushStr("{\"app\":"); str(b, w.app);
-    b.pushStr(",\"arg\":"); str(b, w.arg);
+    b.pushStr("{\"app\":"); str(b, app);
+    b.pushStr(",\"arg\":"); str(b, arg);
     b.pushStr(",\"title\":"); str(b, w.title);
     b.pushStr(",\"icon\":"); str(b, w.icon);
     b.pushStr(",\"x\":\{w.x},\"y\":\{w.y},\"w\":\{w.w},\"h\":\{w.h},\"snap\":\{w.snap}");
@@ -533,8 +608,24 @@ export bool flag(JsonValue o, string k) {
   return match (v!) { Bool(b): b, default: false };
 }
 
-/** Restore windows from saved JSON; answers how many came back. A damaged file restores nothing. */
-export i32 restore(Desk d, u8[] json) {
+/** The program whose window `w` is, from its `arg`, `<program>/<slot>`. */
+Running? programOf(Desk d, Win w) {
+  i32 cut = w.arg.indexOf("/");
+  if (cut < 0) { return null; }
+  i32 id = 0;
+  u8[] b = w.arg.slice(0, cut).toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return null; }
+    id = id * 10 + (b[i] as i32 - 48);
+  }
+  return runningOf(d, id);
+}
+
+/**
+ * Restore windows from saved JSON; answers how many came back. A damaged file restores nothing. One of the desktop's
+ * own apps is handed to `again` — the app, what it was opened on, and where its window was — to start once more.
+ */
+export i32 restore(Desk d, u8[] json, fn<void(string, string, Placed)> again) {
   JsonValue? doc = parse(json).ok();
   if (doc is null) { return 0; }
   JsonValue? ws = doc!.member("windows");
@@ -547,6 +638,15 @@ export i32 restore(Desk d, u8[] json) {
         JsonValue o = items.get(i);
         string app = text(o, "app");
         if (app == "") { continue; }
+        // The desktop's own apps, and — from a session saved before they were programs — the windows they had then.
+        bool builtin = app == "viewer" || app == "editor" || app == "terminal" || app == "calc";
+        if (builtin || (app.len() > 6 && app.slice(0, 6) == "start:")) {
+          again(builtin ? app : app.slice(6, app.len()), app == "calc" ? "" : text(o, "arg"),
+                Placed(num(o, "x", 0), num(o, "y", 0), num(o, "w", 0), num(o, "h", 0), num(o, "snap", 0), flag(o, "min"),
+                       flag(o, "max"), flag(o, "focused")));
+          n++;
+          continue;
+        }
         Win w = open(d, app, text(o, "arg"), text(o, "title"), text(o, "icon"));
         w.x = num(o, "x", w.x);
         w.y = num(o, "y", w.y);

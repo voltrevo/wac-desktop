@@ -3,8 +3,9 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, and a **Calculator**. Deleting
-moves things to a **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
+**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, and a **Calculator** — each a program of
+its own on the site the desktop is served from, started in windows it opens itself. Deleting moves things to a
+**Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
 It is written in [wac](https://github.com/voltrevo/wac), uses the DOM for everything it draws, and builds
 to single HTML files. The standalone **Archive Explorer** it grew from is built alongside it.
@@ -62,9 +63,10 @@ the browser's Origin Private File System, and the taskbar says *Saved in this br
 window layout come back after a reload.
 
 **Opened from a file** (`file://`), the browser refuses it that storage outright, so the same desktop runs
-on memory and says *Not saved*: everything works, and nothing outlives the tab. Programs are processes
-there too: a page from a file may not start workers from its workers, but wac's page has its own thread start
-every one, so `wac` runs and `^C` stops a program that loops.
+on memory and says *Not saved*, and nothing outlives the tab. It has no site either, so none of the apps that live
+there: Files, the Trash and Permissions work, a document opens its folder in Files, whose preview shows it, and
+programs from the disk still run — a page from a file may not start workers from its workers, but wac's page has
+its own thread start every one.
 
 On GitHub Pages, storage belongs to the origin — `you.github.io` — which every project site of that account
 shares, so their pages can see each other's files.
@@ -88,22 +90,24 @@ shares, so their pages can see each other's files.
   Empty Trash ask twice. A terminal's `rm` is still a shell's, and does not use the Trash.
 - **The Calculator** takes keys or typing: brackets, `√`, `x²`, and percentages the way pocket
   calculators do them (`200 + 10%` is 220). The answer shows as you type; finished sums stay above, and
-  a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3.
+  a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3. It
+  keeps the sum in its own folder, so started again it is still there.
 - **Dropping files or folders** puts them in the folder of the Files window in front, or on the desktop.
 - **Windows** move by the title bar and resize from any edge or corner. Dragged to the top they maximise,
   to the left or right edge they fill that half; double-click a title bar to maximise. The taskbar brings
   a window forward, or puts away the one in front. On a phone, windows fill the screen.
-- **The Terminal** (launcher, or the Terminal button in Files, which opens it in that folder) is the shell
+- **The Terminal** (launcher, or the Terminal button in Files, which starts it in that folder) is the shell
   from wac's `box` — `sh` with about sixty programs (`ls`, `cat`, `grep`, `find`, `sed`, `sort`,
   `sha256sum`, `ps`, …; `help` lists them), pipes, redirects, `/bin`, `/proc` and `/dev`. It runs on the
   same disk Files shows: `echo hi > /Desktop/hi.txt` puts an icon on the desktop, and a file saved in the
   Editor is there for `cat`. Tab completes paths, ↑/↓ recall history, Ctrl+C stops a command, Ctrl+L clears the screen, and what is
-  typed while one runs waits its turn. `open <path>` shows a file or folder in a window. A terminal comes
-  back in the folder it was in after a reload; its scrollback does not.
-- **`wac` is in the terminal too**, in `/usr/bin`: `wac check`, `build`, `run` and `test` work on the desktop's
+  typed while one runs waits its turn. `open <path>` shows a file or folder in a window, and `exit` closes it. It is
+  handed the whole disk — it is a shell, and what it runs is the person's — and comes back after a reload in the
+  folder it was started in; its scrollback does not.
+- **`wac` is in the terminal too**, in `/site/bin`: `wac check`, `build`, `run` and `test` work on the desktop's
   disk, and a program `wac build` writes runs by its path (`./hello.wasm`). It is the `wac` command itself,
-  built from the commit the project pins, and runs as any program on the disk would — the page starts the
-  module in a worker of its own — from a page opened as a file too.
+  built from the commit the project pins, read from the site — the browser caches it — and run as any program on
+  the disk would be, in a worker of its own.
 - **A program from the disk runs, and opens its own windows.** Open a `.wasm` and it starts as a process of its
   own, with no window. A page's module, as the `web` package's builder makes it (`page.wasm`), opens its first
   window by opening its page, and any program opens more with `Desktop.openWindow`; each window's body is all of a
@@ -121,12 +125,16 @@ shares, so their pages can see each other's files.
   `.desktop` and another program's folder are never given. `samples/reader.wac` asks to read the desktop.
   **Permissions**, in the launcher, lists what each program was allowed, and Take back forgets it — from a running
   program at once, and from the next start.
-- **Served over http, the desktop's own site is `/site`**, read-only (`wac.site` in `web`): a read is a GET, the
-  browser's cache doing the caching, and a listing or a size comes from the `index.json` the build writes. The
-  programs built with the desktop are there, in `site/apps/`, and start as any program does: **Archive Explorer**, in
-  the launcher, is `site/apps/explorer.wasm` — the first built-in app that is a program and not part of the
-  desktop. Opened from a file, there is no site, and no such launcher item.
-- **The Editor** saves with Ctrl+S or its Save button.
+- **The desktop's own apps are programs on its site.** Served over http, the site the desktop came from is `/site`,
+  read-only (`wac.site` in `web`): a read is a GET, the browser's cache doing the caching, and a listing or a size
+  comes from the `index.json` the build writes. The Viewer, the Editor, the Terminal, the Calculator and the Archive
+  Explorer are there, in `site/apps/`, and start as any program does (`src/desk/builtin.wac`), handed what they are
+  opened on and no more — the Viewer its file to read, the Editor its file to change, the Terminal the disk — at
+  the size their windows suit. A session keeps their windows as the app and what it showed, and a reload starts
+  them again. Each is also a page on its own, in `dist/apps/<name>/`. Files and Permissions stay the desktop's own:
+  one is how it shows its disk, and the other governs what programs may reach.
+- **The Editor** saves with Ctrl+S or its Save button. A new file is saved on the Desktop, under the name typed or
+  the first free one like it (`Desktop.newFile`); the Viewer's Edit opens its file in the Editor (`Desktop.edit`).
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
 ## Layout
@@ -137,15 +145,15 @@ shares, so their pages can see each other's files.
 | `src/desk/shell.wac` | the desktop: startup, icons, window frames, taskbar and launcher, files arriving, saving the layout |
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
-| `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
+| `src/desk/files.wac` | Files |
+| `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
+| `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
 | `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |
 | `src/desk/grants.wac`, `src/desk/services.wac`, `src/desk/remember.wac`, `src/desk/allowed.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, asking, windows, open, note, the clipboard; what each program was allowed, remembered, and the Permissions window to take it back |
-| `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
-| `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
+| `src/desk/trash.wac` | the Trash and its note of where things came from |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |
-| `src/desk/usrbin.wac` | `/usr/bin`: the `wac` command, unpacked from `src/desk/wacbin.wac` (generated by `tools/wacbin.py`) |
 | `src/app.wac`, `src/browse.wac` | the Archive Explorer's page; its listing, breadcrumbs and keys, shared with Files |
-| `site.wac` | the build's last step: the Archive Explorer's module copied to `dist/apps/`, and the site's `index.json` |
+| `site.wac` | the build's last step: each app's module copied to `dist/apps/<name>.wasm`, and the site's `index.json` |
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
@@ -171,19 +179,19 @@ shares, so their pages can see each other's files.
   reason. As a backstop for this project's own parsing — a trap cannot be caught — work marks itself in
   progress; a page runs on one thread, so a timer that finds the mark still there knows the work died,
   and says so. The loops that receive files never open anything themselves.
-- **One disk, many shells.** The desktop makes one std `Files` at startup — on the browser's storage, or
-  in memory — and mounts wac's system over it (`/bin`, `/proc`, `/dev`) as box does, with one process
-  table. Files, the Viewer and the Editor read and write it through `vfs.wac`; every terminal is
-  `Session.startOn` those same files and that table. A
-  command that finishes bumps the disk's revision, so every Files window looks again. Programs run as
-  box applets in workers: the page is built with `--spawn applet`, and `src/desktop.wac` exports one.
-- **`/usr/bin/wac`.** `tools/wacbin.py`, run by `wac task build`, compiles the pinned commit's `wac` command
-  (3.6 MB) and writes it gzipped, in base64, into `src/desk/wacbin.wac`, which is generated and not committed.
-  At startup `usrbin.wac` unpacks it into a store mounted read-only at `/usr`, and every terminal has
-  `WACPATH=/usr/bin`, so the shell finds `wac` and spawns it as it would any program. It is handed the shell's
-  files, which is why it works on the desktop's disk.
-- **Size.** About 2.6 MB of module, `wac` included, at wac `955dbf698` — 3.5 MB at `b0d60f33`, and 5.4 MB at
-  `563d8828`, before wac's step 6 follow-ups shrank what a program carries; the Archive Explorer is 0.3 MB. It also needs a
+- **One disk.** The desktop makes one std `Files` at startup — on the browser's storage, or in memory — with the
+  site mounted at `/site`, and Files reads and writes it through `vfs.wac`. Every program sees it through its
+  grants (`grants.wac`), and a change one makes outside its own folder bumps the disk's revision a moment later, so
+  every Files window looks again. Each Terminal is `Session.startOn` its files with wac's system over them (`/bin`,
+  `/proc`, `/dev`) as box does, and a process table of its own; box's programs are the Terminal's module started
+  again, built with `--spawn applet`.
+- **`wac` on the site.** `tools/wacbin.py`, run by `wac task build`, compiles the pinned commit's `wac` command
+  (2.5 MB) into `dist/bin/wac`. Every terminal has `WACPATH=/site/bin`, so the shell finds `wac` and spawns it as it
+  would any program, handed the shell's files, which is why it works on the desktop's disk.
+- **Size.** The desktop is about 0.9 MB of module at wac `955dbf698` — 2.6 MB while it carried the Terminal and
+  `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
+  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, and `wac` 2.5 MB, each fetched
+  when it is first started. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.
 - **Folders arriving** come a file at a time with nothing marking the last, so they are gathered until

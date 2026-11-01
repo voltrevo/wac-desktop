@@ -32,8 +32,9 @@ It is written in [wac](https://github.com/voltrevo/wac) and compiled to WebAssem
 - **The Trash** remembers where each thing came from: Restore puts it back. Emptying it is for good.
 - **The Calculator** is in the launcher too, and takes typing as well as clicks.
 - **Your files stay in this browser** — nothing is uploaded. When the page is opened from a file rather
-  than a web address, the browser gives it nowhere to keep things, and the desktop says so: it works,
-  but forgets when the tab closes.
+  than a web address, the browser gives it nowhere to keep things, and the desktop says so: it forgets
+  when the tab closes. Its apps — the Viewer, Editor, Terminal and Calculator — come from the web address
+  it is served from, so opened from a file it has Files and the Trash, and none of them.
 """
 
 def emit(name, data):

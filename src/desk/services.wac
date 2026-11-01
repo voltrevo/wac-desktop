@@ -13,14 +13,15 @@
 
 import { Answer, FAULT_NOT_GRANTED, FAULT_UNSUPPORTED, Provider } from "std";
 import { Ticket } from "core";
-import { DESKTOP_ASK, DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE,
-         DESKTOP_PICK, DESKTOP_VERSION, DESKTOP_WINDOW } from "web";
+import { DESKTOP_ASK, DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_NOTE, DESKTOP_OPEN,
+         DESKTOP_PASTE, DESKTOP_PICK, DESKTOP_VERSION, DESKTOP_WINDOW } from "web";
 import { Grants, normal } from "./grants.wac";
-import { Got, Info } from "./vfs.wac";
+import { Got, Info, freeName, join } from "./vfs.wac";
 import { Consent, Desk, MAX_WINDOWS, NO_WINDOW, Picking, Running, openWindowFor } from "./wm.wac";
 import { remember } from "./remember.wac";
 import { appFolder } from "./program.wac";
 import { openPath } from "./files.wac";
+import { startApp } from "./builtin.wac";
 
 Answer said(string text) { return Answer(0, text, u8[](), 0 as i64, 0 as i64, 0); }
 
@@ -69,7 +70,8 @@ Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, i64 
     bumpDesk();
     return t;
   }
-  if (k == DESKTOP_OPEN) { return opened(d, g, bumpDesk, text); }
+  if (k == DESKTOP_OPEN) { return opened(d, g, bumpDesk, text, a == 1 as i64); }
+  if (k == DESKTOP_NEW) { return made(d, g, bumpDesk, text); }
   if (k == DESKTOP_ASK) { return asked(d, r, bumpDesk, text, a != 0 as i64); }
   if (k == DESKTOP_NOTE) {
     d.note = r.title + ": " + text;
@@ -117,15 +119,29 @@ Ticket<Answer> asked(Desk d, Running r, fn<void()> bumpDesk, string path, bool w
   return t;
 }
 
-/** Show `path` in the desktop's app for it — if the program could read it itself. */
-async Answer opened(Desk d, Grants g, fn<void()> bumpDesk, string path) {
+/** Show `path` in the desktop's app for it, or as text in its Editor — if the program could read it itself. */
+async Answer opened(Desk d, Grants g, fn<void()> bumpDesk, string path, bool asText) {
   if (!g.allows(path, false)) {
     return Answer(FAULT_NOT_GRANTED(), path + ": Not granted to this application", u8[](), 0 as i64, 0 as i64, 0);
   }
   string p = normal(path);
   Got<Info> s = await d.fs.stat(p);
   if (!s.ok) { return Answer(FAULT_UNSUPPORTED(), path + ": " + s.error, u8[](), 0 as i64, 0 as i64, 0); }
-  openPath(d, p, s.value.isDir);
+  if (asText && !s.value.isDir) { startApp(d, "editor", p); } else { openPath(d, p, s.value.isDir); }
   bumpDesk();
   return said("");
+}
+
+/**
+ * A new file on the Desktop named `name`, or the first free name like it, which the program may write from now on —
+ * for this run: like a file picked for it, it was given, but nothing is there yet to remember.
+ */
+async Answer made(Desk d, Grants g, fn<void()> bumpDesk, string name) {
+  if (name == "" || name.indexOf("/") >= 0 || name == "." || name == "..") {
+    return Answer(FAULT_UNSUPPORTED(), "“\{name}” cannot be a file's name", u8[](), 0 as i64, 0 as i64, 0);
+  }
+  await d.fs.mkdir("Desktop");
+  string path = join("Desktop", await freeName(d.fs, "Desktop", name));
+  g.grant(path, true);
+  return said("/" + path);
 }

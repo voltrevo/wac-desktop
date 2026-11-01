@@ -2,9 +2,14 @@
 //
 // **The shell is box's `Session`** — `packages/sh` with box's sixty-odd programs, `/bin`, `/proc` and
 // `/dev`, history and scrollback — and it imports no page, so a window is only its presentation: the
-// screen, a prompt and the line being typed. It runs over the desktop's own `Files`, which is the same disk
-// Files shows, so `ls /Desktop` lists the desktop and `echo hi > /Desktop/x` puts an icon on it. Every
-// terminal is `Session.startOn` those `Files` and one process table: one system, many shells.
+// screen, a prompt and the line being typed. It runs over this program's `Files`, which the desktop hands it as the
+// whole of its disk (`src/desk/builtin.wac`, the owner's choice) — the same disk Files shows, so `ls /Desktop` lists
+// the desktop and `echo hi > /Desktop/x` puts an icon on it — with box's `/bin`, `/proc` and `/dev` over it, and a
+// process table of its own.
+//
+// **A program of the desktop's**, started from the site in the folder it was opened on. `wac` is on the site too, as
+// `/site/bin/wac`, which `$WACPATH` names: the shell finds it and spawns it as it would any program, from a GET the
+// browser caches. box's programs are this module started again (`applet`, which the build names with `--spawn`).
 //
 // The window keeps scrolled to the bottom without being told to — a page cannot set `scrollTop` — by
 // stacking its contents from the bottom up (`column-reverse`), which a browser keeps pinned to the end.
@@ -14,12 +19,21 @@
 // window redraws on a timer, so output appears as it arrives.
 
 import { Vec } from "core";
-import { ElementEvent, MOD_CTRL, Node, Page, Ref, State, Ui, html.div, html.input, html.pre, html.span } from "web";
-import { box.Session } from "wac";
-import { Desk, Win, close } from "./wm.wac";
-import { Got, Info, join, leafOf, parentOf } from "./vfs.wac";
-import { openPath } from "./files.wac";
-import { WACPATH } from "./usrbin.wac";
+import { Files, Sys } from "std";
+import { Desktop, ElementEvent, MOD_CTRL, Node, Page, Ref, State, Ui, html.div, html.input, html.pre, html.span, html.style } from "web";
+import { box.Session, box.boxApplet, box.boxNames } from "wac";
+import { fs.ProcTable, fs.systemFiles } from "wac";
+import { css } from "../style.wac";
+import { termCss } from "./style.wac";
+
+/** Where a terminal looks for programs that are not box's: the site's, where the build puts `wac`. */
+export string WACPATH() { return "/site/bin"; }
+
+/**
+ * What a copy of this module started by the shell runs: one of box's programs, as a process of its own. The build
+ * names it with `--spawn applet`.
+ */
+export async i32 applet(Sys sys) { return await boxApplet(sys); }
 
 /** How often a terminal with a command running is redrawn, in milliseconds. */
 static i32 REDRAW_MS = 100;
@@ -29,6 +43,10 @@ struct Term {
   Session s;
   /** Lines typed while a command ran, to run after it, as a terminal keeps them. */
   Vec<string> ahead;
+  /** The disk as the shell sees it. */
+  Files files;
+  /** The desktop that started this program, which `open` asks to show a file; `null` on a page of its own. */
+  Desktop? desk;
 }
 
 /** A path as the shell means it, resolved against its working directory: absolute, `.` and `..` gone. */
@@ -50,30 +68,34 @@ string absolute(string cwd, string p) {
 }
 
 /** The desktop's own command: `open [path]` shows a file or folder in a window, as a double-click does. */
-async bool openCommand(Desk d, Term t, string line) {
+async bool openCommand(Term t, string line) {
   string arg = line.len() > 4 ? line.slice(5, line.len()) : "";
   while (arg.len() > 0 && arg[0] == " ") { arg = arg.slice(1, arg.len()); }
   if (arg.len() > 1 && (arg[0] == "\"" || arg[0] == "'") && arg.slice(arg.len() - 1, arg.len()) == arg[0]) {
     arg = arg.slice(1, arg.len() - 1);
   }
   string path = absolute(t.s.sh.cwd, arg == "" ? "." : arg);
-  string rel = path == "/" ? "" : path.slice(1, path.len());
   t.s.say("\{t.s.prompt()} \{line}\n");
-  Got<Info> st = await d.fs.stat(rel);
-  if (!st.ok) { t.s.say("open: \{arg}: no such file or folder\n[exit 1]\n"); return false; }
-  openPath(d, rel, st.value.isDir);
-  return true;
+  Desktop? desk = t.desk;
+  if (desk is null) { t.s.say("open: there is no desktop to show it on\n[exit 1]\n"); return false; }
+  match (await desk!.open(path)) {
+    Ok(v): { return true; }
+    Err(why): {
+      t.s.say("open: \{arg}: \{why}\n[exit 1]\n");
+      return false;
+    }
+  }
 }
 
 /** Run `line`, then whatever was typed while it ran, in order. */
-async void run(Desk d, Win w, Term t, string line, State<bool> busy, fn<void()> bumpDesk) {
+async void run(Page page, Term t, string line, State<bool> busy) {
   busy.set(true);
   string next = line;
   while (true) {
     string trimmed = next;
     while (trimmed.len() > 0 && trimmed[0] == " ") { trimmed = trimmed.slice(1, trimmed.len()); }
     if (trimmed == "open" || (trimmed.len() > 5 && trimmed.slice(0, 5) == "open ")) {
-      await openCommand(d, t, trimmed);
+      await openCommand(t, trimmed);
     } else {
       await t.s.feedLine(next);
     }
@@ -81,14 +103,12 @@ async void run(Desk d, Win w, Term t, string line, State<bool> busy, fn<void()> 
     next = t.ahead.remove(0);
   }
   busy.set(false);
-  // A command may have changed the disk: every window showing it looks again.
-  d.fsRev++;
-  if (t.s.over()) { close(d, w.id); }
-  bumpDesk();
+  // `exit`: the program ends, and the desktop closes its window.
+  if (t.s.over()) { page.sys.exit(0); }
 }
 
 /** Complete the last word of `draft` as a path, as far as the names that start with it agree. */
-async void complete(Desk d, Term t, State<string> draft) {
+async void complete(Term t, State<string> draft) {
   string line = draft.get();
   i32 cut = line.len();
   while (cut > 0 && line.slice(cut - 1, cut) != " ") { cut--; }
@@ -99,11 +119,12 @@ async void complete(Desk d, Term t, State<string> draft) {
   string dirPart = slash >= 0 ? word.slice(0, slash + 1) : "";
   string prefix = slash >= 0 ? word.slice(slash + 1, word.len()) : word;
   string dir = absolute(t.s.sh.cwd, dirPart == "" ? "." : dirPart);
-  Got<string[]> names = await d.fs.list(dir == "/" ? "" : dir.slice(1, dir.len()));
-  if (!names.ok) { return; }
+  auto listed = await t.files.readDir(dir);
+  if (listed.isErr()) { return; }
+  string[] names = listed.ok()!;
   Vec<string> hits = Vec.create();
-  for (i32 i = 0; i < names.value.len(); i++) {
-    string n = names.value[i];
+  for (i32 i = 0; i < names.len(); i++) {
+    string n = names[i];
     if (n.len() >= prefix.len() && n.slice(0, prefix.len()) == prefix) { hits.push(n); }
   }
   if (hits.len() == 0) { return; }
@@ -116,8 +137,8 @@ async void complete(Desk d, Term t, State<string> draft) {
   }
   string done = common;
   if (hits.len() == 1) {
-    Got<Info> st = await d.fs.stat(join(dir == "/" ? "" : dir.slice(1, dir.len()), common));
-    done = st.ok && st.value.isDir ? common + "/" : common + " ";
+    auto st = await t.files.stat(dir == "/" ? "/" + common : dir + "/" + common);
+    done = st.isOk() && st.ok()!.isDir ? common + "/" : common + " ";
   } else if (common == prefix) {
     // Nothing more they agree on: show the choices, as a shell does on a second Tab.
     string listed = "";
@@ -127,15 +148,8 @@ async void complete(Desk d, Term t, State<string> draft) {
   draft.set(line.slice(0, cut) + dirPart + done);
 }
 
-/** A terminal window's contents. */
-export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
-  Term t = ui.memo<Term>("", () => {
-    Session s = Session.startOn(page.sys, d.fs.fs, d.fs.table, "sh");
-    s.sh.cwd = w.arg == "" ? "/" : "/" + w.arg;
-    s.sh.setVar("WACPATH", WACPATH());
-    s.say("wac's shell, on this desktop's disk. Try ls, cat, grep, find or sha256sum; help lists the rest.\nopen <file> shows a file in a window.\n\n");
-    return Term(s, Vec.create());
-  });
+/** A terminal's contents. */
+Node TerminalApp(Ui ui, Page page, Term t) {
   auto draft = ui.state("");
   auto busy = ui.state(false);
   auto tick = ui.state(0);
@@ -144,9 +158,6 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
     if (!busy.get()) { return () => { }; }
     return ui.every(REDRAW_MS, () => { tick.update((i32 n) => n + 1); });
   });
-  // The window's folder is where the shell is, so a reload opens it there again.
-  string here = t.s.sh.cwd == "/" ? "" : t.s.sh.cwd.slice(1, t.s.sh.cwd.len());
-  if (!busy.get() && w.arg != here) { w.arg = here; d.dirty = true; }
   fn<void()> focusField = () => { if (field.element() is not null) { field.element()!.focus(); } };
   ui.effect("", () => { focusField(); return () => { }; });
   return <div class="term" onclick={(ElementEvent e) => { focusField(); }}>
@@ -166,16 +177,35 @@ export Node TerminalApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
                      return;
                    }
                    if (e.value == "ArrowUp" || e.value == "ArrowDown") { draft.set(t.s.recall(e.value == "ArrowUp")); return; }
-                   if (e.value == "Tab") { complete(d, t, draft); return; }
+                   if (e.value == "Tab") { complete(t, draft); return; }
                    if (intr) { t.s.interrupt(draft.get()); draft.set(""); return; }
                    if ((e.mods & MOD_CTRL) != 0 && (e.value == "l" || e.value == "L")) { t.s.screen = ""; tick.update((i32 n) => n + 1); return; }
                    if (e.value != "Enter") { return; }
                    string line = draft.get();
                    draft.set("");
-                   run(d, w, t, line, busy, bumpDesk);
+                   run(page, t, line, busy);
                  }}/>
         </div>
       </div>
     </div>
   </div>;
+}
+
+/** A shell in the folder this program was opened on — its argument — or at the root. */
+export async i32 main(Page page) {
+  page.title("Terminal");
+  string[] args = page.sys.args();
+  ProcTable table = ProcTable.create();
+  Files files = systemFiles(page.sys.files(), page.sys.random(), table, boxNames());
+  Session s = Session.startOn(page.sys, files, table, "sh");
+  s.sh.cwd = args.len() > 0 && args[0] != "" ? args[0] : "/";
+  s.sh.setVar("WACPATH", WACPATH());
+  s.say("wac's shell, on this desktop's disk. Try ls, cat, grep, find or sha256sum; help lists the rest.\nopen <file> shows a file in a window.\n\n");
+  Term t = Term(s, Vec.create(), files, null);
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { t.desk = d; }
+    Err(why): { }
+  }
+  page.mount((Ui ui) => <div class="termpage"><style>{css() + termCss()}</style><TerminalApp page={page} t={t}/></div>);
+  return 0;
 }

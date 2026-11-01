@@ -1,18 +1,16 @@
-// The desktop's disk: std's `Files`, shared with every terminal.
+// The desktop's disk: std's `Files`, which every program it starts sees through its grants.
 //
 // **One filesystem, two backings.** A page served over http gets the browser's Origin Private File System
 // as `page.sys.files()` — what is written survives a reload. A page opened from a `file://` URL is refused
 // that storage (Chromium answers a SecurityError), so the same desktop runs on a `MemoryStore` instead,
-// and says so. Either way it is one `Files`, with box's `/bin`, `/proc` and `/dev` mounted over it: Files
-// writes a file and a terminal's `ls` sees it, because they are asking the same filesystem rather than two
-// that agree.
+// and says so. Either way it is one `Files`, with the site mounted at `/site` when there is one: Files writes
+// a file and a terminal's `ls` sees it, because they are asking the same filesystem rather than two that agree.
 //
 // The apps see it through `Vfs`, which takes paths relative to the root — "" is the root,
 // "Desktop/notes.md" a file — and answers with the host's own sentence on failure.
 
 import { Result, Ticket, Vec, flatten } from "core";
 import { Files, MemoryStore, Sys } from "std";
-import { fs.ProcTable } from "wac";
 import { Page } from "web";
 
 export struct Info {
@@ -32,10 +30,8 @@ export struct Got<T> {
 export struct Vfs {
   /** Whether what is written here outlives the tab. */
   bool persistent;
-  /** The filesystem underneath, which a terminal's shell is handed too. */
+  /** The filesystem underneath, which each program is handed through its grants. */
   Files fs;
-  /** The process table every terminal's shell shares, as `ps` shows it: one system, many shells. */
-  ProcTable table;
   fn<Ticket<Got<u8[]>>(string)> read;
   fn<Ticket<Got<bool>>(string, u8[])> write;
   fn<Ticket<Got<Info>>(string)> stat;
@@ -113,11 +109,10 @@ async Got<bool> fsChange<F>(Ticket<Result<void, F>> pending) {
 }
 
 /** The apps' view of `fs`. */
-export Vfs vfsOf(Files fs, ProcTable table, bool persistent) {
+export Vfs vfsOf(Files fs, bool persistent) {
   return Vfs(
     persistent,
     fs,
-    table,
     (string p) => fsRead(fs, p),
     (string p, u8[] b) => fsWrite(fs, p, b),
     (string p) => fsStat(fs, p),

@@ -1,0 +1,75 @@
+// The desktop's own apps' looks, each on top of the Archive Explorer's tokens and icons (`../style.wac`): an app is a
+// program in a window of the desktop's, or a page on its own, and either way brings its own stylesheet.
+
+/** The Calculator's. */
+export string calcCss() {
+  return """
+    .calcpage { height: 100%; }
+    .calc { height: 100%; display: flex; flex-direction: column; background: var(--surface-2); outline: 0; user-select: none; -webkit-user-select: none; }
+    .cdisp { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 18px 12px; gap: 2px; }
+    .chist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 1px; scrollbar-width: thin; }
+    .chrow { display: flex; justify-content: flex-end; gap: 8px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px;
+             padding: 3px 6px; border-radius: 6px; cursor: pointer; text-align: right; }
+    .chrow:hover { background: var(--hover); color: var(--text); }
+    .chrow .chs { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .chrow .cha { font-weight: 650; color: var(--text); white-space: nowrap; }
+    .csub { min-height: 20px; text-align: right; font-size: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .csub.bad { color: var(--bad); }
+    .cmain { text-align: right; font-size: 40px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+    .cmain.m { font-size: 28px; } .cmain.s { font-size: 20px; }
+    .cghost { color: var(--faint); }
+    .ckeys { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 0 12px 12px; }
+    .ck { height: 50px; border: 0; border-radius: 12px; font: inherit; font-size: 19px; font-weight: 550; cursor: pointer; color: var(--text);
+          background: var(--surface); box-shadow: 0 1px 0 var(--line-strong), 0 0 0 1px var(--line) inset; transition: transform .05s, filter .12s; }
+    .ck:hover { filter: brightness(.97); }
+    .ck:active { transform: scale(.97); }
+    .ck.fn { background: var(--sunken); font-size: 16px; color: var(--muted); }
+    .ck.clear { color: var(--bad); }
+    .ck.op { background: var(--accent-soft); color: var(--accent); font-size: 22px; }
+    .ck.eq { background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: white; font-size: 22px; box-shadow: 0 6px 16px -8px var(--accent); }
+    @media (prefers-color-scheme: dark) { .ck:hover { filter: brightness(1.15); } }
+
+  """;
+}
+
+/** The Viewer's. */
+export string viewerCss() {
+  return """
+    .viewerpage, .viewer { display: flex; flex-direction: column; height: 100%; }
+    .viewer > .pane.preview { flex: 1; min-height: 0; }
+    /* The window's title names the file and the toolbar says what it is: the preview's own header goes. */
+    .viewer .phead { display: none; }
+  """;
+}
+
+/** The Editor's. */
+export string editorCss() {
+  return """
+    .editorpage { height: 100%; }
+    .editor { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
+    .etools { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    .etools .btn { height: 30px; font-size: 12.5px; padding: 0 10px; }
+    .epath { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ename { flex: 1; min-width: 0; font: inherit; font-size: 13px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--sunken); color: var(--text); outline: 0; }
+    .ename:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .estate { font-size: 12px; color: var(--faint); white-space: nowrap; }
+    .estate.dirty { color: var(--warn); font-weight: 600; }
+    .etext { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: 0; padding: 16px 18px; background: var(--surface);
+             color: var(--text); font-size: 13px; line-height: 1.6; tab-size: 4; }
+  """;
+}
+
+/** The Terminal's. */
+export string termCss() {
+  return """
+    .termpage { height: 100%; }
+    .term { height: 100%; display: flex; flex-direction: column; background: #12131a; color: #e3e6ef; cursor: text; }
+    /* Stacked from the bottom up, so the browser keeps the newest output in view without being told. */
+    .tscroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column-reverse; padding: 12px 14px 10px; }
+    .tinner { font-size: 13px; line-height: 1.5; }
+    .tout { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    .tline { display: flex; align-items: baseline; gap: 8px; }
+    .tps { color: #8d88ff; font-weight: 600; white-space: nowrap; }
+    .tcmd { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0; background: transparent; color: #f2f4fa; font-size: 13px; line-height: 1.5; caret-color: #8d88ff; }
+  """;
+}

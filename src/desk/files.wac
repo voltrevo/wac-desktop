@@ -8,7 +8,8 @@ import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
          html.span } from "web";
 import { Vfs, Got, Info, nowMillis, copyInto, join, leafOf, moveInto, parentOf, freeName, within } from "./vfs.wac";
-import { Desk, Win, canDrop, dragging, dropOn, hover, moved, open, pressFiles } from "./wm.wac";
+import { Desk, Win, canDrop, dragging, dropOn, hover, moved, open, pressFiles, startOf } from "./wm.wac";
+import { startApp } from "./builtin.wac";
 import { Origin, TRASH, deleteForGood, emptyTrash, inTrash, originOf, readOrigins, restoreFromTrash, toTrash } from "./trash.wac";
 import { Extracted, extract } from "../archive.wac";
 import { Kind, isContainer, kindLabel, sniff } from "../sniff.wac";
@@ -144,12 +145,16 @@ export void openPath(Desk d, string path, bool isDir) {
   string app = appFor(leafOf(path));
   // **A program is started, not shown**: it opens its own windows, if it has anything to show.
   if (app == "program") {
-    if (d.launch is not null) { d.launch!(path); }
+    if (d.launch is not null) { d.launch!(startOf(path)); }
     return;
   }
-  string ic = iconFor(leafOf(path));
+  // A document, in the desktop's Viewer or Editor — programs on its site.
+  if (app == "viewer" || app == "editor") {
+    startApp(d, app, path);
+    return;
+  }
   // An archive opens in a Files window of its own, already inside it.
-  open(d, app, path, leafOf(path), ic);
+  open(d, app, path, leafOf(path), iconFor(leafOf(path)));
 }
 
 async void readPreview(Vfs fs, FilesState s, string path, fn<void()> bump) {
@@ -621,8 +626,8 @@ Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<voi
     {!it.isDir && appFor(it.name) == "files" && !trash
       ? <button class="btn primary" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>
       : <button class="btn" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>}
-    {!it.isDir && !trash && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
-      ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { open(d, "editor", path, it.name, "edit"); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
+    {d.site && !it.isDir && !trash && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
+      ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { startApp(d, "editor", path); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
       : Node.Text("")}
     {!trash ? <button class="btn" title="Rename (F2)" onclick={(ElementEvent e) => { s.renaming = it.name; s.draft = it.name; bump(); }}>{icon("rename", "sm")}<span class="label">Rename</span></button>
             : Node.Text("")}
@@ -749,7 +754,9 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
         {clipN > 0 ? <button class="btn primary" title={"Paste (Ctrl+V): \{d.clipCut ? "move" : "copy"} \{nameOrCount(d.clip)} here"}
                              onclick={(ElementEvent e) => { paste(d, s, bump, bumpDesk); }}>{icon("paste", "sm")}<span class="label">Paste</span></button>
                    : Node.Text("")}
-        <button class="btn" title="A terminal in this folder" onclick={(ElementEvent e) => { open(d, "terminal", s.dir, "Terminal", "terminal"); bumpDesk(); }}>{icon("terminal", "sm")}<span class="label">Terminal</span></button>
+        {d.site
+          ? <button class="btn" title="A terminal in this folder" onclick={(ElementEvent e) => { startApp(d, "terminal", s.dir); bumpDesk(); }}>{icon("terminal", "sm")}<span class="label">Terminal</span></button>
+          : Node.Text("")}
         <button class="btn" title="New folder" onclick={(ElementEvent e) => { newFolder(d, s, bump, bumpDesk); }}>{icon("plus", "sm")}<span class="label">New folder</span></button>
         <label class="btn" title="Add files from your computer">{icon("upload", "sm")}<span class="label">Add files</span><input type="file" multiple="" class="hidden"/></label>
       </div>;

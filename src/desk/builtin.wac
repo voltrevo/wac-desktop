@@ -1,0 +1,85 @@
+// The desktop's own apps — the Calculator, the Viewer and the Editor, the Terminal and the Archive Explorer — as
+// programs on the site it was served from.
+//
+// **Each is a program like any other**, built beside the desktop into `dist/apps/<name>.wasm` and started from
+// `/site/apps/` by `launch`, in windows it opens itself. What makes one the desktop's own is only how it is started:
+// with what it was opened on as its argument, handed that and nothing more — the Viewer the file it shows, to read;
+// the Editor the file it edits, to change; the Terminal, a shell on this disk, all of it — at the size its window
+// suits, and kept by a session as the app and what it showed, so a reload starts it again where it was.
+//
+// **Served over http only** (the owner's choice, 2026-11-01). A desktop opened from a file has no site, so none of
+// these: what would open in one opens its folder in Files, where the preview shows it, and the launcher does not
+// offer them.
+
+import { Grants } from "./grants.wac";
+import { leafOf, parentOf } from "./vfs.wac";
+import { Desk, Placed, Running, Start, focus, open } from "./wm.wac";
+
+/** Where the build leaves the desktop's own apps, on the site. */
+export string appPath(string app) { return "site/apps/" + app + ".wasm"; }
+
+/** How the desktop starts its app `app` opened on `arg` — a file, a folder, or nothing. */
+export Start builtin(string app, string arg) {
+  Grants g = Grants.create();
+  string[] args = arg == "" ? string[]() : ["/" + arg];
+  i32 w = 760;
+  i32 h = 560;
+  string ic = "terminal";
+  if (app == "viewer") {
+    g.grant(arg, false);
+    ic = "text";
+  } else if (app == "editor") {
+    if (arg != "") { g.grant(arg, true); }
+    ic = "edit";
+  } else if (app == "terminal") {
+    // **The Terminal is handed the whole disk**, as the owner chose: it is a shell, and what it runs is the person's.
+    g.grant("", true);
+  } else if (app == "calc") {
+    w = 340;
+    h = 540;
+    ic = "calc";
+  } else if (app == "explorer") {
+    w = 980;
+    h = 600;
+    ic = "layers";
+  }
+  return Start(appPath(app), args, g, w, h, ic, app == "explorer", app, arg, null);
+}
+
+/** Running app `app`, if one is, with a window. */
+Running? runningApp(Desk d, string app) {
+  for (i32 i = 0; i < d.running.len(); i++) {
+    Running r = d.running.get(i);
+    if (r.start.app == app && r.wins.get(0) >= 0) { return r; }
+  }
+  return null;
+}
+
+/**
+ * Open the desktop's app `app` on `arg`: started from the site, or — the Calculator, which there is one of — its window
+ * brought forward. Without a site, a file's folder opens in Files instead, and anything else is not there to open.
+ */
+export void startApp(Desk d, string app, string arg) { startPlaced(d, app, arg, null); }
+
+/** As `startApp`, its first window where a session had it. */
+export void startPlaced(Desk d, string app, string arg, Placed? place) {
+  if (!d.site || d.launch is null) {
+    if (app == "viewer" || app == "editor") {
+      if (place is null) {
+        open(d, "files", parentOf(arg), leafOf(parentOf(arg)) == "" ? "Home" : leafOf(parentOf(arg)), "folder");
+        d.note = "Opened from a file, the desktop has no " + app + ": " + leafOf(arg) + " is shown here";
+      }
+    }
+    return;
+  }
+  if (app == "calc") {
+    Running? r = runningApp(d, "calc");
+    if (r is not null) {
+      focus(d, r!.wins.get(0));
+      return;
+    }
+  }
+  Start s = builtin(app, arg);
+  s.place = place;
+  d.launch!(s);
+}

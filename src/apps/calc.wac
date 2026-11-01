@@ -3,7 +3,11 @@
 // **The sum is text, and the answer is read from it.** What the window holds is the expression as typed —
 // `12+3*4`, in ASCII, with `r` for a square root and `q` for squared — and the answer is whatever a small
 // recursive-descent reading of that text gives, so precedence and brackets are the ordinary ones and an
-// unfinished sum simply has no answer yet. The window's `arg` keeps the text, so a reload brings it back.
+// unfinished sum simply has no answer yet. The text is kept in `sum`, in the program's own folder, so the next start
+// — a reload of the desktop, say — brings it back.
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`): built into `dist/apps/calc.wasm` and started from the
+// site, or opened as a page on its own, which keeps nothing.
 //
 // **Percent is the calculator's, not the programmer's.** `50%` alone is 0.5, but `200 + 10%` is 220: a
 // percentage added to or taken from something is a percentage *of* it, as every pocket calculator does.
@@ -12,8 +16,9 @@
 // exact to about sixteen, and the last few are where its rounding shows.
 
 import { Vec } from "core";
-import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.button, html.div, html.span } from "web";
-import { Desk, Win } from "./wm.wac";
+import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.button, html.div, html.span, html.style } from "web";
+import { calcCss } from "./style.wac";
+import { css } from "../style.wac";
 
 // ── reading a sum ───────────────────────────────────────────────────────────
 
@@ -360,16 +365,27 @@ string keyFor(string key) {
   return "";
 }
 
-/** A Calculator window's contents. */
-export Node CalcApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i32 rev) {
-  CalcState s = ui.memo<CalcState>("", () => calcState(w.arg));
+/** Where the sum is kept, in the program's own folder. */
+static string KEPT = "sum";
+
+/** Keep the sum as it now is: what is typed is not lost to a reload, and a page on its own, which has no folder, keeps nothing. */
+void keep(Page page, CalcState s, string[] last) {
+  if (s.expr == last[0]) { return; }
+  last[0] = s.expr;
+  page.sys.files().writeFile(KEPT, s.expr.toBytes());
+}
+
+/** The Calculator: its keys, its display, and the sums worked out above it, starting from `first`. */
+export Node CalcApp(Ui ui, Page page, string first) {
+  CalcState s = ui.memo<CalcState>("", () => calcState(first));
+  string[] last = ui.memo<string[]>("", () => [first]);
   auto version = ui.state(0);
   Ref root = ui.ref();
   fn<void()> refocus = () => { if (root.element() is not null) { root.element()!.focus(); } };
   ui.effect("", () => { refocus(); return () => { }; });
   fn<void(string)> key = (string k) => {
     press(s, k);
-    if (w.arg != s.expr) { w.arg = s.expr; d.dirty = true; }
+    keep(page, s, last);
     version.update((i32 v) => v + 1);
   };
   fn<Node(string, string, string)> b = (string label, string k, string cls) =>
@@ -381,7 +397,7 @@ export Node CalcApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fs
   for (i32 i = 0; i < s.sums.len(); i++) {
     f64 v = s.answers.get(i);
     past[i] = <button class="chrow" tabindex="-1" title="Use this answer"
-                      onclick={(ElementEvent e) => { s.expr = plain(v); s.fresh = true; s.error = ""; w.arg = s.expr; d.dirty = true; version.update((i32 n) => n + 1); }}>
+                      onclick={(ElementEvent e) => { s.expr = plain(v); s.fresh = true; s.error = ""; keep(page, s, last); version.update((i32 n) => n + 1); }}>
       <span class="chs">{pretty(s.sums.get(i))} =</span><span class="cha num">{shown(v)}</span></button>;
   }
   Answer live = evaluate(s.expr);
@@ -416,4 +432,13 @@ export Node CalcApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fs
       {b("±", "±", "")}{b("0", "0", "")}{b(".", ".", "")}{b("=", "=", "eq")}
     </div>
   </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Calculator");
+  string first = "";
+  auto kept = await page.sys.files().readFile(KEPT);
+  if (kept.isOk()) { first = string.fromBytes(kept.ok()!); }
+  page.mount((Ui ui) => <div class="calcpage"><style>{css() + calcCss()}</style><CalcApp page={page} first={first}/></div>);
+  return 0;
 }

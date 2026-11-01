@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `955dbf698`, and `web` to `6ff6b30`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `955dbf698`, and `web` to `8b45bf5`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
@@ -31,9 +31,10 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
   own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (40 unit tests, 92 desktop checks, 18 drop cases). The build also
-  compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time; `test:desk` builds
-  the programs in `samples/` and runs them, so it needs `wac` on `PATH`.
+  All of them pass at the latest commit (42 unit tests, 98 desktop checks, 18 drop cases). The build makes the
+  desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
+  (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
+  runs them, so it needs `wac` on `PATH`.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs; it needs git access to git.voltrevo.com.
 - Run unit tests with `wac task test`, which grants what they need; `wac test --allow-read test/one_test.wac`
   runs one file. A test file importing a namespace member from `"wac"` (`fs.ProcTable`) needs a wac from
@@ -65,15 +66,17 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   the box gaps. Everything the desktop asked of design/system/0015 is built, `file://` included.
 - **`wac` in the terminal** runs programs that import `std` and `core`. One importing a git dependency
   needs that dependency in a package cache on the page's disk, which nothing provides yet.
-- **Apps as separate modules: started.** The handover in `https://git.voltrevo.com/notes.git` (2026-10-29) is the
+- **Apps as separate modules: done for the built-in apps.** The handover in `https://git.voltrevo.com/notes.git` (2026-10-29) is the
   agreed direction: the desktop is a program's host, a program asks for capabilities by name, and a window is a
   page's program answered by `PageServer` (`src/desk/program.wac`). A program's files are what it was granted
   (`grants.wac`): its own folder, what it picked in the desktop's picker, what was dropped on its window; and
   `wac.desktop` (`services.wac`) is the picker, open, note, the clipboard and windows: a program starts with none
   and opens its own, each a slice of `wac.page`. More than it is handed it asks for (`Desktop.askFor`): the person
-  is asked once and an "Allow" is remembered (`remember.wac`), as are picks. Next there: a program describing
-  itself — name, icon, file types, what it will ask for — so the question can come before it runs; and the built-in
-  apps as modules on a read-only HTTP mount. Permissions (`allowed.wac`) lists what was allowed and takes it back.
+  is asked once and an "Allow" is remembered (`remember.wac`), as are picks. Permissions (`allowed.wac`) lists what
+  was allowed and takes it back. The Viewer, Editor, Terminal, Calculator and Archive Explorer are programs on the
+  desktop's site (`builtin.wac`, `src/apps/`), served over http only — the owner's choice: from a file there are
+  none. Next there: a program describing itself — name, icon, file types, what it will ask for — so the question
+  can come before it runs.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up
   and restore the whole disk), search across the disk, Editor find/replace and Markdown preview, terminal
   scrollback that survives a reload, settings (wallpaper, theme), quarter snapping.

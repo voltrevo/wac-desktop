@@ -4,11 +4,10 @@ import { Ticket } from "core";
 import { Runner } from "web";
 import { Vfs, Got, copyInto, moveInto, vfsOf } from "../src/desk/vfs.wac";
 import { MemoryStore, Sys } from "std";
-import { fs.ProcTable } from "wac";
 import { Desk, Win, canDrop, dragFilesTo, dropKey, hover, moved, newDesk, open, pressFiles } from "../src/desk/wm.wac";
 import { Origin, TRASH, deleteForGood, emptyTrash, originsText, parseOrigins, readOrigins, restoreFromTrash, toTrash,
          trashCount } from "../src/desk/trash.wac";
-import { Answer, CalcState, calcState, errorOf, evaluate, exprOf, plain, press, pretty, shown } from "../src/desk/calc.wac";
+import { Answer, CalcState, calcState, errorOf, evaluate, exprOf, plain, press, pretty, shown } from "../src/apps/calc.wac";
 
 T run<T>(Runner r, Ticket<T> t) {
   r.drain();
@@ -17,7 +16,7 @@ T run<T>(Runner r, Ticket<T> t) {
 }
 
 /** A disk in memory, as a page opened from a file gets. */
-Vfs disk(Sys sys) { return vfsOf(MemoryStore.create(sys.clock()).asUser("root"), ProcTable.create(), false); }
+Vfs disk(Sys sys) { return vfsOf(MemoryStore.create(sys.clock()).asUser("root"), false); }
 
 // ── moving ──────────────────────────────────────────────────────────────────
 
@@ -79,11 +78,11 @@ export string test_a_drag_hears_from_the_innermost_place_first(Sys sys) {
 
 export string test_windows_follow_what_moved(Sys sys) {
   Desk d = newDesk(disk(sys));
-  Win e = open(d, "editor", "Desktop/notes/a.md", "a.md", "text");
+  Win e = open(d, "files", "Desktop/notes/sub", "sub", "folder");
   Win f = open(d, "files", "Desktop/notes", "notes", "folder");
   Win g = open(d, "files", "Desktop/other", "other", "folder");
   moved(d, "Desktop/notes", "Home notes");
-  if (e.arg != "Home notes/a.md" || f.arg != "Home notes" || g.arg != "Desktop/other") { return "\{e.arg} | \{f.arg} | \{g.arg}"; }
+  if (e.arg != "Home notes/sub" || f.arg != "Home notes" || g.arg != "Desktop/other") { return "\{e.arg} | \{f.arg} | \{g.arg}"; }
   if (e.rev != 1 || g.rev != 0) { return "revisions"; }
   return "";
 }

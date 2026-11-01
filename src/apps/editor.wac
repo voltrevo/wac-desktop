@@ -1,0 +1,110 @@
+// The Editor: plain text, edited and saved back.
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`): started from the site with the file as its argument and
+// handed that file to change, and nothing else. A new file is saved where the desktop says — on the Desktop, under a
+// free name like the one typed (`Desktop.newFile`) — which it may then write. Opened as a page on its own, it edits
+// a new file it can only download.
+
+import { Desktop, ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ui, html.button, html.div, html.input, html.span, html.style,
+         html.textarea } from "web";
+import { icon } from "../preview.wac";
+import { css } from "../style.wac";
+import { editorCss } from "./style.wac";
+import { leafOf } from "./viewer.wac";
+
+struct Editing {
+  /** The file, from the disk's root; `""` for a new one, not saved yet. */
+  string path;
+  string text;
+  /** The text as it is on the disk, to know whether there is anything to save. */
+  string saved;
+  /** Why the last save failed, or `""`. */
+  string error;
+  /** Why the file could not be read, or `""`: there is nothing to edit. */
+  string unreadable;
+  /** For a new file: the name it will be saved as. */
+  string name;
+  Desktop? desk;
+}
+
+async void save(Page page, Editing e, fn<void()> bump) {
+  string path = e.path;
+  if (path == "") {
+    string want = e.name == "" ? "Untitled.txt" : e.name;
+    if (want.indexOf("/") >= 0) { e.error = "A name cannot contain “/”"; bump(); return; }
+    Desktop? desk = e.desk;
+    if (desk is null) { e.error = "Opened on its own, the Editor has nowhere to save: Download keeps a copy"; bump(); return; }
+    match (await desk!.newFile(want)) {
+      Ok(p): { path = p; }
+      Err(why): { e.error = why; bump(); return; }
+    }
+  }
+  string text = e.text;
+  match (await page.sys.files().writeFile(path, text.toBytes())) {
+    Ok(v): { }
+    Err(why): { e.error = "\{why}"; bump(); return; }
+  }
+  e.error = "";
+  e.saved = text;
+  if (e.path != path) {
+    e.path = path;
+    page.title(leafOf(path));
+  }
+  if (e.desk is not null) { e.desk!.note("Saved \{leafOf(path)}"); }
+  bump();
+}
+
+/** The path as a person reads it: from the disk's root, without the leading `/`. */
+string shownPath(string p) { return p.len() > 0 && p.slice(0, 1) == "/" ? p.slice(1, p.len()) : p; }
+
+Node Editor(Ui ui, Page page, Editing e) {
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  bool dirty = e.text != e.saved;
+  if (e.unreadable != "") {
+    return <div class="placeholder"><div>{icon("alert", "")}<div>{e.unreadable}</div></div></div>;
+  }
+  return <div class="editor">
+    <div class="etools">
+      {e.path == ""
+        ? <input class="ename" placeholder="Untitled.txt" value={e.name} oninput={(ElementEvent ev) => { e.name = ev.value; }}/>
+        : <span class="epath" title={shownPath(e.path)}>{shownPath(e.path)}</span>}
+      <span class={dirty || e.error != "" ? "estate dirty" : "estate"}>
+        {e.error != "" ? e.error : (dirty ? "Unsaved changes" : (e.path == "" ? "New file" : "Saved"))}</span>
+      <button class={dirty || e.path == "" ? "btn primary" : "btn"} onclick={(ElementEvent ev) => { save(page, e, bump); }}>
+        {icon("save", "sm")}<span class="label">Save</span></button>
+      <button class="btn" title="Download a copy" onclick={(ElementEvent ev) => { page.download(e.path == "" ? (e.name == "" ? "Untitled.txt" : e.name) : leafOf(e.path), e.text.toBytes()); }}>
+        {icon("download", "sm")}</button>
+    </div>
+    <textarea class="etext mono" spellcheck="false" value={e.text} prevent="Ctrl+s Meta+s"
+              onkeydown={(ElementEvent ev) => {
+                if ((ev.value == "s" || ev.value == "S") && (ev.mods & (MOD_CTRL | MOD_META)) != 0) { save(page, e, bump); }
+              }}
+              oninput={(ElementEvent ev) => {
+                bool was = e.text != e.saved;
+                e.text = ev.value;
+                if ((e.text != e.saved) != was) { bump(); }
+              }}></textarea>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  string[] args = page.sys.args();
+  Editing e = Editing(args.len() > 0 ? args[0] : "", "", "", "", "", "", null);
+  page.title(e.path == "" ? "Untitled" : leafOf(e.path));
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { e.desk = d; }
+    Err(why): { }
+  }
+  if (e.path != "") {
+    match (await page.sys.files().readFile(e.path)) {
+      Ok(bytes): {
+        e.text = string.toUtf8(bytes);
+        e.saved = e.text;
+      }
+      Err(why): { e.unreadable = "\{why}"; }
+    }
+  }
+  page.mount((Ui ui) => <div class="editorpage"><style>{css() + editorCss()}</style><Editor page={page} e={e}/></div>);
+  return 0;
+}

@@ -21,7 +21,7 @@ import { Grants, grantedFiles } from "./grants.wac";
 import { desktopProvider } from "./services.wac";
 import { recall } from "./remember.wac";
 import { Got, leafOf } from "./vfs.wac";
-import { CLOSED_WINDOW, Desk, Hand, MAX_WINDOWS, NO_WINDOW, Pending, Running, Win, close, dropHand, find, openWindowFor,
+import { CLOSED_WINDOW, Desk, Hand, MAX_WINDOWS, NO_WINDOW, Pending, Running, Start, Win, close, dropHand, find, openWindowFor,
          runningOf } from "./wm.wac";
 
 /** The folder a program keeps what it keeps in: `.apps/` and its file's name, without `.wasm`. */
@@ -61,8 +61,12 @@ Ticket<Answer> pageRequest(Desk d, Running r, fn<void()> bumpDesk, i32 k, i64 a,
   return t;
 }
 
-/** Start the program at `path`, with no window until it asks for one; it ends when it does, or its last window shuts. */
-export async void launch(Desk d, Page page, string path, fn<void()> bumpDesk) {
+/**
+ * Start the program `s` names, with no window until it asks for one; it ends when it does, or its last window shuts.
+ * It holds its own folder, what it was allowed before, and what `s` hands it for this run.
+ */
+export async void launch(Desk d, Page page, Start s, fn<void()> bumpDesk) {
+  string path = s.path;
   Got<u8[]> read = await d.fs.read(path);
   if (!read.ok) {
     d.error = "could not read " + path + ": " + read.error;
@@ -74,16 +78,17 @@ export async void launch(Desk d, Page page, string path, fn<void()> bumpDesk) {
   Grants g = Grants.create();
   g.grant(home, true);
   await recall(d, path, g);
+  for (i32 i = 0; i < s.given.paths.len(); i++) { g.grant(s.given.paths.get(i), s.given.writable.get(i)); }
   Vec<i32> wins = Vec.create();
   Vec<PageServer?> servers = Vec.create();
   for (i32 i = 0; i < MAX_WINDOWS; i++) {
     wins.push(NO_WINDOW);
     servers.push(null);
   }
-  Running r = Running(d.nextRun, path, leafOf(path), g, null, wins, servers, Vec.create(), false, false);
+  Running r = Running(d.nextRun, path, leafOf(path), g, s, null, wins, servers, Vec.create(), false, false);
   d.nextRun++;
   d.running.push(r);
-  auto started = await page.sys.procs().spawnProviding(read.value, string[](), Authority(grantedFiles(d.fs.fs, g, home), null, null, null),
+  auto started = await page.sys.procs().spawnProviding(read.value, s.args, Authority(grantedFiles(d.fs.fs, g, home, () => { soon(page, d, bumpDesk); }), null, null, null),
                                                        [pageProvider(d, r, bumpDesk), desktopProvider(d, r, bumpDesk)],
                                                        Launch("/" + home, false, false, false));
   if (started.isErr()) {
@@ -110,6 +115,23 @@ export async void launch(Desk d, Page page, string path, fn<void()> bumpDesk) {
   } else if (code != 0) {
     d.error = r.title + " exited with \{code}" + (trimmed(errs) == "" ? "" : ": " + firstLine(trimmed(errs)));
   }
+  bumpDesk();
+}
+
+/**
+ * A program changed the disk: every window showing it looks again — a moment later, once, however many changes a
+ * command made in the meantime.
+ */
+void soon(Page page, Desk d, fn<void()> bumpDesk) {
+  if (d.lookSoon) { return; }
+  d.lookSoon = true;
+  lookAgain(page, d, bumpDesk);
+}
+
+async void lookAgain(Page page, Desk d, fn<void()> bumpDesk) {
+  await page.sleep(150);
+  d.lookSoon = false;
+  d.fsRev++;
   bumpDesk();
 }
 
@@ -155,7 +177,7 @@ void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void
     bumpDesk();
   }, (string line) => { page.log(w.title + ": " + line); });
   r.servers.set(slice, server);
-  d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); }));
+  if (r.start.takesFiles) { d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); })); }
   Vec<Pending> later = Vec.create();
   Vec<Pending> now = r.waiting;
   r.waiting = later;

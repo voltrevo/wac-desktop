@@ -123,30 +123,67 @@ async Result<string[], LookFault> listLeading(Files disk, Grants g, string p) {
 /**
  * `disk` as a program holding `g` sees it, **its relative paths under `home`**: the served files are handed each path
  * as the program wrote it, so a name with no `/` before it is resolved here, in the program's own folder.
+ *
+ * **`changed` hears of each change it makes outside that folder**, once the change is made: the desktop's windows
+ * showing the disk look again, as they do after a change the desktop made itself. What a program keeps in its own
+ * folder is its business, and no window's.
  */
-export Files grantedFiles(Files disk, Grants g, string home) {
-  return Files.of(seen(disk, g, home), disk.user);
+export Files grantedFiles(Files disk, Grants g, string home, fn<void()> changed) {
+  return Files.of(seen(disk, g, home, changed), disk.user);
+}
+
+async Result<void, WriteFault> afterWrite(Ticket<Result<void, WriteFault>> t, bool tell, fn<void()> changed) {
+  Result<void, WriteFault> r = await t;
+  if (tell) { changed(); }
+  return r;
+}
+
+async Result<Output, WriteFault> afterOpen(Ticket<Result<Output, WriteFault>> t, bool tell, fn<void()> changed) {
+  Result<Output, WriteFault> r = await t;
+  if (tell) { changed(); }
+  return r;
+}
+
+async Result<void, MkdirFault> afterMkdir(Ticket<Result<void, MkdirFault>> t, bool tell, fn<void()> changed) {
+  Result<void, MkdirFault> r = await t;
+  if (tell) { changed(); }
+  return r;
+}
+
+async Result<void, MoveFault> afterMove(Ticket<Result<void, MoveFault>> t, bool tell, fn<void()> changed) {
+  Result<void, MoveFault> r = await t;
+  if (tell) { changed(); }
+  return r;
+}
+
+async Result<void, ModeFault> afterMode(Ticket<Result<void, ModeFault>> t, bool tell, fn<void()> changed) {
+  Result<void, ModeFault> r = await t;
+  if (tell) { changed(); }
+  return r;
 }
 
 /** A path as the disk knows it: an absolute one as it is, a relative one under `home`. */
 string resolved(string home, string p) { return p.len() > 0 && p.slice(0, 1) == "/" ? p : "/" + home + "/" + p; }
 
-FileOps seen(Files disk, Grants g, string home) {
+/** Whether a change at `p` — as the disk names it — is one the desktop's windows should hear of: not in `home`. */
+bool outside(string home, string p) { return !under(normal(p), home); }
+
+FileOps seen(Files disk, Grants g, string home, fn<void()> changed) {
   FileOps ops = granted(disk, g);
   return FileOps(
     (string p) => ops.readFile(resolved(home, p)),
-    (string p, u8[] b) => ops.writeFile(resolved(home, p), b),
+    (string p, u8[] b) => afterWrite(ops.writeFile(resolved(home, p), b), outside(home, resolved(home, p)), changed),
     (string p) => ops.openRead(resolved(home, p)),
-    (string p) => ops.openWrite(resolved(home, p)),
-    (string p) => ops.openAppend(resolved(home, p)),
+    (string p) => afterOpen(ops.openWrite(resolved(home, p)), outside(home, resolved(home, p)), changed),
+    (string p) => afterOpen(ops.openAppend(resolved(home, p)), outside(home, resolved(home, p)), changed),
     (string p) => ops.stat(resolved(home, p)),
     (string p) => ops.linkStat(resolved(home, p)),
     (string p) => ops.readDir(resolved(home, p)),
-    (string p, bool parents) => ops.mkdir(resolved(home, p), parents),
-    (string p, bool recursive) => ops.remove(resolved(home, p), recursive),
-    (string from, string to) => ops.rename(resolved(home, from), resolved(home, to)),
-    (string p, i32 mode) => ops.chmod(resolved(home, p), mode),
-    (string p, bool on) => ops.setExecutable(resolved(home, p), on),
+    (string p, bool parents) => afterMkdir(ops.mkdir(resolved(home, p), parents), outside(home, resolved(home, p)), changed),
+    (string p, bool recursive) => afterMove(ops.remove(resolved(home, p), recursive), outside(home, resolved(home, p)), changed),
+    (string from, string to) => afterMove(ops.rename(resolved(home, from), resolved(home, to)), true, changed),
+    (string p, i32 mode) => afterMode(ops.chmod(resolved(home, p), mode), outside(home, resolved(home, p)), changed),
+    (string p, bool on) => afterMode(ops.setExecutable(resolved(home, p), on), outside(home, resolved(home, p)), changed),
     (string p, string owner) => ops.chown(resolved(home, p), owner));
 }
 

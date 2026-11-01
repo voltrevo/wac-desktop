@@ -1,0 +1,78 @@
+// The Viewer: one file, shown the way the Archive Explorer shows one — rendered, as text, as hex, with its checksums.
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`): started from the site with the file as its argument and
+// handed that file to read, and nothing else. Edit asks the desktop to open the same file in its Editor
+// (`Desktop.edit`), which it can only do for a file this program may read. Opened as a page on its own, it has no
+// file and says so.
+
+import { Desktop, ElementEvent, Node, Page, Ui, html.button, html.div, html.span, html.style } from "web";
+import { Model, Level, emptyModel, hasFile, kindOf, openRoot, top } from "../model.wac";
+import { Kind, kindLabel } from "../sniff.wac";
+import { icon, preview } from "../preview.wac";
+import { sizeOf } from "../bytes.wac";
+import { css } from "../style.wac";
+import { viewerCss } from "./style.wac";
+
+/** The last part of a path. */
+export string leafOf(string path) {
+  i32 k = path.len() - 1;
+  while (k >= 0 && path.slice(k, k + 1) != "/") { k--; }
+  return path.slice(k + 1, path.len());
+}
+
+/** What the Viewer shows: the file, opened, or why it cannot be; and the desktop, when there is one. */
+struct Viewing {
+  string path;
+  Model? m;
+  string error;
+  Desktop? desk;
+}
+
+Node Viewer(Ui ui, Page page, Viewing v) {
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 n) => n + 1); };
+  Model? m = v.m;
+  if (v.error != "" || m is null || !hasFile(m!)) {
+    return <div class="placeholder"><div>{icon("alert", "")}<div>{v.error == "" ? "Nothing to show" : v.error}</div></div></div>;
+  }
+  Level l = top(m!);
+  string name = leafOf(v.path);
+  Kind k = kindOf(l, 0);
+  bool text = match (k) { Text: true, default: false };
+  Desktop? desk = v.desk;
+  return <div class="viewer">
+    <div class="etools">
+      <span class="epath" title={v.path}>{kindLabel(k, name)} · {sizeOf(l.archive.entries[0].size)}</span>
+      {text && desk is not null
+        ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { desk!.edit(v.path); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
+        : Node.Text("")}
+      <button class="btn" title="Download a copy" onclick={(ElementEvent e) => { page.download(name, l.archive.data); }}>{icon("download", "sm")}<span class="label">Download</span></button>
+    </div>
+    {preview(m!, page, bump, (i32 i) => { })}
+  </div>;
+}
+
+export async i32 main(Page page) {
+  string[] args = page.sys.args();
+  Viewing v = Viewing(args.len() > 0 ? args[0] : "", null, "", null);
+  page.title(v.path == "" ? "Viewer" : leafOf(v.path));
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { v.desk = d; }
+    Err(why): { }
+  }
+  if (v.path == "") {
+    v.error = "Nothing to show: the Viewer shows the file it is opened on";
+  } else {
+    match (await page.sys.files().readFile(v.path)) {
+      Ok(bytes): {
+        Model m = emptyModel();
+        openRoot(m, leafOf(v.path), bytes);
+        v.m = m;
+        v.error = m.error;
+      }
+      Err(e): { v.error = "\{e}"; }
+    }
+  }
+  page.mount((Ui ui) => <div class="viewerpage"><style>{css() + viewerCss()}</style><Viewer page={page} v={v}/></div>);
+  return 0;
+}

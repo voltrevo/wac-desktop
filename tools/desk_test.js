@@ -119,6 +119,15 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check(/\nran here\nstatus 0\n?$/.test(out), 'and runs a program straight from its source', out.slice(-120));
   out = await runUntil("printf '%s\\n' 'export string test_holds() { return \"\"; }' 'export string test_breaks() { return \"on purpose\"; }' > two_test.wac; wac test two_test.wac", /\d+ passed, \d+ failed/, 60000);
   check(out.includes('ok   test_holds') && out.includes('FAIL test_breaks — on purpose') && out.includes('1 passed, 1 failed'), 'and tests it', out.slice(-160));
+  // A loop that never asks anything: only ending its worker stops it.
+  out = await runUntil("printf '%s\\n' 'export i32 main() {' '  i32 n = 0;' '  while (true) { n = n + 1; }' '  return n;' '}' > spin.wac; wac build spin.wac -o spin", /spin\.wasm: \d+ bytes/, 60000);
+  await p.locator('.win.focus .tcmd').fill('./spin.wasm'); await p.locator('.win.focus .tcmd').press('Enter');
+  await settle(1500);
+  out = await p.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
+  check(/\$ \.\/spin\.wasm\n?$/.test(out), 'a program wac built runs as a process of the Terminal\'s', out.slice(-160));
+  await p.locator('.win.focus .tcmd').press('Control+c');
+  out = await runUntil('echo back after the stop', /\nback after the stop\n?$/, 15000);
+  check(/\nback after the stop\n?$/.test(out), 'and ^C stops a program that never yields', out.slice(-160));
   await run('echo made by the shell > shell.txt');
   await p.locator('.tbwin', { hasText: 'wordcount' }).click(); await settle(800);
   check((await texts('.win.focus .row .t')).includes('shell.txt'), 'and what the shell writes appears in Files', await texts('.win.focus .row .t'));
@@ -379,6 +388,32 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await texts('.win.focus .chrow .cha')).join() === '42,9,0.3', 'the sums worked out are kept above', await texts('.win.focus .chrow .cha'));
   await shot('6-calculator');
 
+  // It keeps its sum in its own folder: closed and started again, the sum is still there.
+  await p.keyboard.press('Escape'); await p.keyboard.type('5+5'); await settle(400);
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Calculator' }).click();
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .csub'); return e !== null && e.textContent === '= 10'; }, null, { timeout: 15000 }).catch(() => {});
+  check((await p.textContent('.win.focus .csub').catch(() => '')) === '= 10', 'started again, the Calculator has the sum it had', await p.textContent('.win.focus .csub').catch(() => ''));
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+
+  // A new file from the Editor is saved where the desktop says: on the Desktop, under the name typed.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Text editor' }).click();
+  await p.waitForSelector('.win.focus .ename', { timeout: 15000 }).catch(() => {});
+  await p.locator('.win.focus .ename').fill('fresh.txt');
+  await p.locator('.win.focus textarea').fill('written in a new file\n');
+  await p.locator('.win.focus .editor button', { hasText: 'Save' }).click();
+  await p.waitForFunction(() => [...document.querySelectorAll('.dicon .dname')].some((e) => e.textContent === 'fresh.txt'), null, { timeout: 10000 }).catch(() => {});
+  check((await texts('.dicon .dname')).includes('fresh.txt') && (await p.textContent('.win.focus .estate')) === 'Saved' && (await p.textContent('.win.focus .tt')) === 'fresh.txt',
+        'a new file from the Editor lands on the Desktop', [await texts('.dicon .dname'), await p.textContent('.win.focus .estate').catch(() => ''), await p.textContent('.win.focus .tt').catch(() => '')]);
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(300);
+
+  // `exit` ends the Terminal, and its window closes.
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click();
+  await p.waitForSelector('.win.focus .tcmd', { timeout: 15000 }).catch(() => {});
+  const terms = (await texts('.win .tt')).filter((t) => t === 'Terminal').length;
+  await p.locator('.win.focus .tcmd').fill('exit'); await p.locator('.win.focus .tcmd').press('Enter'); await settle(1200);
+  check((await texts('.win .tt')).filter((t) => t === 'Terminal').length === terms - 1, '`exit` ends the Terminal and closes its window', await texts('.win .tt'));
+
   // **The desktop's own site**, over http: read-only at /site, and the Archive Explorer started from it, a
   // program like any other.
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click(); await settle(800);
@@ -404,44 +439,21 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await q.waitForTimeout(800);
   check((await q.textContent('.pill')).includes('Not saved'), 'from file:// it says nothing is kept', await q.textContent('.pill'));
   check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).join() === 'Home,Trash,Welcome.md,demo.zip', 'and still starts with something to open', null);
+  // **The desktop's own apps are on its site, and from a file there is none** (the owner's choice): Welcome.md opens
+  // its folder in Files, where the preview shows it, and the launcher offers only what is the desktop's itself.
+  check((await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).join() === 'Desktop', 'from file://, Welcome.md opens its folder in Files', await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent)));
+  await q.locator('.tblaunch').click();
+  await q.waitForSelector('.litem', { timeout: 5000 }).catch(() => {});
+  const offered = await q.$$eval('.litem .lt', (l) => l.map((x) => x.textContent));
+  check(offered.join() === 'Files,Desktop,Trash,Permissions,Welcome', 'and the launcher offers no app from a site', offered);
+  await q.locator('.tblaunch').click(); await q.waitForTimeout(300);
+  if (shots) { await q.screenshot({ path: path.join(shots, 'desk-8-file.png') }); }
   await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();
   await q.waitForTimeout(1200);
   check((await q.$$eval('.win.focus .crumb .t', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'and demo.zip still opens', null);
-  await q.locator('.tblaunch').click();
-  check(!(await q.$$eval('.litem .lt', (l) => l.map((x) => x.textContent))).includes('Archive Explorer'), 'from file:// there is no site, so no program from it', null);
-  await q.locator('.tblaunch').click();
 
-  // The shell on the in-memory disk: the same files Files shows, and its programs still run.
-  await q.locator('.tblaunch').click(); await q.locator('.litem', { hasText: 'Terminal' }).click(); await q.waitForTimeout(800);
-  const qrun = async (line) => { await q.locator('.win.focus .tcmd').fill(line); await q.locator('.win.focus .tcmd').press('Enter'); await q.waitForTimeout(1500); return q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => ''); };
-  let mem = await qrun('ls; echo in memory > mem.txt; cat mem.txt | wc -c');
-  check(mem.includes('Welcome.md') && mem.includes('demo.zip') && /\n10\n?$/.test(mem), 'from file:// the shell runs on the same in-memory disk', mem.slice(-80));
-  check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).includes('mem.txt'), 'and what it writes appears on the desktop', null);
-  // From a file too, programs are processes — the page's own thread starts them — so `wac` runs, and ^C stops a
-  // program that never ends.
-  const qUntil = async (line, want, ms) => {
-    await q.locator('.win.focus .tcmd').fill(line); await q.locator('.win.focus .tcmd').press('Enter');
-    const end = Date.now() + ms;
-    let seen = '';
-    while (Date.now() < end) {
-      seen = await q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
-      if (want.test(seen)) break;
-      await q.waitForTimeout(250);
-    }
-    return seen;
-  };
-  mem = await qUntil("printf 'export i32 main() { return 4; }\\n' > four.wac; wac check four.wac", /four\.wac: \d+ file/, 60000);
-  check(mem.includes('four.wac: 1 file(s), no diagnostics'), 'from file://, wac runs in the terminal', mem.slice(-160));
-  mem = await qUntil("printf '%s\\n' 'export i32 main() {' '  i32 n = 0;' '  while (true) { n = n + 1; }' '  return n;' '}' > spin.wac; wac build spin.wac -o spin", /spin\.wasm: \d+ bytes/, 60000);
-  // A loop that never asks anything: only ending its worker stops it.
-  await q.locator('.win.focus .tcmd').fill('./spin.wasm'); await q.locator('.win.focus .tcmd').press('Enter');
-  await q.waitForTimeout(1500);
-  mem = await q.$eval('.win.focus .tout', (e) => e.textContent).catch(() => '');
-  check(/\$ \.\/spin\.wasm\n?$/.test(mem), 'from file://, a program wac built runs as a process', mem.slice(-160));
-  await q.locator('.win.focus .tcmd').press('Control+c');
-  mem = await qUntil('echo back after the stop', /\nback after the stop\n?$/, 15000);
-  check(/\nback after the stop\n?$/.test(mem), 'and ^C stops a program that never yields', mem.slice(-160));
-  await q.locator('.tbwin', { hasText: 'demo.zip' }).click(); await q.waitForTimeout(300);
+  // Its taskbar button brings it forward, unless it is in front already — where a click would put it away.
+  if ((await q.textContent('.win.focus .tt').catch(() => '')) !== 'demo.zip') { await q.locator('.tbwin', { hasText: 'demo.zip' }).click(); await q.waitForTimeout(300); }
   await q.locator('.win.focus .wbtn[title=Close]').click({ delay: 150 }); await q.waitForTimeout(300);
   check(!(await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).includes('demo.zip'), 'a slow press on Close closes', null);
 
