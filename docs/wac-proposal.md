@@ -4,11 +4,13 @@ The desktop is a tactical, DOM-only experiment, built in wac as an outside consu
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
 `Session`. This note lists what it needs from wac, most important first.
 
-**Status at the wac commit the project pins (2026-10-28):** items 1 to 5 are merged, and so is 7 — the
-terminal has `wac`, and from a page opened as a file too. The project has no patches and no vendored code — it imports wac's packages as
-`import { json.parse } from "wac"`. From item 6, modifier keys in `prevent`, decoders that return errors,
-and the LICENSE are merged too.
-Still open: the reader's time zone, reproducible names (`0368c`), `wac update`, and the box gaps.
+**Status at the commits the project pins (2026-11-01: wac `25d20719e`, `web` `ed87134`):** items 1 to 5 and 7 are
+merged, and so are 8 and 9 — the two wac fixes programs in windows needed. The page package is `web`, a repository
+of its own since 2026-10-29; what this list says of wac's `packages/web` is that repository now. The project has no
+patches and no vendored code — it imports wac's packages as `import { json.parse } from "wac"`. From item 6,
+modifier keys in `prevent`, decoders that return errors, and the LICENSE are merged too.
+Still open: the reader's time zone, reproducible names (`0368c`), `wac update` against git.voltrevo.com, the box
+gaps, and item 10, a compiler limit.
 
 ## 1. Folder drops in `web` (merged)
 
@@ -26,7 +28,7 @@ The change is +59 −7 lines in three files: `tools/build.wac`, the `Picked` doc
 `src/page.wac`, and the package README. Real drops were tested in Chromium on `file://` and `http://`,
 with the handle API present, missing and refusing (18 cases).
 
-## 2. Merge the growable generic-instantiation table in `wacc` (still needed)
+## 2. Merge the growable generic-instantiation table in `wacc` (merged, `63edaad6b`)
 
 **Commit:** `2a6ca392` (on master `638b4fc6a`), in `packages/wacc/src/emit.wac`, `Env.instantiate`.
 
@@ -41,7 +43,7 @@ reaches a fixed point under `./bootstrap.sh`. The 3.4 MB desktop page builds wit
 Because the fix is inside the compiler, the project's CI bootstraps `wac` from the pinned commit
 instead of using an installed one. That is part of why CI takes about two minutes.
 
-## 3. `import { … } from "wac"` (blocked on `0369c`)
+## 3. `import { … } from "wac"` (merged: `lib.wac`; the project's `vendor/` is gone)
 
 The project vendors 176 files (40,361 lines) from 19 packages, using `tools/vendor_wac.py`. The roots
 it needs are:
@@ -115,10 +117,9 @@ processes, and `^C`, on `file://`.
 - **Reproducible builds** (filed as `0368c`). The module's debug names include the absolute path of the package cache
   (`…root__wac_cache_git_…`). The same source built under a different `$WAC_HOME` therefore gives
   different bytes, with the builder's home path inside. Names relative to the cache would fix it.
-- **`wac update` on the Node host** failed with *"network access not granted to this
-  application"* in the container this was built in. The project works around it by filling the cache
-  with `tools/use-local-wac.sh`. It may be the container's network rather than wac; worth checking
-  whether the fetch path asks for the network grant.
+- **`wac update` against git.voltrevo.com** is answered 401: wac's own fetcher has no credentials there, where
+  `git` does. The project fills the cache with `git` instead (`tools/fill-cache.sh`, the same script as wac's).
+  What would end it: `wac update` taking credentials — a helper, or what `git` is configured with.
 - **Box gaps seen from the terminal:** `ls -l` reports "not implemented", and `ps` does not list the
   shell that a `Session` started.
 - ~~**A LICENSE file.**~~ Done: MIT.
@@ -149,6 +150,26 @@ Two things are needed for it:
 
 The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has not been measured.
 
+## 8. `wac test` ran no test taking a `Sys` beside a `"wac"` import (merged, `3792c730d`)
+
+A test file importing a namespace member from `"wac"` — `import { fs.ProcTable } from "wac"`, as
+`test/desk_test.wac` does — had its tests taking a `Sys` dropped without a word when run alone ("0 passed"), and
+in a directory the generated harness named a `Sys` nothing imported. The adapter's parse could not read the member
+import; it reads it as two names now.
+
+## 9. A parent answers a provided capability's requests as each settles (merged, `ec212ae8a`)
+
+A program in a window keeps a `wac.page` request open for its next event. `std`'s parent answered a child's
+requests in turn, so that open request held up every other the window's program made. Each is answered when its
+answer settles now.
+
+## 10. A generic taking a lambda, in a large module (open)
+
+`web`'s `when` was `when<T>(Ticket<T> t, fn<void()> f)` for a moment, and the desktop stopped building: *"a lambda
+(this module has 902, 7 in a position the walk does not type yet)"* — the seven lambdas handed to `when` — while
+every smaller page that used it built. `web` takes a `TicketBase` instead (`ed87134`). No small reproduction yet:
+it needs a module the size of the desktop's.
+
 ## Summary
 
 | # | What | Where | State |
@@ -162,5 +183,8 @@ The expected cost is the page growing from 3.4 MB to about 6–7 MB. That has no
 | 6 | Decoders return errors | `gzip`, `zstd` | merged; used |
 | 6 | LICENSE | repo root | merged (MIT) |
 | 6 | Reproducible names | build | filed, `0368c` |
-| 6 | Time zone, `wac update`, box gaps | various | open |
+| 6 | Time zone, `wac update` (401 from git.voltrevo.com), box gaps | various | open |
 | 7 | `wac` in the terminal | this project | done: `/usr/bin/wac`, a module on the disk |
+| 8 | `Sys` tests beside a `"wac"` import | `wac test` | merged (`3792c730d`) |
+| 9 | A provided capability answered as it settles | `std` | merged (`ec212ae8a`) |
+| 10 | A generic taking a lambda, in a large module | `wacc` | open; worked around in `web` |
