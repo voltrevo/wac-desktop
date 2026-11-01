@@ -235,6 +235,28 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
         'a program with nothing to show opens no window, and its words are the desktop\'s note', await p.$eval('.toast', (e) => e.textContent).catch(() => ''));
   check((await texts('.win .tt')).length === windowsBefore, 'and no window opened for it', await texts('.win .tt'));
 
+  // **More than it is handed is asked for once** (samples/reader.wac): the person allows it to read the desktop, and
+  // started again it holds that already — no question.
+  build('reader.wac', 'reader');
+  await openDropped('reader.wasm');
+  await p.waitForSelector('.consent', { timeout: 15000 }).catch(() => {});
+  const question = await p.$eval('.consent .phead', (e) => e.textContent).catch(() => '');
+  check(question === 'Reader asks to read Desktop', 'a program asking for more is asked about, naming what', question);
+  await p.locator('.consent .btn.primary').click();
+  const listedIn = () => p.$eval('.win.focus .program-body .listed', (e) => e.textContent).catch(() => '');
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  check((await listedIn()).split(',').includes('Welcome.md'), 'and once allowed, it reads what it asked for', await listedIn());
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+  if ((await texts('.dicon .dname')).includes('reader.wasm')) {
+    await p.$eval('.dicon[title="reader.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  } else {
+    await row('reader.wasm').dblclick();
+  }
+  await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body .listed'); return e !== null && e.textContent !== '…'; }, null, { timeout: 10000 }).catch(() => {});
+  check((await p.$$('.consent')).length === 0 && (await listedIn()).split(',').includes('Welcome.md'),
+        'started again, it is not asked again', { asked: (await p.$$('.consent')).length, listed: await listedIn() });
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+
   const before = await texts('.win .tt');
   await settle(1500);                       // the layout is saved a second after it changes
   await p.reload();
@@ -242,7 +264,7 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await settle(1500);
   check(JSON.stringify((await texts('.win .tt')).sort()) === JSON.stringify(before.sort()), 'a reload brings the windows back', [before, await texts('.win .tt')]);
   // notes.wasm is here only if it was dropped with nothing in front that takes files.
-  check((await texts('.dicon .dname')).filter((n) => !['notes.wasm', 'two.wasm', 'hello.wasm'].includes(n)).join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
+  check((await texts('.dicon .dname')).filter((n) => !['notes.wasm', 'two.wasm', 'hello.wasm', 'reader.wasm'].includes(n)).join() === 'Home,Trash,Welcome.md,counter.wasm,demo,demo.zip,dropped.txt', 'and the files', await texts('.dicon .dname'));
   check((await p.$eval('.win textarea', (e) => e.value).catch(() => '')) === '# edited\nall: wordcount\n', 'and the edit', null);
   check(!!(await p.$('.win.snapl')), 'and the snapped window, snapped', null);
   await shot('4-reloaded');

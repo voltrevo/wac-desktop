@@ -19,6 +19,7 @@ import { Ticket, Vec } from "core";
 import { Element, Node, PAGE_CAPABILITY, PAGE_COUNT, PAGE_VERSION, Page, PageServer, Ref, Ui, html.div, when } from "web";
 import { Grants, grantedFiles } from "./grants.wac";
 import { desktopProvider } from "./services.wac";
+import { recall } from "./remember.wac";
 import { Got, leafOf } from "./vfs.wac";
 import { CLOSED_WINDOW, Desk, Hand, MAX_WINDOWS, NO_WINDOW, Pending, Running, Win, close, dropHand, find, openWindowFor,
          runningOf } from "./wm.wac";
@@ -72,6 +73,7 @@ export async void launch(Desk d, Page page, string path, fn<void()> bumpDesk) {
   await d.fs.fs.mkdir(home, true);
   Grants g = Grants.create();
   g.grant(home, true);
+  await recall(d, path, g);
   Vec<i32> wins = Vec.create();
   Vec<PageServer?> servers = Vec.create();
   for (i32 i = 0; i < MAX_WINDOWS; i++) {

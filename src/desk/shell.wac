@@ -13,7 +13,7 @@ import { fs.ProcTable, fs.systemFiles } from "wac";
 import { box.boxNames } from "wac";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
          hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax,
-         Hand, Picking, handFor } from "./wm.wac";
+         Consent, Hand, Picking, handFor } from "./wm.wac";
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { CalcApp } from "./calc.wac";
 import { FilesApp, appFor, openPath } from "./files.wac";
@@ -230,6 +230,24 @@ Node Picker(Ui ui, Desk d, Picking p, string dir, i32 fsRev, fn<void()> bumpDesk
         <span class="pnote">Only what you choose is handed to {p.who}.</span>
         <button class="btn" onclick={(ElementEvent e) => { p.chose(""); }}>Cancel</button>
         <button class="btn primary" disabled={chosen.get() == "" ? "" : null} onclick={(ElementEvent e) => { p.chose(join(p.dir, chosen.get())); }}>Choose</button>
+      </div>
+    </div>
+  </div>;
+}
+
+/**
+ * **A program asking for more than it was handed**, over everything else: who, what, and whether it would change it.
+ * An answer is the person's once: "Allow" is remembered for that program (`services.wac`).
+ */
+Node Consenting(Ui ui, Consent c) {
+  string place = c.path == "" ? "everything on this desktop" : c.path;
+  return <div class="pick-shade">
+    <div class="pick consent" role="dialog">
+      <div class="phead"><b>{c.who}</b> asks to {c.write ? "read and change" : "read"} <span class="mono cpath">{place}</span></div>
+      <div class="pfoot">
+        <span class="pnote">If you allow it, {c.who} will not ask again.</span>
+        <button class="btn" onclick={(ElementEvent e) => { c.answer(false); }}>Don't allow</button>
+        <button class="btn primary" onclick={(ElementEvent e) => { c.answer(true); }}>Allow</button>
       </div>
     </div>
   </div>;
@@ -553,5 +571,6 @@ export Node Desktop(Ui ui, Page page) {
     {ghost}
     {taskbar(d, page, bump)}
     {d.picking is not null ? <Picker d={d} p={d.picking!} dir={d.picking!.dir} fsRev={d.fsRev} bumpDesk={bump}/> : Node.Text("")}
+    {d.consent is not null ? <Consenting c={d.consent!}/> : Node.Text("")}
   </div>;
 }

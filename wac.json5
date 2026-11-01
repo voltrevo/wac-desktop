@@ -4,8 +4,8 @@
     // as a program reaches into it.
     wac: { git: 'https://git.voltrevo.com/wac.git', ref: '25d20719ebd5df91f11b222218e068e7ea434a9c' },
     // The page a program is handed — `import { Page, Event } from "web"` — a repository of its own since 2026-10-29.
-    web: { git: 'https://git.voltrevo.com/web.git', ref: 'de36bebcbb0f6fc9a1748f71bf7498efc2cc38f6' },
+    web: { git: 'https://git.voltrevo.com/web.git', ref: 'e3ffeb9727827db5f3c11e04229af9a03856086e' },
     // The page builder `build.wac` calls — a program, so building needs nothing but `wac`.
-    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: 'de36bebcbb0f6fc9a1748f71bf7498efc2cc38f6', subdir: './tools' },
+    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: 'e3ffeb9727827db5f3c11e04229af9a03856086e', subdir: './tools' },
   },
 }

@@ -12,7 +12,7 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned in `wac.lock`**: wac at `25d20719e` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `de36beb`. Both are
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `e3ffeb9`. Both are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -114,6 +114,10 @@ shares, so their pages can see each other's files.
   in `web`), or files dropped on its window, which are the program's and are not written to the disk. Through
   `wac.desktop` it can also show a file it holds in the desktop's app for it, say something in the desktop's note,
   and use the desktop's text clipboard. `samples/notes.wac` does each of these.
+- **More than it is handed, a program asks for once.** `Desktop.askFor(path, write)` shows the person who asks, for
+  what and whether it would change it; "Allow" is remembered for that program in `.desktop/grants.json`, as is a
+  file chosen for it in the picker, so started again it holds them and is not asked again. The desktop's own
+  `.desktop` and another program's folder are never given. `samples/reader.wac` asks to read the desktop.
 - **The Editor** saves with Ctrl+S or its Save button.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
@@ -127,7 +131,7 @@ shares, so their pages can see each other's files.
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac`, `src/desk/apps.wac` | Files; the Viewer and the Editor |
 | `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |
-| `src/desk/grants.wac`, `src/desk/services.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, open, note, the clipboard |
+| `src/desk/grants.wac`, `src/desk/services.wac`, `src/desk/remember.wac` | what a program may reach of the disk; `wac.desktop` answered — the picker, asking, windows, open, note, the clipboard; what each program was allowed, remembered |
 | `src/desk/trash.wac`, `src/desk/calc.wac` | the Trash and its note of where things came from; the Calculator |
 | `src/desk/terminal.wac` | the Terminal: a window onto box's `Session` — screen, prompt, completion, type-ahead, `open` |
 | `src/desk/style.wac`, `src/desk/seed.wac` | the desktop's look; what a new desktop starts with (from `tools/seed.py`) |
@@ -136,7 +140,7 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
-| `samples/` | `demo.zip`'s source; `counter.wac`, `notes.wac`, `two.wac` and `hello.wac`, programs the browser test runs |
+| `samples/` | `demo.zip`'s source; `counter.wac`, `notes.wac`, `two.wac`, `hello.wac` and `reader.wac`, programs the browser test runs |
 | `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `fill-cache.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
 

@@ -4,7 +4,7 @@ The desktop is a tactical, DOM-only experiment, built in wac as an outside consu
 repository. It is a page with windows, Files, a Viewer, an Editor, and a Terminal running box's
 `Session`. This note lists what it needs from wac, most important first.
 
-**Status at the commits the project pins (2026-11-01: wac `25d20719e`, `web` `ed87134`):** items 1 to 5 and 7 are
+**Status at the commits the project pins (2026-11-01: wac `25d20719e`, `web` `e3ffeb9`):** items 1 to 5 and 7 are
 merged, and so are 8 and 9 — the two wac fixes programs in windows needed. The page package is `web`, a repository
 of its own since 2026-10-29; what this list says of wac's `packages/web` is that repository now. The project has no
 patches and no vendored code — it imports wac's packages as `import { json.parse } from "wac"`. From item 6,

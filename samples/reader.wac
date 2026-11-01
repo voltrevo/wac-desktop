@@ -1,0 +1,38 @@
+// A program that asks for more than it is handed: `tools/desk_test.js` builds it and opens it. It asks the desktop to
+// let it read the desktop's own folder, which the person is asked about once; then it lists what is there.
+
+import { Sys } from "std";
+import { Desktop, Node, Page, Ui, html.p, html.span } from "web";
+
+async string listed(Sys sys) {
+  match (await Desktop.of(sys)) {
+    Ok(d): {
+      auto allowed = await d.askFor("/Desktop", false);
+      if (allowed.isErr()) { return "refused: " + allowed.err()!; }
+      auto names = await sys.files().readDir("/Desktop");
+      if (names.isErr()) { return "could not list: \{names.err()!}"; }
+      string out = "";
+      string[] all = names.ok()!;
+      for (i32 i = 0; i < all.len(); i++) { out = out + (i > 0 ? "," : "") + all[i]; }
+      return out;
+    }
+    Err(why): { return "no desktop: " + why; }
+  }
+}
+
+async void show(Sys sys, fn<void(string)> f) { f(await listed(sys)); }
+
+Node Reader(Ui ui, Page page) {
+  auto seen = ui.state("…");
+  ui.effect("start", () => {
+    show(page.sys, (string s) => { seen.set(s); });
+    return () => { };
+  });
+  return <p>The desktop holds: <span class="listed">{seen.get()}</span></p>;
+}
+
+export async i32 main(Page page) {
+  page.title("Reader");
+  page.mount((Ui ui) => <Reader page={page}/>);
+  return 0;
+}

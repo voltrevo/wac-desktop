@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `25d20719e`, and `web` to `de36beb`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `25d20719e`, and `web` to `e3ffeb9`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
@@ -31,7 +31,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
   own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (39 unit tests, 85 desktop checks, 18 drop cases). The build also
+  All of them pass at the latest commit (40 unit tests, 88 desktop checks, 18 drop cases). The build also
   compiles the `wac` command for `/usr/bin` (`tools/wacbin.py`), which is most of its time; `test:desk` builds
   the programs in `samples/` and runs them, so it needs `wac` on `PATH`.
 - `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs; it needs git access to git.voltrevo.com.
@@ -70,8 +70,10 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   page's program answered by `PageServer` (`src/desk/program.wac`). A program's files are what it was granted
   (`grants.wac`): its own folder, what it picked in the desktop's picker, what was dropped on its window; and
   `wac.desktop` (`services.wac`) is the picker, open, note, the clipboard and windows: a program starts with none
-  and opens its own, each a slice of `wac.page`. Next there: grants agreed once and remembered (the owner's answer,
-  which needs a program's self-description), and the built-in apps moving out as modules on a read-only HTTP mount.
+  and opens its own, each a slice of `wac.page`. More than it is handed it asks for (`Desktop.askFor`): the person
+  is asked once and an "Allow" is remembered (`remember.wac`), as are picks. Next there: a program describing
+  itself — name, icon, file types, what it will ask for — so the question can come before it runs; a way to see and
+  take back what each program was allowed; and the built-in apps as modules on a read-only HTTP mount.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up
   and restore the whole disk), search across the disk, Editor find/replace and Markdown preview, terminal
   scrollback that survives a reload, settings (wallpaper, theme), quarter snapping.

@@ -120,6 +120,8 @@ export struct Desk {
   Vec<Hand> hands;
   /** A program's request to choose a file, while the person is choosing: the picker shows over everything. */
   Picking? picking;
+  /** A program asking for more than it was handed, while the person decides (`services.wac`). */
+  Consent? consent;
   /** The programs running, each with its windows (`program.wac`). */
   Vec<Running> running;
   i32 nextRun;
@@ -192,6 +194,14 @@ export struct Picking {
   fn<void(string)> chose;
 }
 
+/** A program asking to read `path` — and to change it, when `write` — and what to tell with the person's answer. */
+export struct Consent {
+  string who;
+  string path;
+  bool write;
+  fn<void(bool)> answer;
+}
+
 /** How to hand files to window `id`, if it is a program's that takes them. */
 export Hand? handFor(Desk d, i32 id) {
   for (i32 i = 0; i < d.hands.len(); i++) { if (d.hands.get(i).win == id) { return d.hands.get(i); } }
@@ -212,7 +222,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null, Vec.create(), 1, null);
+              Vec.create(), null, null, Vec.create(), 1, null);
 }
 
 export Win? find(Desk d, i32 id) {
@@ -459,7 +469,7 @@ export bool dragFilesTo(Desk d, i32 px, i32 py, bool copy) {
 
 export static string SESSION = ".desktop/session.json";
 
-void str(Buf b, string s) {
+export void str(Buf b, string s) {
   b.push('"');
   u8[] bytes = s.toBytes();
   for (i32 i = 0; i < bytes.len(); i++) {
@@ -509,13 +519,13 @@ i32 num(JsonValue o, string k, i32 otherwise) {
   return match (v!) { Number(x, raw): x as~ i32, default: otherwise };
 }
 
-string text(JsonValue o, string k) {
+export string text(JsonValue o, string k) {
   JsonValue? v = o.member(k);
   if (v is null) { return ""; }
   return match (v!) { Str(b): string.fromBytes(b), default: "" };
 }
 
-bool flag(JsonValue o, string k) {
+export bool flag(JsonValue o, string k) {
   JsonValue? v = o.member(k);
   if (v is null) { return false; }
   return match (v!) { Bool(b): b, default: false };

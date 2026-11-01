@@ -5,6 +5,10 @@ import { Runner } from "web";
 import { Files, MemoryStore, Sys } from "std";
 import { Grants, grantedFiles, normal } from "../src/desk/grants.wac";
 import { appFolder } from "../src/desk/program.wac";
+import { allowed, recall, remember } from "../src/desk/remember.wac";
+import { Desk, newDesk } from "../src/desk/wm.wac";
+import { vfsOf } from "../src/desk/vfs.wac";
+import { fs.ProcTable } from "wac";
 
 /** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
 T run<T>(Runner r, Ticket<T> t) {
@@ -67,4 +71,30 @@ export string test_a_programs_files_are_the_disk_as_its_grants_let_it_see_it(Sys
   Runner r = Runner.create();
   schedule r.take;
   return run(r, throughGrants(MemoryStore.create(sys.clock()).asUser("root")));
+}
+
+async string remembered(Desk d) {
+  Grants first = Grants.create();
+  await recall(d, "Desktop/reader.wasm", first);
+  if (first.allows("Documents/a.txt", false)) { return "something was remembered before anything was allowed"; }
+  await remember(d, "Desktop/reader.wasm", "/Documents", false);
+  await remember(d, "Desktop/other.wasm", "Music", true);
+  Grants again = Grants.create();
+  await recall(d, "Desktop/reader.wasm", again);
+  if (!again.allows("Documents/a.txt", false)) { return "what it was allowed did not come back"; }
+  if (again.allows("Documents/a.txt", true)) { return "it came back writable"; }
+  if (again.allows("Music/b.mp3", false)) { return "another program's grant came with it"; }
+  await remember(d, "Desktop/reader.wasm", "Documents", true);
+  Grants wider = Grants.create();
+  await recall(d, "Desktop/reader.wasm", wider);
+  if (!wider.allows("Documents/a.txt", true)) { return "allowed to change it later, it still may not"; }
+  if ((await allowed(d)).len() != 2) { return "the same path was remembered twice: \{(await allowed(d)).len()}"; }
+  return "";
+}
+
+export string test_what_a_program_was_allowed_comes_back_for_it_and_no_other(Sys sys) {
+  Runner r = Runner.create();
+  schedule r.take;
+  Desk d = newDesk(vfsOf(MemoryStore.create(sys.clock()).asUser("root"), ProcTable.create(), false));
+  return run(r, remembered(d));
 }

@@ -146,6 +146,8 @@ export string deskCss() {
     .prow.sel { background: var(--accent-soft); }
     .pfoot { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
     .pnote { flex: 1; color: var(--muted); font-size: 12px; }
+    .consent .phead { padding: 18px 16px 10px; }
+    .cpath { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
     .program-body { flex: 1; overflow: auto; min-height: 0; }
     .program-status { padding: 6px 10px; color: var(--muted); border-top: 1px solid var(--line); }
     .program-said { margin: 0; padding: 8px 10px; max-height: 40%; overflow: auto; border-top: 1px solid var(--line); white-space: pre-wrap; }

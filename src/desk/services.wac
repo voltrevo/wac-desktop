@@ -5,14 +5,21 @@
 // program's `Grants` — readable and writable, since the person chose it for the program to work on — before the
 // program hears it. Nothing else of the disk changes hands. `open` shows a path only if the program could read it
 // itself, so it cannot use the desktop to look where it may not.
+//
+// **What it asks for beyond that, the person is asked about once** (`DESKTOP_ASK`): the desktop names the program, the
+// path and whether it would change it, and an "Allow" is added to its grants and remembered (`remember.wac`) — as is
+// a file chosen for it in the picker. Some paths are never the person's to give: the desktop's own `.desktop`, and
+// another program's folder.
 
 import { Answer, FAULT_NOT_GRANTED, FAULT_UNSUPPORTED, Provider } from "std";
 import { Ticket } from "core";
-import { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
-         DESKTOP_VERSION, DESKTOP_WINDOW } from "web";
+import { DESKTOP_ASK, DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE,
+         DESKTOP_PICK, DESKTOP_VERSION, DESKTOP_WINDOW } from "web";
 import { Grants, normal } from "./grants.wac";
 import { Got, Info } from "./vfs.wac";
-import { Desk, MAX_WINDOWS, NO_WINDOW, Picking, Running, openWindowFor } from "./wm.wac";
+import { Consent, Desk, MAX_WINDOWS, NO_WINDOW, Picking, Running, openWindowFor } from "./wm.wac";
+import { remember } from "./remember.wac";
+import { appFolder } from "./program.wac";
 import { openPath } from "./files.wac";
 
 Answer said(string text) { return Answer(0, text, u8[](), 0 as i64, 0 as i64, 0); }
@@ -26,10 +33,10 @@ Ticket<Answer> now(Answer a) {
 /** What `Procs.spawnProviding` is handed, so program `r` finds the desktop. */
 export Provider desktopProvider(Desk d, Running r, fn<void()> bumpDesk) {
   return Provider(DESKTOP_CAPABILITY(), DESKTOP_VERSION(), DESKTOP_COUNT,
-                  (i32 k, i64 a, i64 b, string text, u8[] bytes) => answerDesktop(d, r, bumpDesk, k, text));
+                  (i32 k, i64 a, i64 b, string text, u8[] bytes) => answerDesktop(d, r, bumpDesk, k, a, text));
 }
 
-Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, string text) {
+Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, i64 a, string text) {
   Grants g = r.grants;
   if (k == DESKTOP_WINDOW) {
     // The next slot never used: slot 0 is the page a program opens, so a window asked for is one of the rest.
@@ -54,6 +61,7 @@ Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, stri
         t.resolve(Answer(0, "", u8[](), 0 as i64, 0 as i64, 1));
       } else {
         g.grant(path, true);
+        remember(d, r.path, path, true);
         t.resolve(said("/" + normal(path)));
       }
       bumpDesk();
@@ -62,6 +70,7 @@ Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, stri
     return t;
   }
   if (k == DESKTOP_OPEN) { return opened(d, g, bumpDesk, text); }
+  if (k == DESKTOP_ASK) { return asked(d, r, bumpDesk, text, a != 0 as i64); }
   if (k == DESKTOP_NOTE) {
     d.note = r.title + ": " + text;
     bumpDesk();
@@ -73,6 +82,39 @@ Ticket<Answer> answerDesktop(Desk d, Running r, fn<void()> bumpDesk, i32 k, stri
   }
   if (k == DESKTOP_PASTE) { return now(said(d.clipText)); }
   return now(Answer(FAULT_UNSUPPORTED(), "wac.desktop has no request \{k}", u8[](), 0 as i64, 0 as i64, 0));
+}
+
+Answer allowedAnswer(bool yes, string why) { return Answer(0, why, u8[](), 0 as i64, 0 as i64, yes ? 0 : 1); }
+
+/** Whether `path` is the desktop's own, or a program's folder other than `own`: never the person's to give. */
+bool notTheirs(string path, string own) {
+  string p = normal(path);
+  if (p == "\0") { return true; }
+  if (p == ".desktop" || (p.len() > 9 && p.slice(0, 9) == ".desktop/")) { return true; }
+  bool apps = p == ".apps" || (p.len() > 6 && p.slice(0, 6) == ".apps/");
+  return apps && !(p == own || (p.len() > own.len() && p.slice(0, own.len() + 1) == own + "/"));
+}
+
+/** Program `r` asks to read `path` — and change it, when `write`: allowed at once if it may, else the person decides. */
+Ticket<Answer> asked(Desk d, Running r, fn<void()> bumpDesk, string path, bool write) {
+  if (notTheirs(path, appFolder(r.path))) { return now(allowedAnswer(false, path + " is the desktop's own")); }
+  if (r.grants.allows(path, write)) { return now(allowedAnswer(true, "")); }
+  Ticket<Answer> t;
+  if (d.consent is not null || d.picking is not null) {
+    t.resolve(Answer(FAULT_UNSUPPORTED(), "the desktop is already asking the person something", u8[](), 0 as i64, 0 as i64, 0));
+    return t;
+  }
+  d.consent = Consent(r.title, normal(path), write, (bool yes) => {
+    d.consent = null;
+    if (yes) {
+      r.grants.grant(path, write);
+      remember(d, r.path, path, write);
+    }
+    t.resolve(allowedAnswer(yes, yes ? "" : "the person did not allow it"));
+    bumpDesk();
+  });
+  bumpDesk();
+  return t;
 }
 
 /** Show `path` in the desktop's app for it — if the program could read it itself. */

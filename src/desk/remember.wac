@@ -1,0 +1,83 @@
+// What each program was allowed, remembered: `.desktop/grants.json`.
+//
+// **Agreed once, and remembered** (the owner's answer to the handover's design point 6). A path the person allowed a
+// program when it asked (`DESKTOP_ASK`), and a file they chose for it in the picker, are written here against the
+// program's file; the next time that program starts it holds them again, and is not asked again. What the person
+// refused is not written, so a program asking again is asked about again.
+
+import { Buf, Vec } from "core";
+import { json.JsonValue } from "wac";
+import { json.parse } from "wac";
+import { Grants, normal } from "./grants.wac";
+import { Got } from "./vfs.wac";
+import { Desk, flag, str, text } from "./wm.wac";
+
+export static string GRANTS = ".desktop/grants.json";
+
+/** One thing a program was allowed: a path, and whether it may change what is there too. */
+export struct Allowed {
+  string program;
+  string path;
+  bool write;
+}
+
+/** Everything remembered. A damaged file remembers nothing, which is asking again, not allowing. */
+export async Allowed[] allowed(Desk d) {
+  Vec<Allowed> out = Vec.create();
+  Got<u8[]> read = await d.fs.read(GRANTS);
+  if (!read.ok) { return out.toArray(); }
+  JsonValue? doc = parse(read.value).ok();
+  if (doc is null) { return out.toArray(); }
+  JsonValue? list = doc!.member("grants");
+  if (list is null) { return out.toArray(); }
+  match (list!) {
+    Array(items): {
+      for (i32 i = 0; i < items.len(); i++) {
+        JsonValue o = items.get(i);
+        string program = text(o, "program");
+        string path = text(o, "path");
+        if (program != "" && normal(path) != "\0") { out.push(Allowed(program, normal(path), flag(o, "write"))); }
+      }
+    }
+    default: { }
+  }
+  return out.toArray();
+}
+
+/** Grant `program` again what it was allowed before. */
+export async void recall(Desk d, string program, Grants g) {
+  Allowed[] all = await allowed(d);
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].program == program) { g.grant(all[i].path, all[i].write); }
+  }
+}
+
+/** Remember that `program` was allowed `path` — and to change it, when `write`. */
+export async void remember(Desk d, string program, string path, bool write) {
+  Allowed[] all = await allowed(d);
+  Vec<Allowed> kept = Vec.create();
+  bool found = false;
+  string p = normal(path);
+  for (i32 i = 0; i < all.len(); i++) {
+    Allowed a = all[i];
+    if (a.program == program && a.path == p) {
+      found = true;
+      kept.push(Allowed(a.program, a.path, a.write || write));
+    } else {
+      kept.push(a);
+    }
+  }
+  if (!found) { kept.push(Allowed(program, p, write)); }
+  Buf b = Buf.create();
+  b.pushStr("{\"grants\":[");
+  for (i32 i = 0; i < kept.len(); i++) {
+    Allowed a = kept.get(i);
+    if (i > 0) { b.push(','); }
+    b.pushStr("{\"program\":"); str(b, a.program);
+    b.pushStr(",\"path\":"); str(b, a.path);
+    b.pushStr(",\"write\":" + (a.write ? "true" : "false") + "}");
+  }
+  b.pushStr("]}\n");
+  await d.fs.mkdir(".desktop");
+  await d.fs.write(GRANTS, b.take());
+}
