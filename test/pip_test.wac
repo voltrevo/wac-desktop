@@ -7,7 +7,8 @@ import { Vec } from "core";
 import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
-import { clock, keyByte, keysOf, medal, par, restoreBest } from "../src/apps/pip.wac";
+import { clock, keyByte, keysOf, medal, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { LAYERS, Song, mixed, songs, stems } from "../src/apps/pip/music.wac";
 
 /** A level of `rows`, padded with air to the full width, bedrock below. */
 World made(string[] rows) {
@@ -631,4 +632,56 @@ export string test_a_dark_level_is_lit_only_near_its_lights() {
 i32 brightness(Screen s, i32 x, i32 y) {
   i32 at = (y * 320 + x) * 4;
   return (s.px[at] as i32) + (s.px[at + 1] as i32) + (s.px[at + 2] as i32);
+}
+
+/** **Each level gets its song**, by its shape: the dark's, a tower's, the wind's where the air moves, or the fields'. */
+export string test_each_level_gets_the_song_its_shape_calls_for() {
+  Level[] ls = allLevels();
+  string[] want = ["field", "field", "field", "field", "field", "field", "field", "field", "field", "field", "field",
+                   "field", "towers", "towers", "towers", "wind", "wind", "dark", "dark"];
+  for (i32 i = 0; i < ls.len(); i++) {
+    string got = styleOf(load(ls[i]));
+    if (got != want[i]) { return "\{ls[i].name}: \{got}, not \{want[i]}"; }
+  }
+  return "";
+}
+
+/**
+ * **Every song is whole, loops cleanly, and is not silent**: its layers all as long as each other, the full mix
+ * peaking just short of full, the step from its last sample to its first no bigger than its own steps — a click
+ * there would sound at every loop — and, for a level's song, a layer for each thing that earns one.
+ */
+export string test_every_song_is_whole_and_loops_cleanly() {
+  Song[] all = songs();
+  for (i32 k = 0; k < all.len(); k++) {
+    Song s = all[k];
+    f64[][] parts = stems(s);
+    if (parts.len() != LAYERS) { return "\{s.name}: \{parts.len()} layers"; }
+    f64[] full = mixed(parts, LAYERS - 1);
+    f64 peak = 0.0;
+    f64 step = 0.0;
+    for (i32 i = 0; i < full.len(); i++) {
+      f64 a = full[i] < 0.0 ? 0.0 - full[i] : full[i];
+      if (a > peak) { peak = a; }
+      if (i > 0) {
+        f64 d = full[i] - full[i - 1];
+        if (d < 0.0) { d = 0.0 - d; }
+        if (d > step) { step = d; }
+      }
+    }
+    if (peak < 0.8 || peak > 0.86) { return "\{s.name}: peaks at \{peak}"; }
+    if (s.loops) {
+      f64 seam = full[full.len() - 1] - full[0];
+      if (seam < 0.0) { seam = 0.0 - seam; }
+      if (seam > step * 0.5) { return "\{s.name}: a click where it loops, \{seam} against its biggest step \{step}"; }
+    }
+    if (s.name != "title" && s.name != "fanfare" && s.name != "finale") {
+      for (i32 l = 0; l < LAYERS; l++) {
+        bool any = false;
+        for (i32 i = 0; i < parts[l].len() && !any; i++) { if (parts[l][i] != 0.0) { any = true; } }
+        if (!any) { return "\{s.name}: layer \{l} is silent"; }
+      }
+    }
+  }
+  return "";
 }

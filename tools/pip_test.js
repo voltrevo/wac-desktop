@@ -13,7 +13,10 @@ const shots = process.env.SHOTS || '';
 const WATCH = `
   window.__played = []; window.__stopped = 0;
   const start = AudioBufferSourceNode.prototype.start, stop = AudioBufferSourceNode.prototype.stop;
-  AudioBufferSourceNode.prototype.start = function (...a) { window.__played.push([this.buffer.length, this.loop]); return start.apply(this, a); };
+  AudioBufferSourceNode.prototype.start = function (...a) { window.__played.push([this.buffer.length, this.loop, a[0] ?? 0, Math.round((a[1] ?? 0) * 1e6)]); return start.apply(this, a); };
+  window.__ramps = [];
+  const ramp = AudioParam.prototype.linearRampToValueAtTime;
+  AudioParam.prototype.linearRampToValueAtTime = function (v, t) { window.__ramps.push(Math.round(v * 100) / 100); return ramp.call(this, v, t); };
   AudioBufferSourceNode.prototype.stop = function (...a) { window.__stopped++; return stop.apply(this, a); };
 `;
 
@@ -53,9 +56,13 @@ const WATCH = `
     const hud = p.locator('.phud');
     await settle();
     assert.match(await hud.textContent(), /^First Light · Lanterns 0\/4 · 0:0/, await hud.textContent());
-    const music = await p.evaluate('window.__played.filter(([n, loop]) => loop).length');
-    assert.equal(music, 1, 'the tune loops from the start');
-    ok(`Enter starts First Light, and the tune: ${await hud.textContent()}`);
+    // The title's song, then the fields': each seven layers, every one looping, all started for the same moment.
+    await p.waitForFunction(() => window.__played.filter(([n, loop]) => loop).length === 14, null, { timeout: 10000 });
+    // Together: the same moment, from the same way in — a moment already gone when they arrive starts them now, each
+    // as far in as it would have got.
+    const layers = await p.evaluate('window.__played.filter(([n, loop]) => loop).slice(7).map(([n, l, when, from]) => when + "/" + from)');
+    assert.equal(new Set(layers).size, 1, `the layers start together: ${layers}`);
+    ok(`Enter starts First Light, and its song's seven layers together: ${await hud.textContent()}`);
 
     const sounds = await p.evaluate('window.__played.length');
     await p.keyboard.down('ArrowRight');
@@ -73,22 +80,25 @@ const WATCH = `
     assert.match(lat, /key → jump sound sent\d+ ms/, lat);
     ok('the latency corner: ' + lat.replace(/\s+/g, ' '));
 
+    await p.evaluate('window.__ramps = []');
     await p.keyboard.press('p');
     await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    await p.waitForFunction(() => window.__ramps.includes(0.28), null, { timeout: 5000 });
     const paused = await hud.textContent();
     await settle(600);
     assert.equal(await hud.textContent(), paused, 'the clock stops while paused');
     await p.keyboard.press('Enter');
     await p.locator('.pcard').waitFor({ state: 'detached' });
-    ok('P pauses, and the clock stops');
+    await p.waitForFunction(() => window.__ramps.includes(0.8), null, { timeout: 5000 });
+    ok('P pauses, the clock stops, and the music ducks and comes back');
 
-    const stops = await p.evaluate('window.__stopped');
+    await p.evaluate('window.__ramps = []');
     await p.keyboard.press('m');
-    await p.waitForFunction((n) => window.__stopped > n, stops, { timeout: 5000 });
+    await p.waitForFunction(() => window.__ramps.includes(0) && !window.__ramps.includes(0.8), null, { timeout: 5000 });
     assert.match(await hud.textContent(), /Muted/);
     await p.keyboard.press('m');
-    await p.waitForFunction(() => window.__played.filter(([n, loop]) => loop).length === 2, null, { timeout: 5000 });
-    ok('M stops the tune, and starts it again');
+    await p.waitForFunction(() => window.__ramps.includes(0.8), null, { timeout: 5000 });
+    ok('M fades the music out, and back in');
 
     const before = await p.evaluate('window.__stopped');
     await p.locator('.win', { has: p.locator('.pip') }).locator('.wbtn.close, .tbtn.close, [title="Close"]').first().click();

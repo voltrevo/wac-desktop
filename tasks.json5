@@ -13,6 +13,8 @@
   "test:stackfall": "node tools/stackfall_test.js",
   "test:mandelbrot": "node tools/mandelbrot_test.js",
   "test:pip": "node tools/pip_test.js",
+  // Pip's songs as WAV files in music/, to listen to outside the game.
+  "pip:music": "mkdir -p music && wac run --allow-read --allow-write tools/pip_music.wac -- music",
   "test:desk": "node tools/desk_test.js",
   // and real drops on the Archive Explorer — files, folders, file:// and http://.
   "test:drops": "node tools/drop_test.js",
