@@ -92,6 +92,33 @@ const WATCH = `
     await p.waitForFunction(() => window.__ramps.includes(0.8), null, { timeout: 5000 });
     ok('P pauses, the clock stops, and the music ducks and comes back');
 
+    // Enter pauses too; the pause card lists the levels, the one being played marked, and Enter goes on with it.
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    assert.equal(await p.locator('.pcard .plevel').count(), 19, 'the levels, on the pause card');
+    assert.equal(await p.locator('.pcard .plevel.here.on').textContent().then((t) => t.includes('First Light')), true);
+    // Only the first level is reached on a new disk: the arrows have nowhere else to go, and a locked one is no choice.
+    await p.keyboard.press('ArrowRight');
+    assert.equal(await p.locator('.pcard .plevel.on').count(), 1);
+    assert.equal(await p.locator('.pcard .plevel.here.on').count(), 1, 'nothing past the furthest reached');
+    const pausedAt = await hud.textContent();
+    await p.waitForTimeout(400);
+    assert.equal(await hud.textContent(), pausedAt, 'the clock stops');
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    ok('Enter pauses; the pause card lists the levels; Enter goes on');
+    // A click on the level being played goes on with it, too.
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    await p.waitForFunction(() => window.__ramps.includes(0.28), null, { timeout: 5000 });
+    await p.evaluate('window.__ramps = []');
+    await p.locator('.pcard .plevel.here').click();
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    assert.match(await hud.textContent(), /^First Light/);
+    // The music back up before going on, so what M does is all that is heard next.
+    await p.waitForFunction(() => window.__ramps.includes(0.8), null, { timeout: 5000 });
+    ok('a click on the level being played goes on with it');
+
     await p.evaluate('window.__ramps = []');
     await p.keyboard.press('m');
     await p.waitForFunction(() => window.__ramps.includes(0) && !window.__ramps.includes(0.8), null, { timeout: 5000 });
@@ -104,6 +131,45 @@ const WATCH = `
     await p.locator('.win', { has: p.locator('.pip') }).locator('.wbtn.close, .tbtn.close, [title="Close"]').first().click();
     await p.waitForFunction((n) => window.__stopped > n, before, { timeout: 5000 });
     ok('closing the window silences it');
+
+    // Further on: seven levels reached, written where Pip keeps them from the Terminal, and Pip started again.
+    await p.locator('.tblaunch').click();
+    await p.locator('.lq').fill('shell');
+    await p.keyboard.press('Enter');
+    const cmd = p.locator('.win.focus .tcmd');
+    await cmd.waitFor({ timeout: 60000 });
+    await cmd.fill('mkdir -p /.apps/pip && echo 6 > /.apps/pip/best && cat /.apps/pip/best');
+    await cmd.press('Enter');
+    await p.locator('.win.focus .tout', { hasText: /\n6\n/ }).waitFor({ timeout: 10000 });
+    await p.locator('.win.focus .wbtn.close').click();
+    await p.locator('.tblaunch').click();
+    await p.locator('.lq').fill('platformer');
+    await p.keyboard.press('Enter');
+    await card.waitFor({ timeout: 60000 });
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    const seventh = (await hud.textContent()).split(' · ')[0];
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    assert.equal(await p.locator('.pcard .plevel:not(.locked)').count(), 7, 'seven to choose from');
+    await p.keyboard.press('ArrowLeft');
+    const chosen = p.locator('.pcard .plevel.on:not(.here)');
+    await chosen.waitFor({ timeout: 5000 });
+    const sixth = (await chosen.textContent()).replace(/^\d+\s*/, '');
+    assert.ok(!sixth.startsWith(seventh), 'the arrow chose another');
+    assert.match(await p.locator('.pgo').textContent(), /Press Enter to play/);
+    if (shots) await p.screenshot({ path: path.join(shots, 'pip-pause.png') });
+    await p.keyboard.press('Enter');
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    const now = (await hud.textContent()).split(' · ')[0];
+    assert.ok(sixth.startsWith(now), `playing the level chosen: ${now}, chosen ${sixth}`);
+    ok(`from ${seventh}, the pause card chose ${now}, and Enter played it`);
+    await p.keyboard.press('Escape');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    await p.keyboard.press('1');
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    assert.match(await hud.textContent(), /^First Light · Lanterns 0\//);
+    ok('and 1, paused, plays the first');
 
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');

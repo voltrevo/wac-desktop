@@ -100,6 +100,8 @@ struct Pip {
   Element? canvas;
   Element? stage;
   fn<void()> bump;
+  /** Paused: the level the arrows have chosen, which Enter plays — the one being played until they move. */
+  i32 pick;
 }
 
 /** What `bump` is until the window is drawn. */
@@ -306,12 +308,39 @@ void begin(Pip g, i32 index) {
  * On the title, level `i` chosen — any reached so far — and shown behind the title, as it starts. The list is three
  * columns filled a row at a time: ← and → step by one, ↑ and ↓ by a row.
  */
+/**
+ * The level the arrow `k` moves to from `at`, in the title's and the pause card's list — three to a row, so up and
+ * down move by three — and never past the furthest level reached; `at` for any other key.
+ */
+export i32 movedTo(i32 at, i32 reached, string k) {
+  i32 to = k == "ArrowUp" ? at - 3 : (k == "ArrowDown" ? at + 3 : (k == "ArrowLeft" ? at - 1 : (k == "ArrowRight" ? at + 1 : at)));
+  return to < 0 ? 0 : (to > reached ? reached : to);
+}
+
 void choose(Pip g, i32 i) {
   i32 n = i < 0 ? 0 : (i > g.reached ? g.reached : i);
   if (n == g.index) { return; }
   g.index = n;
   g.world = load(g.levels[n]);
   snap(g.screen, g.world);
+  g.bump();
+}
+
+bool isArrow(string k) { return k == "ArrowUp" || k == "ArrowDown" || k == "ArrowLeft" || k == "ArrowRight"; }
+
+/** Paused: the keys let go, the clock stopped, and the pause card's list on the level being played. */
+void pause(Pip g) {
+  g.mode = PAUSED;
+  g.pick = g.index;
+  g.held.clear();
+  readKeys(g);
+  g.bump();
+}
+
+void goOn(Pip g) {
+  g.mode = PLAYING;
+  g.held.clear();
+  readKeys(g);
   g.bump();
 }
 
@@ -355,10 +384,8 @@ void down(Pip g, ElementEvent e) {
         play(g, "title");
         g.bump();
       }
-    } else if (g.mode == TITLE && (k == "ArrowUp" || k == "ArrowLeft")) {
-      choose(g, g.index - (k == "ArrowUp" ? 3 : 1));
-    } else if (g.mode == TITLE && (k == "ArrowDown" || k == "ArrowRight")) {
-      choose(g, g.index + (k == "ArrowDown" ? 3 : 1));
+    } else if (g.mode == TITLE && isArrow(k)) {
+      choose(g, movedTo(g.index, g.reached, k));
     } else if (g.mode == TITLE && isKey(k, "1 2 3 4 5 6 7 8 9")) {
       i32 n = wholeOf(k) - 1;
       if (n <= g.reached) { begin(g, n); }
@@ -366,16 +393,29 @@ void down(Pip g, ElementEvent e) {
     return;
   }
   if (k == "p" || k == "P" || k == "Escape") {
-    g.mode = g.mode == PAUSED ? PLAYING : PAUSED;
-    g.held.clear();
-    readKeys(g);
-    g.bump();
+    if (g.mode == PAUSED) { goOn(g); } else { pause(g); }
     return;
   }
-  if (g.mode == PAUSED && (k == "Enter" || k == " ")) {
-    g.mode = PLAYING;
-    g.bump();
+  // Enter pauses as well — it is the key the cards over the game all go on with, and the pause card is a menu.
+  if (g.mode == PLAYING && k == "Enter") {
+    pause(g);
     return;
+  }
+  if (g.mode == PAUSED) {
+    if (k == "Enter" || k == " ") {
+      if (g.pick == g.index) { goOn(g); } else { begin(g, g.pick); }
+      return;
+    }
+    if (isArrow(k)) {
+      g.pick = movedTo(g.pick, g.reached, k);
+      g.bump();
+      return;
+    }
+    if (isKey(k, "1 2 3 4 5 6 7 8 9")) {
+      i32 n = wholeOf(k) - 1;
+      if (n <= g.reached) { begin(g, n); }
+      return;
+    }
   }
   if (k == "m" || k == "M") {
     g.muted = !g.muted;
@@ -510,9 +550,31 @@ Node Help(Ui ui) {
   return <div class="pkeys">
     <span>Run</span><span><b>←</b> <b>→</b> or <b>A</b> <b>D</b></span>
     <span>Jump</span><span><b>Space</b>, <b>↑</b>, <b>Z</b> or <b>W</b> — hold for higher; against a wall, jump off it</span>
-    <span>Pause</span><span><b>P</b> or <b>Esc</b> · <b>R</b> starts the level again</span>
+    <span>Pause</span><span><b>Enter</b>, <b>P</b> or <b>Esc</b> — and choose another level · <b>R</b> starts the level again</span>
     <span>Sound</span><span><b>M</b> · <b>L</b> shows or hides the latency · <b>G</b> your best run's ghost</span>
   </div>;
+}
+
+/**
+ * The levels, as the title and the pause card list them: each with its best time and medal, `chosen` marked, the one
+ * being played marked too when paused, and those not reached yet locked. A click plays one — or, paused, goes on with
+ * the one being played.
+ */
+Node levelList(Pip g, i32 chosen) {
+  Vec<Node> levels = Vec.create();
+  for (i32 i = 0; i < g.levels.len(); i++) {
+    string best = g.best[i] > 0 ? clock(g.best[i]) : (i <= g.reached ? "–" : "locked");
+    string cls = "plevel" + (i > g.reached ? " locked" : "") + (i == chosen ? " on" : "")
+               + (g.mode == PAUSED && i == g.index ? " here" : "");
+    i32 m = medal(g.best[i], g.pars[i]);
+    i32 n = i;
+    levels.push(<div class={cls} title={g.mode == PAUSED && i == g.index ? "Playing now" : null}
+                     onclick={i > g.reached ? null : (ElementEvent e) => {
+                       if (g.mode == PAUSED && n == g.index) { goOn(g); } else { begin(g, n); }
+                     }}>
+      <b>{"\{i + 1}"}</b> {g.levels[i].name}<span>{best}<span class={"pm " + medalName(m)} title={"par \{clock(g.pars[i])}"}/></span></div>);
+  }
+  return <div class="plevels">{levels.toArray()}</div>;
 }
 
 /**
@@ -521,24 +583,24 @@ Node Help(Ui ui) {
  */
 Node overlay(Pip g) {
   if (g.mode == TITLE) {
-    Vec<Node> levels = Vec.create();
-    for (i32 i = 0; i < g.levels.len(); i++) {
-      string best = g.best[i] > 0 ? clock(g.best[i]) : (i <= g.reached ? "–" : "locked");
-      string cls = i > g.reached ? "plevel locked" : (i == g.index ? "plevel on" : "plevel");
-      i32 m = medal(g.best[i], g.pars[i]);
-      levels.push(<div class={cls}><b>{"\{i + 1}"}</b> {g.levels[i].name}<span>{best}<span class={"pm " + medalName(m)}
-                                                                                              title={"par \{clock(g.pars[i])}"}/></span></div>);
-    }
     return <div class="pover"><div class="pcard">
       <h1>Pip and the Lost Lanterns</h1>
       <p>The lanterns of the valley have gone out. Light every one, then find the door.</p>
       <Help/>
-      <div class="plevels">{levels.toArray()}</div>
+      {levelList(g, g.index)}
       <p class="pgo">Press <b>Enter</b> to play {g.levels[g.index].name}{g.reached > 0 ? " — or choose another with the arrows" : ""}</p>
     </div></div>;
   }
   if (g.mode == PAUSED) {
-    return <div class="pover"><div class="pcard"><h1>Paused</h1><Help/><p class="pgo">Press <b>Enter</b> or <b>P</b> to go on</p></div></div>;
+    string here = g.levels[g.index].name;
+    return <div class="pover"><div class="pcard">
+      <h1>Paused</h1>
+      <Help/>
+      {levelList(g, g.pick)}
+      {g.pick == g.index
+        ? <p class="pgo">Press <b>Enter</b> or <b>P</b> to go on with {here}{g.reached > 0 ? " — or choose another level with the arrows" : ""}</p>
+        : <p class="pgo">Press <b>Enter</b> to play {g.levels[g.pick].name} · <b>P</b> goes on with {here}</p>}
+    </div></div>;
   }
   if (g.mode == CLEARED || g.mode == DONE) {
     World w = g.world;
@@ -575,7 +637,7 @@ Node Game(Ui ui, Pip g) {
               onblur={(ElementEvent e) => {
                 g.held.clear();
                 readKeys(g);
-                if (g.mode == PLAYING) { g.mode = PAUSED; g.bump(); }
+                if (g.mode == PLAYING) { pause(g); }
               }}
               onpointerdown={(ElementEvent e) => { if (g.stage is not null) { g.stage!.focus(); } }}>
     <canvas class="pscreen" ref={cv} width="320" height="180"/>
@@ -613,7 +675,7 @@ export async i32 main(Page page) {
   }
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
               0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, true, false, fx, Band.create(), best,
-              reached, false, pars, runs, Vec.create(), null, 0, true, 0, null, null, quiet);
+              reached, false, pars, runs, Vec.create(), null, 0, true, 0, null, null, quiet, 0);
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

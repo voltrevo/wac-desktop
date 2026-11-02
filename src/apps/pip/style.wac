@@ -26,6 +26,10 @@ export string pipCss() {
     .plevel span { margin-left: auto; color: #9aa0c8; }
     .plevel.locked { opacity: .45; }
     .plevel.on { background: rgba(255, 212, 92, .2); box-shadow: 0 0 0 1px #ffd45c inset; }
+    .plevel:not(.locked) { cursor: pointer; }
+    .plevel:not(.locked):hover { background: rgba(255, 255, 255, .12); }
+    /* Paused, the level being played: dashed, whether or not the arrows are on it. */
+    .plevel.here { outline: 1px dashed #ffd45c; outline-offset: -1px; }
     .pgo { color: #c8cce8; }
     .pm { display: inline-block; width: 9px; height: 9px; margin-left: 6px; border-radius: 50%; vertical-align: 0; }
     .pm.gold { background: #ffd45c; box-shadow: 0 0 6px #ffb040; } .pm.silver { background: #d8dce8; }

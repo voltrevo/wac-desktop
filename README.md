@@ -40,7 +40,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
                          # dist/apps/explorer.wasm, then dist/index.json (site.wac)
     wac task serve       # http://localhost:8080 — over http the desktop gets its storage
     wac task test        # formats, previews, the disk and the window manager, without a browser
-    wac task test:pip       # Pip played, heard, measured, paused, muted and silenced, in Chromium
+    wac task test:pip       # Pip played, heard, measured, paused, another level chosen, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:paint  # Paint drawn in, filled, undone, saved, opened again, dropped on and picked, in Chromium
@@ -120,7 +120,8 @@ shares, so their pages can see each other's files.
   that swoop, ghosts that creep up while Pip looks away, and crawlers that walk round walls and ceilings. The rules
   run sixty steps a second whatever the screen's rate, and nothing in them is random, so a run is its keys: the best
   run of each level comes back as a **ghost** to race (`G` hides it), and each level has a par for **gold, silver and
-  bronze**. Its music is its first tune, kept as it sounds — a plucked pulse lead over a triangle
+  bronze**. Enter, P or Esc pauses, and the pause card lists the levels reached: the arrows, a number or a click
+  plays another. Its music is its first tune, kept as it sounds — a plucked pulse lead over a triangle
   bass and ticks of noise — played for each kind of place: slower for the title and the dark, up a tone and faster in
   the towers, in the major in the wind and for the finale (`pip/music.wac`, written down as a tracker would). Each
   song is layers started for one moment: lanterns gently bring in a second voice, high plucks and a quicker tick as

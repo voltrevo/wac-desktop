@@ -7,7 +7,7 @@ import { Vec } from "core";
 import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
-import { clock, keyByte, keysOf, medal, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { clock, keyByte, keysOf, medal, movedTo, par, restoreBest, styleOf } from "../src/apps/pip.wac";
 import { LAYERS, Song, mixed, songs, stems } from "../src/apps/pip/music.wac";
 
 /** A level of `rows`, padded with air to the full width, bedrock below. */
@@ -683,5 +683,19 @@ export string test_every_song_is_whole_and_loops_cleanly() {
       }
     }
   }
+  return "";
+}
+
+/**
+ * **The arrows choose among the levels reached**, on the title and the pause card alike: three to a row, so up and
+ * down move by three, and never before the first or past the furthest reached.
+ */
+export string test_the_arrows_choose_among_the_levels_reached() {
+  if (movedTo(4, 10, "ArrowRight") != 5 || movedTo(4, 10, "ArrowLeft") != 3) { return "left and right move by one"; }
+  if (movedTo(4, 10, "ArrowDown") != 7 || movedTo(4, 10, "ArrowUp") != 1) { return "up and down move by a row"; }
+  if (movedTo(1, 10, "ArrowUp") != 0 || movedTo(0, 10, "ArrowLeft") != 0) { return "not before the first"; }
+  if (movedTo(9, 10, "ArrowDown") != 10 || movedTo(4, 4, "ArrowRight") != 4) { return "not past the furthest reached"; }
+  if (movedTo(0, 0, "ArrowDown") != 0) { return "with one level reached, there is nothing else to choose"; }
+  if (movedTo(4, 10, "Enter") != 4) { return "another key moves nothing"; }
   return "";
 }
