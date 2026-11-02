@@ -185,6 +185,8 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   fs.copyFileSync(path.join(built, 'page.wasm'), path.join(tmp, 'counter.wasm'));
   await p.locator('.tbwin', { hasText: 'Makefile' }).click(); await settle(300);
   await drop(path.join(tmp, 'counter.wasm'), 1300, 700);
+  // Written to the browser's storage after it arrives, which takes longer than the drop: waited for.
+  await p.waitForSelector('.dicon[title="counter.wasm"]', { timeout: 10000 }).catch(() => {});
   // Behind the snapped Editor, so double-clicked where it is rather than moved to: the layout is what the later checks read.
   await p.$eval('.dicon[title="counter.wasm"]', (e) => e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   await p.waitForFunction(() => __deep('.win.focus .program-body >>> .count') !== null, null, { timeout: 15000 }).catch(() => {});
@@ -441,6 +443,24 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .toast'); return e !== null && /Built|could not|did not/.test(e.textContent); }, null, { timeout: 90000 }).catch(() => {});
   check((await p.textContent('.win.focus .toast').catch(() => '')).includes('Built main.wasm —'), 'and Build writes the module beside its source', await p.textContent('.win.focus .toast').catch(() => ''));
   await shot('8-ide');
+
+  // **A page program run from the IDE draws in a window of its own**, titled as it titles itself; a click there
+  // reaches it, and closing the window stops it.
+  await p.locator('.win.focus .proj').click(); await settle(500);
+  await p.locator('.win.focus .home .newpage').click();
+  check((await ideChecked()) === 'No problems', 'a page project checks in the IDE, web from its own cache', await p.textContent('.win.focus .status').catch(() => ''));
+  await p.locator('.win.focus .top .btn', { hasText: 'Run' }).click();
+  await p.waitForFunction(() => [...document.querySelectorAll('.win .tt')].some((e) => e.textContent === 'Counter'), null, { timeout: 90000 }).catch(() => {});
+  const counter = p.locator('.win', { has: p.locator('.tt', { hasText: /^Counter$/ }) });
+  await counter.locator('.count').waitFor({ timeout: 15000 }).catch(() => {});
+  check((await counter.locator('.count').textContent().catch(() => '')) === '0', 'Run shows a page program in a window of its own', await texts('.win .tt'));
+  await counter.locator('.up').click(); await settle(600);
+  check((await counter.locator('.count').textContent().catch(() => '')) === '1', 'and a click in it reaches the program', await counter.locator('.count').textContent().catch(() => ''));
+  await shot('8a-page');
+  await counter.locator('.wbtn[title=Close]').click(); await settle(1200);
+  const ide = p.locator('.win', { has: p.locator('.tt', { hasText: /^page$/ }) });
+  check((await ide.locator('.output').textContent().catch(() => '')).includes('— stopped'), 'closing its window stops it', await ide.locator('.output').textContent().catch(() => ''));
+  if ((await p.textContent('.win.focus .tt').catch(() => '')) !== 'page') { await p.locator('.tbwin', { has: p.locator('.t', { hasText: /^page$/ }) }).click(); await settle(300); }
 
   // **One IDE, a window per project.** A second project in this window, the first in a window of its own: both
   // are the one program, and a reload brings both back.
