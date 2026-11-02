@@ -393,7 +393,9 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.keyboard.type('(1+2)*3'); await settle(300);
   check((await p.textContent('.win.focus .csub')) === '= 9', 'and shows the answer as a sum is typed', await p.textContent('.win.focus .csub'));
   await p.keyboard.press('Enter'); await settle(300);
-  await p.keyboard.type('200+10%'); await settle(300);
+  await p.keyboard.type('200+10%');
+  // Read once the program has drawn it: its window draws a moment after the keys, later on a loaded machine.
+  await p.waitForFunction(() => __deep('.win.focus .program-body >>> .csub')?.textContent === '= 220', null, { timeout: 3000 }).catch(() => {});
   check((await p.textContent('.win.focus .csub')) === '= 220', 'a percentage added is a percentage of what it is added to', await p.textContent('.win.focus .csub'));
   await p.keyboard.press('Escape'); await p.keyboard.type('0.1+0.2'); await p.keyboard.press('Enter'); await settle(300);
   check((await p.textContent('.win.focus .cmain')) === '0.3', '0.1 + 0.2 is 0.3', await p.textContent('.win.focus .cmain'));
