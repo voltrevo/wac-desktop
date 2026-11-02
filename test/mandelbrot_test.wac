@@ -1,20 +1,20 @@
 // Mandelbrot's arithmetic, without a page: the set's values and the palette against the original's (numbers taken
-// from github.com/voltrevo/mandelbrot's own functions, run in Node), the functions of a real number the app builds
-// itself, the transform that shows a move before it is drawn, what is kept between runs, and the PNG it saves.
+// from github.com/voltrevo/mandelbrot's own functions, run in Node), core's maths it is built on, the transform that
+// shows a move before it is drawn, what is kept between runs, and the PNG it saves.
 
 import { gzip.inflate } from "wac";
 import { Colours, Palette, Viewport, iterate, png, previewCss, rand, restore } from "../src/apps/mandelbrot.wac";
-import { commas, exp, fixed, ln, magnitude, parseNumber, pow, sqrt } from "../src/apps/maths.wac";
+import { commas, fixed, magnitude, parseNumber } from "../src/apps/maths.wac";
+import { math } from "core";
 
 bool near(f64 a, f64 b, f64 tolerance) { return a - b < tolerance && b - a < tolerance; }
 
-export string test_maths_matches_the_browsers_to_fourteen_digits() {
-  if (!near(ln(10.0), 2.302585092994046, 0.00000000000001)) { return "ln 10 = \{ln(10.0)}"; }
-  if (!near(exp(2.5), 12.182493960703473, 0.0000000000001)) { return "exp 2.5 = \{exp(2.5)}"; }
-  if (!near(pow(7.3, 1.3), 13.253168456005625, 0.0000000000001)) { return "7.3^1.3 = \{pow(7.3, 1.3)}"; }
-  if (!near(sqrt(2.0), 1.4142135623730951, 0.000000000000001)) { return "√2 = \{sqrt(2.0)}"; }
-  if (!near(ln(exp(0.0 - 300.0)), 0.0 - 300.0, 0.0000000001)) { return "ln e^-300 = \{ln(exp(0.0 - 300.0))}"; }
-  if (!near(exp(ln(0.000123)), 0.000123, 0.0000000000000001)) { return "e^ln 0.000123 = \{exp(ln(0.000123))}"; }
+export string test_cores_maths_matches_the_browsers() {
+  // Mandelbrot's arithmetic is core's now (`math`, and a float's `sqrt`): these are the values it is checked against.
+  if (math.log(10.0) != 2.302585092994046) { return "ln 10 = \{math.log(10.0)}"; }
+  if (math.exp(2.5) != 12.182493960703473) { return "exp 2.5 = \{math.exp(2.5)}"; }
+  if (!near(math.pow(7.3, 1.3), 13.253168456005625, 0.0000000000001)) { return "7.3^1.3 = \{math.pow(7.3, 1.3)}"; }
+  if (2.0.sqrt() != 1.4142135623730951) { return "√2 = \{2.0.sqrt()}"; }
   return "";
 }
 

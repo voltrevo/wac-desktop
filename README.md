@@ -229,7 +229,7 @@ shares, so their pages can see each other's files.
 | `src/desk/prefs.wac`, `src/desk/settings.wac` | what Settings keeps — the look as classes and their rules, the volume, what opens what — and its window |
 | `src/apps/paint.wac`, `src/apps/paint/` | Paint: its page; the picture, strokes, shapes, fills and history (`image.wac`); its stylesheet |
 | `src/png.wac` | PNG written (Mandelbrot and Paint) and read, every kind |
-| `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, and the logarithms, powers and decimals it needs, which wac's core leaves out |
+| `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, on core's `math`; and decimals read and written as people write them |
 | `src/apps/pip.wac`, `src/apps/pip/` | Pip: its page, its rules (`world.wac`), levels, pictures (`art.wac`), sounds (`chip.wac`) and stylesheet |
 | `src/apps/stackfall.wac`, `src/apps/stackfall/` | Stackfall: its page, independent game rules, versioned saves and stylesheet |
 | `src/apps/ide.wac` | the wac IDE, from the pinned `ide` package, with its checker as `--spawn checker` |

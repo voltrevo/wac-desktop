@@ -57,7 +57,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   hanging.
 - `f64` has `floor`, `ceil`, `round`, `trunc`, and — since wac `9ccf257c7`, which the pin includes — `sqrt`, `abs`,
   `min`, `max` and `copySign`, one instruction each; `log`, `exp`, `pow` and the rest are `import { math } from "core"`.
-  `src/apps/maths.wac` predates both. String escapes are the usual few — `"\1"` is an error. A string has few methods:
+  The apps use them; `src/apps/maths.wac` is only decimals now. String escapes are the usual few — `"\1"` is an error. A string has few methods:
   `len`, `slice`, `indexOf`, `toBytes` — no `trim`, `split` or case changes.
 - `import { json.parse } from "wac"` binds `parse`, not `json.parse`.
 - A component re-renders only when its attributes change. Window contents are components handed
