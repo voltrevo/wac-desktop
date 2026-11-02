@@ -18,6 +18,7 @@ import { ProgramApp, launch } from "./program.wac";
 import { AllowedApp } from "./allowed.wac";
 import { deskCss } from "./style.wac";
 import { startApp, startPlaced } from "./builtin.wac";
+import { Launcher } from "./launcher.wac";
 import { demoZip, welcomeMd } from "./seed.wac";
 import { css } from "../style.wac";
 import { icon } from "../preview.wac";
@@ -402,7 +403,7 @@ Node taskbar(Desk d, Page page, fn<void()> bump) {
   }
   return <div class="taskbar">
     <button class={d.launcher ? "tblaunch on" : "tblaunch"} title="Apps"
-            onclick={(ElementEvent e) => { d.launcher = !d.launcher; bump(); }}>{icon("grid", "")}</button>
+            onclick={(ElementEvent e) => { d.launcher = !d.launcher; d.query = ""; d.chosen = 0; bump(); }}>{icon("grid", "")}</button>
     <div class="tbwins">{buttons}</div>
     <div class="tbright">
       <span class={d.fs.persistent ? "pill" : "pill warn"}
@@ -410,35 +411,6 @@ Node taskbar(Desk d, Page page, fn<void()> bump) {
         {icon(d.fs.persistent ? "shield" : "alert", "sm")}{d.fs.persistent ? "Saved in this browser" : "Not saved"}</span>
       <Clock page={page}/>
     </div>
-  </div>;
-}
-
-Node launcherItem(string ic, string title, string sub, fn<void()> go) {
-  return <button class="litem" onclick={(ElementEvent e) => { go(); }}>
-    <span class={"ltile c-\{ic}"}>{icon(ic, "")}</span>
-    <span class="ltext"><span class="lt">{title}</span><span class="ls">{sub}</span></span></button>;
-}
-
-/** One of the desktop's own apps, which are on its site: offered only when there is one. */
-Node siteItem(Desk d, fn<void()> bump, string ic, string title, string sub, string app, string arg) {
-  if (!d.site) { return Node.Text(""); }
-  return launcherItem(ic, title, sub, () => { d.launcher = false; startApp(d, app, arg); bump(); });
-}
-
-Node launcher(Desk d, fn<void()> bump) {
-  return <div class="launcher anim">
-    <div class="lhead">Apps</div>
-    {launcherItem("home", "Files", "Your home folder", () => { open(d, "files", "", "Home", "home"); bump(); })}
-    {launcherItem("folder", "Desktop", "The files on your desktop", () => { open(d, "files", "Desktop", "Desktop", "folder"); bump(); })}
-    {siteItem(d, bump, "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", "explorer", "")}
-    {siteItem(d, bump, "terminal", "Terminal", "A shell on this desktop's disk", "terminal", "Desktop")}
-    {siteItem(d, bump, "code", "wac IDE", "Write wac, checked as you type, in Projects", "ide", "Projects")}
-    {siteItem(d, bump, "edit", "Text editor", "A new text file", "editor", "")}
-    {siteItem(d, bump, "calc", "Calculator", "Sums, typed or clicked", "calc", "")}
-    {launcherItem("trash", "Trash", "What was deleted, to restore or let go", () => { open(d, "files", TRASH, "Trash", "trash"); bump(); })}
-    {launcherItem("shield", "Permissions", "What programs were allowed, to take back", () => { open(d, "allowed", "", "Permissions", "shield"); bump(); })}
-    {launcherItem("text", "Welcome", "What this is, and what to try", () => { d.launcher = false; startApp(d, "viewer", "Desktop/Welcome.md"); bump(); })}
-    <div class="lfoot">{d.fs.persistent ? "Files are kept in this browser." : "Opened from a file: nothing is kept after the tab closes."}</div>
   </div>;
 }
 
@@ -565,7 +537,7 @@ export Node Desktop(Ui ui, Page page) {
       {hint == 1 ? <div class="snapghost l"></div> : (hint == 2 ? <div class="snapghost r"></div> : (hint == 3 ? <div class="snapghost m"></div> : Node.Text("")))}
       {dragging && g!.mode == "move" ? <div class="edge-r" onpointermove={(ElementEvent e) => { hintRight(d); bump(); }}></div> : Node.Text("")}
     </div>
-    {d.launcher ? launcher(d, bump) : Node.Text("")}
+    {d.launcher ? <Launcher d={d} bump={bump}/> : Node.Text("")}
     {d.error != "" ? <div class="toast bad">{icon("alert", "sm")}<span>{d.error}</span></div>
                    : (d.note != "" ? <div class="toast">{icon("check", "sm")}<span>{d.note}</span>
                                        {d.undo.len() > 0 ? <button class="tundo" onclick={(ElementEvent e) => { undoTrash(d, bump); }}>Undo</button> : Node.Text("")}</div>

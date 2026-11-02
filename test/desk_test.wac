@@ -9,6 +9,7 @@ import { Desk, MAX_WINDOWS, NO_WINDOW, Placed, Running, Start, Win, close, dragT
          toggleMax } from "../src/desk/wm.wac";
 import { Grants } from "../src/desk/grants.wac";
 import { builtin } from "../src/desk/builtin.wac";
+import { Entry, entries, found } from "../src/desk/launcher.wac";
 
 /** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
 T run<T>(Runner r, Ticket<T> t) {
@@ -242,5 +243,27 @@ export string test_each_app_is_handed_what_it_is_opened_on() {
   Start s = builtin("viewer", "Desktop/a.md");
   if (s.path != "site/apps/viewer.wasm" || s.args.len() != 1 || s.args[0] != "/Desktop/a.md") { return "\{s.path} \{s.args.len()}"; }
   if (s.takesFiles || !builtin("explorer", "").takesFiles) { return "files dropped go to the Explorer, and past the Viewer"; }
+  return "";
+}
+
+/** The first entry a search finds, by title; "" for none. */
+string firstFound(string q) {
+  Entry[] got = found(entries(), q);
+  return got.len() == 0 ? "" : got[0].title;
+}
+
+/**
+ * **The launcher finds an entry by what it is for**: a tag reaches it ("shell" the Terminal), every word typed must
+ * start a word of it, and a match in the title counts most.
+ */
+export string test_the_launcher_finds_entries_by_their_tags() {
+  if (firstFound("shell") != "Terminal") { return "shell: \{firstFound("shell")}"; }
+  if (firstFound("command line") != "Terminal") { return "command line: \{firstFound("command line")}"; }
+  if (firstFound("zip") != "Archive Explorer") { return "zip: \{firstFound("zip")}"; }
+  if (firstFound("ter") != "Terminal") { return "ter: \{firstFound("ter")}"; }
+  if (firstFound("calc") != "Calculator") { return "calc: \{firstFound("calc")}"; }
+  if (firstFound("recycle") != "Trash") { return "recycle: \{firstFound("recycle")}"; }
+  if (firstFound("hell") != "") { return "a word is matched from its start only: \{firstFound("hell")}"; }
+  if (firstFound("nothing like this") != "") { return "an unmatched search finds nothing"; }
   return "";
 }

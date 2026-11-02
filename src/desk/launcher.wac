@@ -1,0 +1,247 @@
+// The launcher: everything the desktop can open, in groups, and a search across all of it.
+//
+// **Each entry says what it is for, not only what it is called.** Its tags are the words a person might reach for —
+// "shell" for the Terminal, "zip" for the Archive Explorer — and the search matches every word typed against the
+// start of a word in an entry's title, its description or its tags, so `sh`, `shell` and `command line` all find
+// the Terminal. With nothing typed the entries are shown in their groups, each of which folds; the groups folded are
+// kept with the session.
+//
+// **It fits the screen.** The panel is never taller than the space above the taskbar, and its list scrolls inside
+// it; the entry chosen with the arrow keys is scrolled into view. Enter opens it, Escape clears the search and then
+// closes the launcher.
+
+import { Vec } from "core";
+import { ElementEvent, Node, Ref, Ui, html.button, html.div, html.input, html.span } from "web";
+import { Desk, open } from "./wm.wac";
+import { TRASH } from "./trash.wac";
+import { startApp } from "./builtin.wac";
+import { icon } from "../preview.wac";
+
+/** One thing the launcher opens. */
+export struct Entry {
+  string group;
+  string icon;
+  string title;
+  string sub;
+  /** Words it is also found by. */
+  string[] tags;
+  /** One of the desktop's own apps, on its site: not offered without one. */
+  bool site;
+  /** The app or window it opens — `startApp`'s app, or one of the desktop's own windows — and on what. */
+  string app;
+  string arg;
+}
+
+/** The groups, in the order they are shown. */
+export string[] groups() { return ["Files", "Tools", "Programming", "Play", "Help"]; }
+
+/** Everything the launcher offers, in order within each group. */
+export Entry[] entries() {
+  return [
+    Entry("Files", "home", "Files", "Your home folder", ["folders", "home", "browse", "finder", "explorer", "disk", "documents"], false, "files", ""),
+    Entry("Files", "folder", "Desktop", "The files on your desktop", ["files", "folder", "icons"], false, "files", "Desktop"),
+    Entry("Files", "trash", "Trash", "What was deleted, to restore or let go", ["bin", "recycle", "deleted", "restore", "undelete", "rubbish"], false, "files", TRASH),
+    Entry("Files", "shield", "Permissions", "What programs were allowed, to take back", ["grants", "security", "privacy", "access", "allowed", "revoke"], false, "allowed", ""),
+    Entry("Tools", "edit", "Text editor", "A new text file", ["notes", "text", "write", "notepad", "txt", "edit"], true, "editor", ""),
+    Entry("Tools", "calc", "Calculator", "Sums, typed or clicked", ["calc", "maths", "math", "arithmetic", "numbers", "sums"], true, "calc", ""),
+    Entry("Tools", "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", ["zip", "tar", "gzip", "zstd", "archive", "unpack", "extract", "compressed"], true, "explorer", ""),
+    Entry("Programming", "code", "wac IDE", "Write wac, checked as you type, in Projects", ["code", "programming", "compiler", "develop", "build", "run", "test", "wac", "ide"], true, "ide", "Projects"),
+    Entry("Programming", "terminal", "Terminal", "A shell on this desktop's disk", ["shell", "console", "command line", "cli", "sh", "bash", "prompt", "commands", "tty"], true, "terminal", "Desktop"),
+    Entry("Help", "text", "Welcome", "What this is, and what to try", ["help", "about", "intro", "guide", "readme", "start"], false, "viewer", "Desktop/Welcome.md"),
+  ];
+}
+
+string lowered(string s) {
+  u8[] b = s.toBytes();
+  u8[] o = u8[].filled(b.len(), 0 as u8);
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i]; }
+  return string.fromBytes(o);
+}
+
+/** The words of `s`, lowercase: letters and digits, everything else a break. */
+string[] words(string s) {
+  Vec<string> out = Vec.create();
+  string l = lowered(s);
+  u8[] b = l.toBytes();
+  i32 start = 0 - 1;
+  for (i32 i = 0; i <= b.len(); i++) {
+    bool w = i < b.len() && ((b[i] >= 'a' && b[i] <= 'z') || (b[i] >= '0' && b[i] <= '9') || b[i] >= 128);
+    if (w && start < 0) { start = i; }
+    if (!w && start >= 0) {
+      out.push(l.slice(start, i));
+      start = 0 - 1;
+    }
+  }
+  return out.toArray();
+}
+
+/** How well `w` matches a word of `text`, weighted `weight`: the start of a word only; 0 for none. */
+i32 hit(string w, string text, i32 weight) {
+  string[] ws = words(text);
+  for (i32 i = 0; i < ws.len(); i++) {
+    if (ws[i].len() >= w.len() && ws[i].slice(0, w.len()) == w) { return ws[i] == w ? weight * 2 : weight; }
+  }
+  return 0;
+}
+
+/**
+ * How well `e` matches `query`: every word typed must start a word of its title, its description or a tag, and a
+ * match in the title counts most. 0 when a word matches nothing.
+ */
+export i32 score(Entry e, string query) {
+  string[] qs = words(query);
+  if (qs.len() == 0) { return 0; }
+  string tags = "";
+  for (i32 i = 0; i < e.tags.len(); i++) { tags = tags + " " + e.tags[i]; }
+  i32 total = 0;
+  for (i32 i = 0; i < qs.len(); i++) {
+    i32 best = hit(qs[i], e.title, 6);
+    i32 t = hit(qs[i], tags, 4);
+    if (t > best) { best = t; }
+    i32 s = hit(qs[i], e.sub, 1);
+    if (s > best) { best = s; }
+    if (best == 0) { return 0; }
+    total = total + best;
+  }
+  // The title's own start is the strongest hint of what was meant.
+  if (lowered(e.title).indexOf(lowered(query)) == 0) { total = total + 5; }
+  return total;
+}
+
+/** The entries `d` offers: those that need a site only when it has one. */
+Entry[] offered(Desk d) {
+  Entry[] all = entries();
+  Vec<Entry> out = Vec.create();
+  for (i32 i = 0; i < all.len(); i++) { if (d.site || !all[i].site) { out.push(all[i]); } }
+  return out.toArray();
+}
+
+/** What a search for `query` finds among `es`, best first; ties in the launcher's own order. */
+export Entry[] found(Entry[] es, string query) {
+  Vec<Entry> out = Vec.create();
+  Vec<i32> scores = Vec.create();
+  for (i32 i = 0; i < es.len(); i++) {
+    i32 s = score(es[i], query);
+    if (s == 0) { continue; }
+    i32 k = out.len();
+    while (k > 0 && scores.get(k - 1) < s) { k--; }
+    out.insert(k, es[i]);
+    scores.insert(k, s);
+  }
+  return out.toArray();
+}
+
+bool folded(Desk d, string group) {
+  for (i32 i = 0; i < d.folded.len(); i++) { if (d.folded.get(i) == group) { return true; } }
+  return false;
+}
+
+void fold(Desk d, string group) {
+  for (i32 i = 0; i < d.folded.len(); i++) {
+    if (d.folded.get(i) == group) {
+      d.folded.remove(i);
+      d.dirty = true;
+      return;
+    }
+  }
+  d.folded.push(group);
+  d.dirty = true;
+}
+
+/** What the arrow keys move over: the search's results, or every entry in an open group. */
+Entry[] choosable(Desk d) {
+  Entry[] es = offered(d);
+  if (d.query != "") { return found(es, d.query); }
+  Vec<Entry> out = Vec.create();
+  string[] gs = groups();
+  for (i32 g = 0; g < gs.len(); g++) {
+    if (folded(d, gs[g])) { continue; }
+    for (i32 i = 0; i < es.len(); i++) { if (es[i].group == gs[g]) { out.push(es[i]); } }
+  }
+  return out.toArray();
+}
+
+/** Open `e`, and close the launcher. */
+export void launch(Desk d, Entry e) {
+  d.launcher = false;
+  d.query = "";
+  d.chosen = 0;
+  if (e.app == "files") {
+    open(d, "files", e.arg, e.arg == "" ? "Home" : (e.arg == TRASH ? "Trash" : e.arg), e.icon);
+    return;
+  }
+  if (e.app == "allowed") {
+    open(d, "allowed", "", "Permissions", "shield");
+    return;
+  }
+  startApp(d, e.app, e.arg);
+}
+
+Node item(Desk d, Entry e, bool chosen, Ref? chosenRef, fn<void()> bump) {
+  return <button class={chosen ? "litem on" : "litem"} key={e.title} ref={chosen ? chosenRef : null}
+                 onclick={(ElementEvent ev) => { launch(d, e); bump(); }}>
+    <span class={"ltile c-\{e.icon}"}>{icon(e.icon, "")}</span>
+    <span class="ltext"><span class="lt">{e.title}</span><span class="ls">{e.sub}</span></span></button>;
+}
+
+/** The launcher, open. */
+export Node Launcher(Ui ui, Desk d, fn<void()> bump) {
+  Ref field = ui.ref();
+  Ref chosenRef = ui.ref();
+  // The search takes the keys as soon as the launcher opens.
+  ui.effect("", () => {
+    if (field.element() is not null) { field.element()!.focus(); }
+    return () => { };
+  });
+  Entry[] choices = choosable(d);
+  if (d.chosen >= choices.len()) { d.chosen = choices.len() - 1; }
+  if (d.chosen < 0) { d.chosen = 0; }
+  // The entry chosen with the keys stays in view in a list that scrolls — but not the first, which is in view with
+  // its group's header above it already, and which scrolling to would hide that header.
+  ui.effect("\{d.chosen}|\{d.query}", () => {
+    if (d.chosen > 0 && chosenRef.element() is not null) { chosenRef.element()!.scrollIntoView(); }
+    return () => { };
+  });
+  string chosenTitle = choices.len() > 0 ? choices[d.chosen].title : "";
+  Vec<Node> rows = Vec.create();
+  if (d.query != "") {
+    for (i32 i = 0; i < choices.len(); i++) { rows.push(item(d, choices[i], i == d.chosen, chosenRef, bump)); }
+    if (choices.len() == 0) { rows.push(<div class="lnone">Nothing matches “{d.query}”.</div>); }
+  } else {
+    Entry[] es = offered(d);
+    string[] gs = groups();
+    for (i32 g = 0; g < gs.len(); g++) {
+      string group = gs[g];
+      Vec<Entry> in = Vec.create();
+      for (i32 i = 0; i < es.len(); i++) { if (es[i].group == group) { in.push(es[i]); } }
+      if (in.len() == 0) { continue; }
+      bool shut = folded(d, group);
+      rows.push(<button class={shut ? "lgroup shut" : "lgroup"} key={"g:" + group}
+                        onclick={(ElementEvent ev) => { fold(d, group); bump(); }}>
+        <span class="lchev">{icon("chev", "sm")}</span>{group}<span class="lcount">{"\{in.len()}"}</span></button>);
+      if (shut) { continue; }
+      for (i32 i = 0; i < in.len(); i++) {
+        Entry e = in.get(i);
+        rows.push(item(d, e, e.title == chosenTitle, chosenRef, bump));
+      }
+    }
+  }
+  // The keys are the launcher's wherever the focus is in it — the search, or a group's header just clicked.
+  return <div class="launcher anim" prevent="ArrowDown ArrowUp Enter Escape"
+              onkeydown={(ElementEvent e) => {
+                Entry[] now = choosable(d);
+                if (e.value == "ArrowDown") { if (d.chosen < now.len() - 1) { d.chosen++; } bump(); }
+                else if (e.value == "ArrowUp") { if (d.chosen > 0) { d.chosen--; } bump(); }
+                else if (e.value == "Enter") { if (now.len() > 0) { launch(d, now[d.chosen]); } bump(); }
+                else if (e.value == "Escape") {
+                  if (d.query != "") { d.query = ""; d.chosen = 0; } else { d.launcher = false; }
+                  bump();
+                }
+              }}>
+    <div class="lsearch">{icon("search", "sm")}
+      <input class="lq" ref={field} placeholder="Search apps — try “shell” or “zip”" value={d.query} spellcheck="false"
+             autocomplete="off" oninput={(ElementEvent e) => { d.query = e.value; d.chosen = 0; bump(); }}/></div>
+    <div class="llist">{rows.toArray()}</div>
+    <div class="lfoot">{d.fs.persistent ? "Files are kept in this browser." : "Opened from a file: nothing is kept after the tab closes."}</div>
+  </div>;
+}

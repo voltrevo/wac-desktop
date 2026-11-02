@@ -131,6 +131,10 @@ export struct Desk {
   bool site;
   /** A program changed the disk, and the windows showing it are about to look again (`program.wac`). */
   bool lookSoon;
+  /** The launcher's search, the entry chosen with the keys, and the groups folded — kept with the session. */
+  string query;
+  i32 chosen;
+  Vec<string> folded;
 }
 
 /** Where a window goes, and how it was: what a session keeps of one, to put it back. */
@@ -310,7 +314,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null, null, Vec.create(), 1, null, false, false);
+              Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create());
 }
 
 export Win? find(Desk d, i32 id) {
@@ -611,6 +615,11 @@ export u8[] sessionOf(Desk d) {
     if (slot != 0) { b.pushStr(",\"slot\":\{slot}"); }
     b.pushStr(",\"focused\":\{d.focused == w.id ? "true" : "false"}}");
   }
+  b.pushStr("],\"folded\":[");
+  for (i32 i = 0; i < d.folded.len(); i++) {
+    if (i > 0) { b.push(','); }
+    str(b, d.folded.get(i));
+  }
   b.pushStr("]}");
   return b.take();
 }
@@ -657,6 +666,21 @@ export i32 restore(Desk d, u8[] json, fn<void(string, string, Vec<Placed>)> agai
   Vec<Vec<Placed>> placed = Vec.create();
   JsonValue? doc = parse(json).ok();
   if (doc is null) { return 0; }
+  // The launcher's groups folded.
+  JsonValue? fs = doc!.member("folded");
+  if (fs is not null) {
+    match (fs!) {
+      Array(items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          match (items.get(i)) {
+            Str(b): { d.folded.push(string.fromBytes(b)); }
+            default: { }
+          }
+        }
+      }
+      default: { }
+    }
+  }
   JsonValue? ws = doc!.member("windows");
   if (ws is null) { return 0; }
   i32 n = 0;

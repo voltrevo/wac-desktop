@@ -430,6 +430,28 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.locator('.win.focus .tcmd').fill('exit'); await p.locator('.win.focus .tcmd').press('Enter'); await settle(1200);
   check((await texts('.win .tt')).filter((t) => t === 'Terminal').length === terms - 1, '`exit` ends the Terminal and closes its window', await texts('.win .tt'));
 
+  // **The launcher**: a search by what an entry is for, groups that fold and stay folded, and a list that scrolls
+  // when the window is short.
+  await p.locator('.tblaunch').click(); await settle(300);
+  await p.keyboard.type('shell'); await settle(300);
+  check((await texts('.launcher .litem .lt')).join() === 'Terminal', 'searching the launcher for "shell" finds the Terminal', await texts('.launcher .litem .lt'));
+  await p.keyboard.press('Enter');
+  await p.waitForSelector('.win.focus .tcmd', { timeout: 15000 }).catch(() => {});
+  check((await p.textContent('.win.focus .tt').catch(() => '')) === 'Terminal', 'and Enter opens it', await texts('.win .tt'));
+  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+  await p.locator('.tblaunch').click(); await settle(300);
+  await p.locator('.lgroup', { hasText: 'Tools' }).click(); await settle(200);
+  await p.keyboard.press('Escape'); await settle(200);
+  await p.locator('.tblaunch').click(); await settle(300);
+  const shown = await texts('.launcher .litem .lt');
+  check(!shown.includes('Calculator') && shown.includes('Terminal'), 'a folded group stays folded', shown);
+  await p.locator('.lgroup', { hasText: 'Tools' }).click(); await settle(200);
+  await p.setViewportSize({ width: 1440, height: 420 }); await settle(500);
+  const fit = await p.$eval('.launcher', (l) => { const r = l.getBoundingClientRect(); const list = l.querySelector('.llist'); return { top: r.top, scrolls: list.scrollHeight > list.clientHeight }; });
+  check(fit.top >= 0 && fit.scrolls, 'on a short screen the launcher fits, and its list scrolls', fit);
+  await p.setViewportSize({ width: 1440, height: 900 }); await settle(300);
+  await p.keyboard.press('Escape'); await settle(200);
+
   // **The wac IDE is a program on the site**, its projects a folder of the desktop's disk: a new project checks in
   // the IDE's own checker process, and Build writes the module beside its source, where Files shows it.
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'wac IDE' }).click();

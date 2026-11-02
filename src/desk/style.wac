@@ -162,16 +162,30 @@ export string deskCss() {
     .clock { font-size: 13px; font-weight: 600; color: var(--text); padding: 0 4px; }
     .clock .tz { font-size: 10px; color: var(--faint); font-weight: 700; letter-spacing: .04em; }
 
-    .launcher { position: absolute; left: 10px; bottom: 62px; width: 320px; padding: 8px; border-radius: 16px; z-index: 200001;
+    /* Never taller than the space above the taskbar; the list scrolls inside it. */
+    .launcher { position: absolute; left: 10px; bottom: 62px; width: 340px; max-height: calc(100% - 74px); padding: 8px; border-radius: 16px; z-index: 200001;
+                display: flex; flex-direction: column;
                 background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgb(255 255 255 / .4);
                 box-shadow: 0 30px 70px -20px rgb(20 14 70 / .45); }
     .lhead { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); padding: 8px 10px 6px; }
     .litem { width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent;
              color: var(--text); cursor: pointer; text-align: left; }
     .litem:hover { background: var(--surface); }
+    .litem.on { background: var(--surface); box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--accent) 45%, transparent); }
+    .lsearch { flex: none; display: flex; align-items: center; gap: 8px; margin: 2px 2px 6px; padding: 0 10px; height: 38px; border-radius: 10px;
+               background: var(--surface); color: var(--muted); box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
+    .lq { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13.5px; color: var(--text); }
+    .llist { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+    .lgroup { width: 100%; display: flex; align-items: center; gap: 6px; padding: 8px 8px 4px; border: 0; background: transparent; cursor: pointer;
+              font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+    .lgroup:hover { color: var(--muted); }
+    .lgroup .lchev { display: inline-flex; transform: rotate(90deg); transition: transform .12s; }
+    .lgroup.shut .lchev { transform: none; }
+    .lgroup .lcount { margin-left: auto; font-weight: 600; letter-spacing: 0; }
+    .lnone { padding: 14px 12px; color: var(--muted); font-size: 13px; }
     .ltile { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
     .ltext { display: flex; flex-direction: column; } .lt { font-weight: 620; font-size: 13.5px; } .ls { font-size: 12px; color: var(--muted); }
-    .lfoot { margin: 6px 4px 2px; padding: 8px 8px 4px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+    .lfoot { flex: none; margin: 6px 4px 2px; padding: 8px 8px 4px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
 
     .toast { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); z-index: 200002; display: flex; align-items: center; gap: 9px;
              max-width: min(560px, calc(100% - 32px)); padding: 10px 16px; border-radius: 12px; font-size: 13px;
