@@ -1,0 +1,237 @@
+// Stackfall's rules, independent of its page. Time arrives in milliseconds and randomness as a seed,
+// so a test can reproduce a game without a browser, a clock or a filesystem.
+import { Buf } from "core";
+import { json.parse, json.JsonValue } from "wac";
+
+export struct Game {
+  i32[] board;
+  i32 piece;
+  i32 rotation;
+  i32 x;
+  i32 y;
+  i32 next;
+  i32 held;
+  bool heldOnce;
+  i64 seed;
+  i32 score;
+  i32 lines;
+  i32 best;
+  bool paused;
+  bool over;
+  i32 fallMs;
+  i32 lockMs;
+  i32 resets;
+}
+
+/** Seven equally likely choices, sampled with replacement; there is no bag or drought prevention.
+ * Park–Miller's 2,147,483,646 possible outputs divide exactly into seven equal classes. */
+export i32 draw(Game g) {
+  g.seed = (g.seed * 16807) % 2147483647;
+  return (g.seed % 7) as~ i32;
+}
+
+/** Cells of a piece in its local square, rotated clockwise around that square's centre. */
+export bool cell(i32 piece, i32 rotation, i32 x, i32 y) {
+  i32 n = piece == 0 ? 4 : 3;
+  if (x < 0 || y < 0 || x >= n || y >= n) { return false; }
+  if (piece == 1) { return (x == 1 || x == 2) && (y == 0 || y == 1); }
+  for (i32 r = 0; r < rotation; r++) { i32 old = x; x = y; y = n - 1 - old; }
+  if (piece == 0) { return y == 1; }
+  if (piece == 2) { return y == 1 || (y == 0 && x == 1); }
+  if (piece == 3) { return (y == 0 && x >= 1) || (y == 1 && x <= 1); }
+  if (piece == 4) { return (y == 0 && x <= 1) || (y == 1 && x >= 1); }
+  if (piece == 5) { return y == 1 || (y == 0 && x == 0); }
+  return y == 1 || (y == 0 && x == 2);
+}
+
+/** Two hidden spawn rows above twenty visible rows. */
+export bool fits(Game g, i32 piece, i32 rotation, i32 x, i32 y) {
+  for (i32 dy = 0; dy < 4; dy++) {
+    for (i32 dx = 0; dx < 4; dx++) {
+      if (!cell(piece, rotation, dx, dy)) { continue; }
+      i32 bx = x + dx;
+      i32 by = y + dy;
+      if (bx < 0 || bx >= 10 || by < 0 || by >= 22) { return false; }
+      if (g.board[by * 10 + bx] != 0) { return false; }
+    }
+  }
+  return true;
+}
+
+export i32 level(Game g) { return 1 + g.lines / 10; }
+export i32 interval(Game g) {
+  i32 ms = 800;
+  for (i32 i = 1; i < level(g) && ms > 70; i++) { ms = ms * 4 / 5; }
+  return ms < 70 ? 70 : ms;
+}
+void best(Game g) { if (g.score > g.best) { g.best = g.score; } }
+void place(Game g, i32 piece) {
+  g.piece = piece; g.rotation = 0; g.x = 3; g.y = 1;
+  g.fallMs = 0; g.lockMs = 0; g.resets = 0;
+  if (!fits(g, piece, 0, g.x, g.y)) { g.over = true; best(g); }
+}
+void spawn(Game g) { i32 piece = g.next; g.next = draw(g); g.heldOnce = false; place(g, piece); }
+
+export Game newGame(i64 seed, i32 record) {
+  Game g = Game(i32[].filled(220, 0), 0, 0, 3, 0, 0, -1, false,
+                seed > 0 && seed < 2147483647 ? seed : (1 as i64), 0, 0, record,
+                true, false, 0, 0, 0);
+  g.next = draw(g); spawn(g);
+  return g;
+}
+
+export i32 landing(Game g) {
+  i32 y = g.y;
+  while (fits(g, g.piece, g.rotation, g.x, y + 1)) { y++; }
+  return y;
+}
+
+/** Moving a grounded piece buys at most fifteen fresh lock delays, preventing infinite stalling. */
+void adjusted(Game g, bool grounded) {
+  if (grounded && g.resets < 15) { g.lockMs = 0; g.resets++; }
+}
+export bool move(Game g, i32 dx) {
+  if (g.paused || g.over || !fits(g, g.piece, g.rotation, g.x + dx, g.y)) { return false; }
+  bool grounded = !fits(g, g.piece, g.rotation, g.x, g.y + 1);
+  g.x += dx; adjusted(g, grounded); return true;
+}
+
+/** Try nearby positions, including a small floor kick; never pass through occupied cells. */
+export bool rotate(Game g, i32 direction) {
+  if (g.paused || g.over || g.piece == 1) { return false; }
+  i32 rotation = (g.rotation + direction + 4) % 4;
+  i32[] kicks = [0, -1, 1, -2, 2];
+  bool grounded = !fits(g, g.piece, g.rotation, g.x, g.y + 1);
+  for (i32 up = 0; up <= 2; up++) {
+    for (i32 i = 0; i < kicks.len(); i++) {
+      if (fits(g, g.piece, rotation, g.x + kicks[i], g.y - up)) {
+        g.rotation = rotation; g.x += kicks[i]; g.y -= up;
+        adjusted(g, grounded); return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Compact all full rows at once, keeping the order of every surviving row. */
+export i32 clearRows(Game g) {
+  i32 write = 21;
+  i32 cleared = 0;
+  for (i32 y = 21; y >= 0; y--) {
+    bool full = true;
+    for (i32 x = 0; x < 10; x++) { if (g.board[y * 10 + x] == 0) { full = false; } }
+    if (full) { cleared++; continue; }
+    for (i32 x = 0; x < 10; x++) { g.board[write * 10 + x] = g.board[y * 10 + x]; }
+    write--;
+  }
+  for (i32 y = write; y >= 0; y--) { for (i32 x = 0; x < 10; x++) { g.board[y * 10 + x] = 0; } }
+  return cleared;
+}
+
+void lock(Game g) {
+  bool visible = false;
+  for (i32 dy = 0; dy < 4; dy++) {
+    for (i32 dx = 0; dx < 4; dx++) {
+      if (cell(g.piece, g.rotation, dx, dy)) {
+        g.board[(g.y + dy) * 10 + g.x + dx] = g.piece + 1;
+        if (g.y + dy >= 2) { visible = true; }
+      }
+    }
+  }
+  i32 n = clearRows(g);
+  i32[] points = [0, 100, 300, 500, 800];
+  g.score += points[n] * level(g); g.lines += n; best(g);
+  if (!visible) { g.over = true; return; }
+  spawn(g);
+}
+export void softDrop(Game g) {
+  if (g.paused || g.over) { return; }
+  if (fits(g, g.piece, g.rotation, g.x, g.y + 1)) {
+    g.y++; g.score++; g.fallMs = 0; best(g);
+  }
+}
+export void hardDrop(Game g) {
+  if (g.paused || g.over) { return; }
+  i32 y = landing(g); g.score += (y - g.y) * 2; g.y = y; lock(g);
+}
+export void hold(Game g) {
+  if (g.paused || g.over || g.heldOnce) { return; }
+  i32 old = g.held; g.held = g.piece;
+  if (old < 0) { spawn(g); } else { place(g, old); }
+  g.heldOnce = true;
+}
+
+/** Small time slices make lock delay depend on time on the ground, not time spent falling. */
+export void tick(Game g, i32 ms) {
+  if (g.paused || g.over) { return; }
+  for (i32 left = ms; left > 0; left -= 10) {
+    i32 step = left < 10 ? left : 10;
+    if (!fits(g, g.piece, g.rotation, g.x, g.y + 1)) {
+      g.lockMs += step;
+      if (g.lockMs >= 500) { lock(g); return; }
+    } else {
+      g.fallMs += step;
+      if (g.fallMs >= interval(g)) { g.y++; g.fallMs -= interval(g); }
+    }
+  }
+}
+
+/** A single versioned save keeps the board, queue and random stream consistent across reloads. */
+export string saved(Game g) {
+  Buf b = Buf.create();
+  b.pushStr("{\"version\":1,\"board\":[");
+  for (i32 i = 0; i < 220; i++) { if (i > 0) { b.pushStr(","); } b.pushStr("\{g.board[i]}"); }
+  b.pushStr("],\"piece\":\{g.piece},\"rotation\":\{g.rotation},\"x\":\{g.x},\"y\":\{g.y},\"next\":\{g.next},\"held\":\{g.held},\"heldOnce\":\{g.heldOnce ? "true" : "false"},\"seed\":\{g.seed},\"score\":\{g.score},\"lines\":\{g.lines},\"best\":\{g.best},\"over\":\{g.over ? "true" : "false"},\"fallMs\":\{g.fallMs},\"lockMs\":\{g.lockMs},\"resets\":\{g.resets}}");
+  return string.fromBytes(b.take());
+}
+
+f64 number(JsonValue v, string key) {
+  JsonValue? found = v.member(key);
+  if (found is null) { return -999.0; }
+  match (found!) { Number(n, raw): { return n; } default: { return -999.0; } }
+}
+bool flag(JsonValue v, string key) {
+  JsonValue? found = v.member(key);
+  if (found is null) { return false; }
+  return match (found!) { Bool(b): b, default: false };
+}
+bool whole(f64 n, f64 low, f64 high) { return n >= low && n <= high && n == n.floor(); }
+
+/** Treat malformed saves as absent; a save is data from a writable disk, never trusted array indices. */
+export Game? restored(string text) {
+  auto parsed = parse(text.toBytes());
+  if (parsed.isErr()) { return null; }
+  JsonValue v = parsed.ok()!;
+  if (number(v, "version") != 1.0) { return null; }
+  i32[] board = i32[].filled(220, 0);
+  JsonValue? rows = v.member("board");
+  if (rows is null) { return null; }
+  match (rows!) {
+    Array(a): {
+      if (a.len() != 220) { return null; }
+      for (i32 i = 0; i < 220; i++) {
+        match (a.get(i)) { Number(n, raw): { if (!whole(n, 0.0, 7.0)) { return null; } board[i] = n as~ i32; } default: { return null; } }
+      }
+    }
+    default: { return null; }
+  }
+  // A real checkpoint is always between locks, after completed rows have been removed.
+  // Refusing full rows also bounds a later lock's score-table index to at most four.
+  for (i32 y = 0; y < 22; y++) {
+    bool full = true;
+    for (i32 x = 0; x < 10; x++) { if (board[y * 10 + x] == 0) { full = false; } }
+    if (full) { return null; }
+  }
+  string[] keys = ["piece", "rotation", "x", "y", "next", "held", "seed", "score", "lines", "best", "fallMs", "lockMs", "resets"];
+  f64[] lows = [0.0, 0.0, -3.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  f64[] highs = [6.0, 3.0, 9.0, 21.0, 6.0, 6.0, 2147483646.0, 1000000000.0, 1000000.0, 1000000000.0, 800.0, 500.0, 15.0];
+  for (i32 i = 0; i < keys.len(); i++) { if (!whole(number(v, keys[i]), lows[i], highs[i])) { return null; } }
+  Game g = Game(board, number(v, "piece") as~ i32, number(v, "rotation") as~ i32,
+                number(v, "x") as~ i32, number(v, "y") as~ i32, number(v, "next") as~ i32,
+                number(v, "held") as~ i32, flag(v, "heldOnce"), number(v, "seed") as~ i64,
+                number(v, "score") as~ i32, number(v, "lines") as~ i32, number(v, "best") as~ i32,
+                true, flag(v, "over"), number(v, "fallMs") as~ i32, number(v, "lockMs") as~ i32, number(v, "resets") as~ i32);
+  if (!g.over && !fits(g, g.piece, g.rotation, g.x, g.y)) { return null; }
+  best(g);
+  return g;
+}

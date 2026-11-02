@@ -1,0 +1,49 @@
+// Drive the real page through web's test document, including its timers and keyboard edges.
+import { Page, TestDoc } from "web";
+import { main } from "../src/apps/stackfall.wac";
+
+struct Harness { TestDoc doc; Page page; i32 root; }
+Harness started() {
+  TestDoc doc = TestDoc.create(); Page page = doc.page();
+  schedule page.take;
+  main(page); page.drain(); page.turn();
+  return Harness(doc, page, doc.find("class", "sf"));
+}
+void key(Harness h, string k) { h.doc.fire(h.root, "keydown", k); h.doc.fire(h.root, "keyup", k); }
+bool paused(Harness h) { return h.doc.find("class", "sf-overlay") >= 0; }
+string score(Harness h) { return h.doc.shown(h.doc.find("class", "sf-score")); }
+
+export string test_stackfall_page_keyboard_pause_and_drop() {
+  Harness h = started();
+  if (h.root < 0 || !paused(h)) { return "did not start paused"; }
+  key(h, "Enter");
+  if (paused(h)) { return "Enter did not start"; }
+  key(h, " "); string after = score(h);
+  if (after == "0") { return "hard drop did not score"; }
+  key(h, "p"); key(h, " ");
+  if (!paused(h) || score(h) != after) { return "paused key changed the game"; }
+  key(h, "p");
+  h.doc.fire(h.root, "blur", "");
+  if (!paused(h)) { return "blur did not pause"; }
+  return "";
+}
+
+export string test_stackfall_page_ignores_native_repeat_for_drop_and_pause() {
+  Harness h = started(); key(h, "Enter");
+  h.doc.fire(h.root, "keydown", " "); string first = score(h);
+  h.doc.fire(h.root, "keydown", " ");
+  if (score(h) != first) { return "repeated keydown hard-dropped twice"; }
+  h.doc.fire(h.root, "keyup", " ");
+  h.doc.fire(h.root, "keydown", "p"); h.doc.fire(h.root, "keydown", "p");
+  if (!paused(h)) { return "native repeat toggled pause twice"; }
+  return "";
+}
+
+export string test_stackfall_page_suspension_pauses_instead_of_catching_up() {
+  Harness h = started(); key(h, "Enter");
+  // Deliver the pending sleeps late, as a suspended host does, instead of advancing through each frame.
+  for (i32 i = 0; i < h.doc.sleepDue.len(); i++) { h.doc.sleepDue.set(i, h.doc.sleepDue.get(i) + 1000.0); }
+  h.doc.advance(1016);
+  if (!paused(h)) { return "long timer gap did not pause"; }
+  return "";
+}

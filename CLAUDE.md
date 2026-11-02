@@ -26,13 +26,13 @@ good deal of it has landed upstream.
 wac is pinned to one commit, `6f3ee4093`, `web` (wac-web) to `d63440e` and the wac IDE (`ide`) to `2811561`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
-    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
+    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:stackfall && wac task test:drops
 
 - **Pins name GitHub** (`https://github.com/voltrevo/`), where the owner syncs the same commits. During development
   they are on git.voltrevo.com first: **run `sh tools/use-mirror.sh` once per machine**, so `git` fetches GitHub's
   URLs from there. `wac update`'s own fetcher does not follow it, so **`tools/fill-cache.sh`, not `wac update`**.
-- `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (43 unit tests, 112 desktop checks, 18 drop cases). The build makes the
+- `test:desk`, `test:stackfall` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
+  All of them pass at the latest commit (57 unit tests, 112 desktop checks, 18 drop cases). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
   runs them, so it needs `wac` on `PATH`.
