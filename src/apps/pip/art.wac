@@ -15,6 +15,9 @@ export struct Screen {
   u8[] px;
   i32 camX;
   i32 camY;
+  /** The camera's place to the fraction of a pixel, and how far ahead of Pip it looks (`follow`). */
+  f64 camF;
+  f64 lead;
   /** The sky, a colour a row; and the stars, x and y in turns. */
   i32[] sky;
   i32[] stars;
@@ -30,7 +33,7 @@ export struct Screen {
       seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
       stars[i * 2 + 1] = seed % 110;
     }
-    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, 0, sky, stars);
+    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, ROWS * TILE - SCREEN_H, 0.0, 0.0, sky, stars);
   }
 }
 
@@ -267,14 +270,43 @@ void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
   }
 }
 
+/** How far ahead the camera looks at a run, and how wide the middle is where Pip moves without the camera moving. */
+static f64 LEAD = 40.0;
+static f64 SLACK = 20.0;
+
+f64 clampCam(f64 x) {
+  f64 most = ((COLS * TILE - SCREEN_W) as f64);
+  return x < 0.0 ? 0.0 : (x > most ? most : x);
+}
+
+/**
+ * **The camera, one step on** — called with the rules' steps, so it moves the same at any frame rate.
+ *
+ * It looks ahead of where Pip is going, by Pip's speed rather than which way Pip faces, and that lead grows and
+ * shrinks slowly: turning round, or a hop back, does not swing the view. Pip moves freely in a slack middle band, and
+ * only leaving it moves the camera, which eases there rather than jumping. It stops at the level's ends.
+ */
+export void follow(Screen s, World w) {
+  f64 run = w.hero.vx / 2.3;
+  f64 want = (run > 1.0 ? 1.0 : (run < 0.0 - 1.0 ? 0.0 - 1.0 : run)) * LEAD;
+  s.lead = s.lead + (want - s.lead) * 0.03;
+  f64 focus = w.hero.x + 5.0 + s.lead - ((SCREEN_W / 2) as f64);
+  f64 target = s.camF;
+  if (focus > s.camF + SLACK) { target = focus - SLACK; }
+  if (focus < s.camF - SLACK) { target = focus + SLACK; }
+  s.camF = clampCam(s.camF + (target - s.camF) * 0.18);
+  s.camX = s.camF.round() as~ i32;
+}
+
+/** The camera straight to Pip: at a level's start, or when Pip comes back to a flag. */
+export void snap(Screen s, World w) {
+  s.lead = 0.0;
+  s.camF = clampCam(w.hero.x + 5.0 - ((SCREEN_W / 2) as f64));
+  s.camX = s.camF.round() as~ i32;
+}
+
 /** The whole picture: the sky, the level, what moves, Pip, and the light. */
 export void drawWorld(Screen s, World w, i32 frame) {
-  // The camera follows Pip, a little ahead of where Pip faces, and stops at the level's ends.
-  i32 want = (w.hero.x as~ i32) + 5 - SCREEN_W / 2 + w.hero.facing * 24;
-  s.camX = s.camX + (want - s.camX) / 6;
-  if (s.camX < 0) { s.camX = 0; }
-  if (s.camX > COLS * TILE - SCREEN_W) { s.camX = COLS * TILE - SCREEN_W; }
-  s.camY = ROWS * TILE - SCREEN_H;
   drawSky(s, frame);
   i32 x0 = s.camX / TILE;
   for (i32 ty = 0; ty < ROWS; ty++) {

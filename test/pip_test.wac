@@ -5,6 +5,7 @@
 import { Level, allLevels } from "../src/apps/pip/levels.wac";
 import { CUE_HURT, CUE_JUMP, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
+import { Screen, follow, snap } from "../src/apps/pip/art.wac";
 import { clock, restoreBest } from "../src/apps/pip.wac";
 
 /** A level of `rows`, padded with air to the full width, bedrock below. */
@@ -160,5 +161,36 @@ export string test_notes_and_times_read_as_written() {
   i32[] best = i32[].filled(5, 0);
   i32 reached = restoreBest("2 300 0 451\n", best);
   if (reached != 2 || best[0] != 300 || best[1] != 0 || best[2] != 451 || best[3] != 0) { return "kept times: \{reached}"; }
+  return "";
+}
+
+/**
+ * **Turning round does not jerk the view**: running right and then back, the camera never moves further in a step than
+ * Pip can run in one and a little more, and a hop on the spot does not move it at all.
+ */
+export string test_the_camera_follows_smoothly_when_pip_turns() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "..........P", "################################################################"]);
+  Screen s = Screen.create();
+  snap(s, w);
+  f64 worst = 0.0;
+  for (i32 i = 0; i < 400; i++) {
+    bool right = (i / 50) % 2 == 0;
+    f64 before = s.camF;
+    step(w, pressing(!right, right, false, false));
+    follow(s, w);
+    f64 moved = s.camF - before;
+    if (moved < 0.0) { moved = 0.0 - moved; }
+    if (moved > worst) { worst = moved; }
+  }
+  if (worst > 4.0) { return "the camera moved \{worst} px in one step"; }
+  World still = made([".", ".", ".", ".", ".", ".", ".", ".", "..........P", "################################################################"]);
+  Screen t = Screen.create();
+  snap(t, still);
+  f64 at = t.camF;
+  for (i32 i = 0; i < 60; i++) {
+    step(still, pressing(false, false, i < 10, i == 0));
+    follow(t, still);
+  }
+  if (t.camF != at) { return "a hop on the spot moved the camera from \{at} to \{t.camF}"; }
   return "";
 }

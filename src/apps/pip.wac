@@ -21,7 +21,7 @@ import { css } from "../style.wac";
 import { pipCss } from "./pip/style.wac";
 import { Level, allLevels } from "./pip/levels.wac";
 import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "./pip/world.wac";
-import { SCREEN_H, SCREEN_W, Screen, drawWorld } from "./pip/art.wac";
+import { SCREEN_H, SCREEN_W, Screen, drawWorld, follow, snap } from "./pip/art.wac";
 import { RATE, effects, tune } from "./pip/chip.wac";
 import { fixed } from "./maths.wac";
 
@@ -139,7 +139,7 @@ void begin(Pip g, i32 index) {
   g.world = load(g.levels[index]);
   g.mode = PLAYING;
   g.newBest = false;
-  g.screen.camX = 0;
+  snap(g.screen, g.world);
   g.keys = Keys.none();
   g.held.clear();
   startMusic(g);
@@ -263,7 +263,10 @@ void frame(Pip g, f64 dt, f64 now) {
       steps++;
       f64 key = g.pressedAt;
       g.pressedAt = 0.0 - 1.0;
+      bool dying = w.hero.dying > 0;
       step(w, g.keys);
+      // Back at a flag, the view goes straight there; otherwise it follows.
+      if (dying && w.hero.dying == 0) { snap(g.screen, w); } else { follow(g.screen, w); }
       g.keys.jumped = false;
       if (key >= 0.0) { g.takenAt = key; }
       for (i32 i = 0; i < w.cues.len(); i++) {
