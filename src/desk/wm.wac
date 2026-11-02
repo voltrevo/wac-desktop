@@ -7,6 +7,7 @@
 // Stacking is a z number rather than the order windows sit in the document: raising a window must not
 // move its element, or an editor's caret and a listing's scroll position would go with it.
 
+import { Prefs, defaultPrefs } from "./prefs.wac";
 import { Buf, Ticket, Vec } from "core";
 import { Answer, Child } from "std";
 import { PageServer } from "web";
@@ -17,7 +18,10 @@ import { json.parse } from "wac";
 
 export struct Win {
   i32 id;
-  /** Which app: "files", "viewer", "editor", "calc", "terminal", "allowed" — the Permissions window — or "program", a module from the disk, running. */
+  /**
+   * Which app: "files", "viewer", "editor", "calc", "terminal", "allowed" — the Permissions window — "settings", or
+   * "program", a module from the disk, running.
+   */
   string app;
   /** What it shows: a path on the disk, for every app so far. Files keeps its current folder here. */
   string arg;
@@ -135,6 +139,8 @@ export struct Desk {
   string query;
   i32 chosen;
   Vec<string> folded;
+  /** What the person chose in Settings (`prefs.wac`). */
+  Prefs prefs;
 }
 
 /** Where a window goes, and how it was: what a session keeps of one, to put it back. */
@@ -314,7 +320,7 @@ static i32 MIN_H = 200;
 
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
-              Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create());
+              Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create(), defaultPrefs());
 }
 
 export Win? find(Desk d, i32 id) {

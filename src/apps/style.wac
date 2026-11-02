@@ -32,9 +32,9 @@ export string calcCss() {
   """;
 }
 
-/** The Viewer's. */
+/** The Viewer's, with the toolbar it shares with the Editor. */
 export string viewerCss() {
-  return """
+  return toolsCss() + """
     .viewerpage, .viewer { display: flex; flex-direction: column; height: 100%; }
     .viewer > .pane.preview { flex: 1; min-height: 0; }
     /* The window's title names the file and the toolbar says what it is: the preview's own header goes. */
@@ -42,20 +42,57 @@ export string viewerCss() {
   """;
 }
 
-/** The Editor's. */
-export string editorCss() {
+/** The toolbar across the top of the Viewer, the Editor and the Markdown editor: what the file is, and what to do. */
+string toolsCss() {
   return """
-    .editorpage { height: 100%; }
-    .editor { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
     .etools { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     .etools .btn { height: 30px; font-size: 12.5px; padding: 0 10px; }
     .epath { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  """;
+}
+
+/** The Editor's, with the toolbar it shares with the Viewer. */
+export string editorCss() {
+  return toolsCss() + """
+    .editorpage { height: 100%; }
+    .editor { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
     .ename { flex: 1; min-width: 0; font: inherit; font-size: 13px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--sunken); color: var(--text); outline: 0; }
     .ename:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
     .estate { font-size: 12px; color: var(--faint); white-space: nowrap; }
     .estate.dirty { color: var(--warn); font-weight: 600; }
     .etext { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: 0; padding: 16px 18px; background: var(--surface);
              color: var(--text); font-size: 13px; line-height: 1.6; tab-size: 4; }
+  """;
+}
+
+/** The Markdown editor's, on top of the Editor's. */
+export string mdeditCss() {
+  return """
+    .mded .etools .segs { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sunken); border: 1px solid var(--line); }
+    .mded .seg { border: 0; background: transparent; padding: 4px 10px; border-radius: 7px; font: inherit; font-size: 12px; font-weight: 550;
+                 color: var(--muted); cursor: pointer; }
+    .mded .seg.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+    .mdtools { display: flex; align-items: center; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+    .mdtools .mdt { height: 28px; min-width: 30px; padding: 0 7px; border-color: transparent; background: transparent; justify-content: center; }
+    .mdtools .mdt:hover { background: var(--hover); }
+    .mdglyph { font-weight: 700; font-size: 12.5px; }
+    .mdcount { margin-left: auto; font-size: 12px; color: var(--faint); white-space: nowrap; padding-right: 4px; }
+    .mdpanes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
+    .mdpane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .mdwrite { border-right: 1px solid var(--line); }
+    .mdsrc { height: 100%; }
+    .mdread { overflow: auto; background: var(--bg); }
+    .mdshown .md { padding-top: 18px; }
+    .mdempty { padding: 28px; color: var(--faint); text-align: center; }
+    .mded.write .mdpanes, .mded.read .mdpanes { grid-template-columns: 1fr; }
+    .mded.write .mdread, .mded.read .mdwrite { display: none; }
+    .mded.read .mdtools .mdt { visibility: hidden; }
+    .mded.write .mdwrite { border-right: 0; }
+    /* Too narrow for both side by side: one above the other. */
+    @container (max-width: 720px) {
+      .mded.split .mdpanes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+      .mded.split .mdwrite { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
   """;
 }
 

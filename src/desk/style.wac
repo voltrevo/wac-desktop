@@ -3,10 +3,9 @@
 /** The desktop's stylesheet. */
 export string deskCss() {
   return """
-    :root { --wall-a: #c9c6ff; --wall-b: #f3d3f5; --wall-c: #cfe9f7; --wall-ink: #1d2140; --glass: rgb(255 255 255 / .72); }
-    @media (prefers-color-scheme: dark) {
-      :root { --wall-a: #2a2569; --wall-b: #4a1d5e; --wall-c: #10365a; --wall-ink: #eef0ff; --glass: rgb(20 23 32 / .74); }
-    }
+    /* As the tokens are: light and dark in one, the scheme choosing; Settings' wallpapers set the glows again. */
+    :root { --wall-a: light-dark(#c9c6ff, #2a2569); --wall-b: light-dark(#f3d3f5, #4a1d5e); --wall-c: light-dark(#cfe9f7, #10365a);
+            --wall-ink: light-dark(#1d2140, #eef0ff); --glass: light-dark(rgb(255 255 255 / .72), rgb(20 23 32 / .74)); }
     body { overflow: hidden; }
     .desk { position: fixed; inset: 0; overflow: hidden; color: var(--text);
             background:
@@ -130,6 +129,36 @@ export string deskCss() {
     .program-status { padding: 6px 10px; color: var(--muted); border-top: 1px solid var(--line); }
     .program-said { margin: 0; padding: 8px 10px; max-height: 40%; overflow: auto; border-top: 1px solid var(--line); white-space: pre-wrap; }
     .c-terminal { color: var(--text); }
+    .settings { height: 100%; overflow: auto; padding: 6px 22px 18px; }
+    .sgroup { padding: 10px 0 14px; border-bottom: 1px solid var(--line); }
+    .sgroup h3 { margin: 6px 0 10px; font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+    .srow { display: flex; align-items: center; gap: 16px; padding: 7px 0; flex-wrap: wrap; }
+    .srow.top { align-items: flex-start; }
+    .slabel { width: 150px; flex: none; color: var(--muted); font-size: 13px; }
+    .srow.top .slabel { padding-top: 6px; }
+    .segs { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line); flex-wrap: wrap; }
+    .seg { border: 0; background: transparent; padding: 5px 12px; border-radius: 7px; font: inherit; font-size: 12.5px; font-weight: 550;
+           color: var(--muted); cursor: pointer; }
+    .seg:hover { color: var(--text); }
+    .seg.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / .12), inset 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent); }
+    .vol .seg { border: 1px solid var(--line); background: var(--sunken); }
+    .vol .seg.on { background: var(--accent-soft); color: var(--accent); }
+    .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+    .swatch { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .12); }
+    .swatch.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+    .walls { display: flex; gap: 10px; flex-wrap: wrap; }
+    .wall { display: flex; flex-direction: column; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; cursor: pointer;
+            font: inherit; font-size: 12px; color: var(--muted); }
+    .wthumb { width: 92px; height: 58px; border-radius: 9px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .wall.on .wthumb { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+    .wall.on { color: var(--text); font-weight: 600; }
+    .vol { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 220px; }
+    .vrange { flex: 1; max-width: 260px; accent-color: var(--accent); }
+    .vrange:disabled { opacity: .45; }
+    .vnum { width: 44px; color: var(--muted); font-size: 12.5px; }
+    .snote { margin: 4px 0 0 166px; font-size: 12px; color: var(--faint); }
+    .sfoot { display: flex; gap: 8px; padding: 14px 0 0; }
+    @container (max-width: 560px) { .slabel { width: 100%; } .srow { gap: 8px; } .snote { margin-left: 0; } }
 
     @container (max-width: 640px) {
       .files .main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }

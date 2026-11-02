@@ -20,6 +20,7 @@ import { Element, Node, PAGE_CAPABILITY, PAGE_VERSION, PAGE_WINDOW, Page, PageSe
 import { Grants, grantedFiles } from "./grants.wac";
 import { desktopProvider } from "./services.wac";
 import { recall } from "./remember.wac";
+import { loudnessOf } from "./prefs.wac";
 import { Got, leafOf } from "./vfs.wac";
 import { CLOSED_WINDOW, Desk, Hand, MAX_WINDOWS, NO_WINDOW, Pending, Running, Start, Win, close, dropHand, find, openWindowFor,
          runningOf } from "./wm.wac";
@@ -184,6 +185,8 @@ void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void
     bumpDesk();
   }, (string line) => { page.log(w.title + ": " + line); });
   r.servers.set(slice, server);
+  // As loud as Settings says, from its first sound (`settings.wac`).
+  server.louder(loudnessOf(d.prefs), 0);
   if (r.start.takesFiles) { d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); })); }
   Vec<Pending> later = Vec.create();
   Vec<Pending> now = r.waiting;

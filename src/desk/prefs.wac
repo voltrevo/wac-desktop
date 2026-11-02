@@ -1,0 +1,175 @@
+// What the person chose in Settings (`settings.wac`): how the desktop looks, how loud it is, and what opens what —
+// kept in `.desktop/settings.json`.
+//
+// **The look is classes on the desktop**, nothing more. Every colour is a `light-dark()` pair (`../style.wac`), so
+// light or dark is the desktop's `color-scheme`, and an accent or a wallpaper is a class that sets a few of the same
+// tokens again. A program's window is a shadow root inside the desktop, which declares no tokens of its own and
+// inherits these — so the desktop's own apps change with it, at once, without being told.
+
+import { Buf } from "core";
+import { json.JsonValue } from "wac";
+import { json.parse } from "wac";
+
+export static string SETTINGS = ".desktop/settings.json";
+
+export struct Prefs {
+  /** "auto" — as the system is — "light" or "dark". */
+  string theme;
+  /** One of `accents()`' names. */
+  string accent;
+  /** One of `wallpapers()`' names. */
+  string wall;
+  /** How loud every program is, 0 to 100, and whether all of it is silenced. */
+  i32 volume;
+  bool muted;
+  /** Which app opens a Markdown file, a data file (JSON, CSV), and other text and code: `openers()`' names. */
+  string markdown;
+  string data;
+  string text;
+}
+
+export Prefs defaultPrefs() { return Prefs("auto", "indigo", "aurora", 100, false, "viewer", "viewer", "editor"); }
+
+/** A colour that is one thing in the light and another in the dark: `light-dark(…)`. */
+struct Pair {
+  string light;
+  string dark;
+}
+
+string ld(Pair p) { return "light-dark(\{p.light}, \{p.dark})"; }
+
+/** An accent: its name as shown, and its colour, second colour, soft tint and selection, light and dark. */
+export struct Accent {
+  string name;
+  string title;
+  Pair main;
+  Pair second;
+  Pair soft;
+  Pair sel;
+}
+
+/** The accents. The first is the tokens' own, and needs no class. */
+export Accent[] accents() {
+  return [
+    Accent("indigo", "Indigo", Pair("#5b55e6", "#8d88ff"), Pair("#8b5cf6", "#b28bff"), Pair("#ecebfd", "#24224a"), Pair("#eeedfd", "#22213f")),
+    Accent("blue", "Blue", Pair("#2563eb", "#60a5fa"), Pair("#0ea5e9", "#7dd3fc"), Pair("#e6eefe", "#14244a"), Pair("#ebf1fe", "#16284d")),
+    Accent("teal", "Teal", Pair("#0d9488", "#2dd4bf"), Pair("#0891b2", "#67e8f9"), Pair("#e0f5f2", "#0f2e2b"), Pair("#e6f6f4", "#12302d")),
+    Accent("green", "Green", Pair("#16a34a", "#4ade80"), Pair("#059669", "#34d399"), Pair("#e3f6e9", "#10301b"), Pair("#e8f7ed", "#12321e")),
+    Accent("amber", "Amber", Pair("#d97706", "#fbbf24"), Pair("#ea580c", "#fb923c"), Pair("#fdf1dc", "#33260c"), Pair("#fdf3e2", "#352a10")),
+    Accent("rose", "Rose", Pair("#e11d48", "#fb7185"), Pair("#db2777", "#f472b6"), Pair("#fde8ec", "#3a1620"), Pair("#fdecef", "#3a1822")),
+    Accent("graphite", "Graphite", Pair("#475569", "#94a3b8"), Pair("#64748b", "#cbd5e1"), Pair("#eceff3", "#1e232c"), Pair("#eef1f5", "#212733")),
+  ];
+}
+
+/** A wallpaper: three soft glows over the page's background, light and dark. */
+export struct Wallpaper {
+  string name;
+  string title;
+  Pair a;
+  Pair b;
+  Pair c;
+}
+
+/** The wallpapers. The first is the desktop's own, and needs no class. */
+export Wallpaper[] wallpapers() {
+  return [
+    Wallpaper("aurora", "Aurora", Pair("#c9c6ff", "#2a2569"), Pair("#f3d3f5", "#4a1d5e"), Pair("#cfe9f7", "#10365a")),
+    Wallpaper("dusk", "Dusk", Pair("#ffd6a5", "#5a2d1c"), Pair("#fdb4c9", "#4c1838"), Pair("#c3b6ff", "#26205e")),
+    Wallpaper("ocean", "Ocean", Pair("#a7e3f5", "#0b3a52"), Pair("#b9d7ff", "#0f2a5c"), Pair("#c8f2e6", "#0b3d34")),
+    Wallpaper("meadow", "Meadow", Pair("#d4f5c4", "#1d4021"), Pair("#fef3b5", "#3d3a12"), Pair("#bfe8dd", "#0f3a33")),
+    Wallpaper("plain", "Plain", Pair("#e4e7ee", "#191d26"), Pair("#e4e7ee", "#191d26"), Pair("#e4e7ee", "#191d26")),
+  ];
+}
+
+/** What can open a kind of file: the app's name, and what Settings calls it. */
+export string[] openers() { return ["viewer", "editor", "markdown"]; }
+export string openerTitle(string app) {
+  return app == "viewer" ? "Viewer" : (app == "editor" ? "Text editor" : (app == "markdown" ? "Markdown editor" : app));
+}
+
+/** The classes the desktop wears for `p`. */
+export string deskClasses(Prefs p) {
+  string out = "";
+  if (p.theme == "light" || p.theme == "dark") { out = out + " theme-" + p.theme; }
+  if (p.accent != accents()[0].name) { out = out + " accent-" + p.accent; }
+  if (p.wall != wallpapers()[0].name) { out = out + " wall-" + p.wall; }
+  return out;
+}
+
+/** The rules those classes stand for. */
+export string prefsCss() {
+  Buf b = Buf.create();
+  b.pushStr(".desk.theme-light { color-scheme: light; } .desk.theme-dark { color-scheme: dark; }\n");
+  Accent[] all = accents();
+  for (i32 i = 1; i < all.len(); i++) {
+    Accent a = all[i];
+    b.pushStr(".desk.accent-\{a.name} { --accent: \{ld(a.main)}; --accent-2: \{ld(a.second)}; --accent-soft: \{ld(a.soft)}; --sel: \{ld(a.sel)}; }\n");
+  }
+  Wallpaper[] ws = wallpapers();
+  for (i32 i = 1; i < ws.len(); i++) {
+    Wallpaper w = ws[i];
+    b.pushStr(".desk.wall-\{w.name} { --wall-a: \{ld(w.a)}; --wall-b: \{ld(w.b)}; --wall-c: \{ld(w.c)}; }\n");
+  }
+  return string.fromBytes(b.take());
+}
+
+/**
+ * How loud every program is, as a scale on what each asks for. The slider's square: an ear hears loudness by ratios,
+ * and a straight scale would put nearly all the change in the slider's first quarter.
+ */
+export f64 loudnessOf(Prefs p) {
+  if (p.muted) { return 0.0; }
+  f64 v = (p.volume as f64) / 100.0;
+  return v * v;
+}
+
+string one(string v, string[] allowed, string otherwise) {
+  for (i32 i = 0; i < allowed.len(); i++) { if (allowed[i] == v) { return v; } }
+  return otherwise;
+}
+
+string[] accentNames() {
+  Accent[] all = accents();
+  string[] out = string[].filled(all.len(), "");
+  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i].name; }
+  return out;
+}
+
+string[] wallNames() {
+  Wallpaper[] ws = wallpapers();
+  string[] out = string[].filled(ws.len(), "");
+  for (i32 i = 0; i < ws.len(); i++) { out[i] = ws[i].name; }
+  return out;
+}
+
+string member(JsonValue doc, string name) {
+  JsonValue? v = doc.member(name);
+  if (v is null) { return ""; }
+  return match (v!) { Str(b): string.fromBytes(b), default: "" };
+}
+
+/** `bytes` as preferences: anything missing or not understood is as it would be by default. */
+export Prefs prefsOf(u8[] bytes) {
+  Prefs p = defaultPrefs();
+  JsonValue? doc = parse(bytes).ok();
+  if (doc is null) { return p; }
+  p.theme = one(member(doc!, "theme"), ["auto", "light", "dark"], p.theme);
+  p.accent = one(member(doc!, "accent"), accentNames(), p.accent);
+  p.wall = one(member(doc!, "wallpaper"), wallNames(), p.wall);
+  p.markdown = one(member(doc!, "markdown"), openers(), p.markdown);
+  p.data = one(member(doc!, "data"), ["viewer", "editor"], p.data);
+  p.text = one(member(doc!, "text"), ["viewer", "editor", "markdown"], p.text);
+  JsonValue? vol = doc!.member("volume");
+  if (vol is not null) {
+    f64 v = vol!.number() ?? 100.0;
+    p.volume = v < 0.0 ? 0 : (v > 100.0 ? 100 : v as~ i32);
+  }
+  p.muted = doc!.member("muted")?.boolean() ?? false;
+  return p;
+}
+
+/** `p`, as `prefsOf` reads it. */
+export u8[] prefsJson(Prefs p) {
+  return ("{\"theme\":\"\{p.theme}\",\"accent\":\"\{p.accent}\",\"wallpaper\":\"\{p.wall}\",\"volume\":\{p.volume},"
+        + "\"muted\":\{p.muted ? "true" : "false"},\"markdown\":\"\{p.markdown}\",\"data\":\"\{p.data}\",\"text\":\"\{p.text}\"}\n").toBytes();
+}

@@ -561,12 +561,13 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   check((await q.textContent('.pill')).includes('Not saved'), 'from file:// it says nothing is kept', await q.textContent('.pill'));
   check((await q.$$eval('.dicon .dname', (l) => l.map((x) => x.textContent))).join() === 'Home,Trash,Welcome.md,demo.zip', 'and still starts with something to open', null);
   // **The desktop's own apps are on its site, and from a file there is none** (the owner's choice): Welcome.md opens
-  // its folder in Files, where the preview shows it, and the launcher offers only what is the desktop's itself.
+  // its folder in Files, where the preview shows it, and the launcher offers only what is the desktop's itself,
+  // Settings among it.
   check((await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent))).join() === 'Desktop', 'from file://, Welcome.md opens its folder in Files', await q.$$eval('.win .tt', (l) => l.map((x) => x.textContent)));
   await q.locator('.tblaunch').click();
   await q.waitForSelector('.litem', { timeout: 5000 }).catch(() => {});
   const offered = await q.$$eval('.litem .lt', (l) => l.map((x) => x.textContent));
-  check(offered.join() === 'Files,Desktop,Trash,Permissions,Welcome', 'and the launcher offers no app from a site', offered);
+  check(offered.join() === 'Files,Desktop,Trash,Permissions,Settings,Welcome', 'and the launcher offers no app from a site', offered);
   await q.locator('.tblaunch').click(); await q.waitForTimeout(300);
   if (shots) { await q.screenshot({ path: path.join(shots, 'desk-8-file.png') }); }
   await q.locator('.dicon', { hasText: 'demo.zip' }).dblclick();

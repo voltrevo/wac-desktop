@@ -42,6 +42,8 @@ export Entry[] entries() {
     Entry("Files", "folder", "Desktop", "The files on your desktop", ["files", "folder", "icons"], false, "files", "Desktop"),
     Entry("Files", "trash", "Trash", "What was deleted, to restore or let go", ["bin", "recycle", "deleted", "restore", "undelete", "rubbish"], false, "files", TRASH),
     Entry("Files", "shield", "Permissions", "What programs were allowed, to take back", ["grants", "security", "privacy", "access", "allowed", "revoke"], false, "allowed", ""),
+    Entry("Tools", "settings", "Settings", "Theme, accent, wallpaper, sound, and what opens what", ["preferences", "options", "theme", "dark", "light", "mode", "accent", "colour", "color", "wallpaper", "background", "volume", "sound", "mute", "default apps", "open with", "control panel", "config"], false, "settings", ""),
+    Entry("Tools", "markdown", "Markdown editor", "A new Markdown file, shown as you write", ["markdown", "md", "notes", "write", "document", "preview", "readme", "prose"], true, "markdown", ""),
     Entry("Tools", "edit", "Text editor", "A new text file", ["notes", "text", "write", "notepad", "txt", "edit"], true, "editor", ""),
     Entry("Tools", "calc", "Calculator", "Sums, typed or clicked", ["calc", "maths", "math", "arithmetic", "numbers", "sums"], true, "calc", ""),
     Entry("Tools", "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", ["zip", "tar", "gzip", "zstd", "archive", "unpack", "extract", "compressed"], true, "explorer", ""),
@@ -175,6 +177,10 @@ export void launch(Desk d, Entry e) {
   }
   if (e.app == "allowed") {
     open(d, "allowed", "", "Permissions", "shield");
+    return;
+  }
+  if (e.app == "settings") {
+    open(d, "settings", "", "Settings", "settings");
     return;
   }
   startApp(d, e.app, e.arg);

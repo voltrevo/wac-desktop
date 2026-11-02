@@ -33,6 +33,8 @@ string icons() {
     ".i-shield { --i: " + svg("<path d='M12 3 5 6v5.5c0 4.3 3 7.7 7 9.5 4-1.8 7-5.2 7-9.5V6z'/><path d='m9 12 2.2 2.2L15.5 10'/>") + "; }" +
     ".i-terminal { --i: " + svg("<rect x='3' y='4.5' width='18' height='15' rx='2.5'/><path d='m7 9.5 3 2.5-3 2.5M12.5 15h4.5'/>") + "; }" +
         ".i-home { --i: " + svg("<path d='M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19z'/>") + "; }" +
+    ".i-settings { --i: " + svg("<circle cx='12' cy='12' r='3'/><path d='M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7'/><circle cx='12' cy='12' r='6.6'/>") + "; }" +
+    ".i-markdown { --i: " + svg("<rect x='2.8' y='5.5' width='18.4' height='13' rx='2.2'/><path d='M6.5 15.2V8.8l2.8 3.2 2.8-3.2v6.4M17 8.8v6.2M14.8 12.9 17 15.2l2.2-2.3'/>") + "; }" +
     ".i-edit { --i: " + svg("<path d='M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z'/><path d='m14 8 3 3'/>") + "; }" +
     ".i-rename { --i: " + svg("<path d='M4 7.5h11M4 16.5h7'/><path d='M18 5v14M16 5h4M16 19h4'/>") + "; }" +
     ".i-trash { --i: " + svg("<path d='M4.5 7h15M10 7V5h4v2M6.5 7l1 12.5h9l1-12.5'/><path d='M10.5 11v5M13.5 11v5'/>") + "; }" +
@@ -52,41 +54,37 @@ string icons() {
     ".i-layers { --i: " + svg("<path d='m12 3 9 5-9 5-9-5z'/><path d='m3 12.5 9 5 9-5'/><path d='m3 16.5 9 5 9-5'/>") + "; }";
 }
 
-/** The whole stylesheet. Tokens first, so the dark theme is a second set of the same names. */
+/** The whole stylesheet. Tokens first: each colour a light one and a dark one, the scheme choosing. */
 export string css() {
   return """
-    /* `:host` too: in a window of wac's desktop a page is a shadow root, where `:root` matches nothing. */
-    :root, :host {
-      --bg: #f5f6f8; --bg-grad: #eceefe;
-      --surface: #ffffff; --surface-2: #f9fafb; --sunken: #f1f3f6;
-      --line: #e6e8ee; --line-strong: #d6d9e1;
-      --text: #121826; --muted: #616a7d; --faint: #9aa1b1;
-      --accent: #5b55e6; --accent-2: #8b5cf6; --accent-soft: #ecebfd; --accent-ink: #ffffff;
-      --sel: #eeedfd; --hover: #f4f5f8;
-      --folder: #f0a33a; --archive: #8b5cf6; --image: #e64a8f; --text-ic: #4a7cf0; --code: #12a383; --binary: #8a93a6;
-      --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
-      --shadow: 0 1px 2px rgb(16 24 40 / .05), 0 8px 24px -6px rgb(16 24 40 / .08);
-      --shadow-lg: 0 24px 64px -20px rgb(44 40 120 / .28), 0 2px 6px rgb(16 24 40 / .05);
-      --checker: #eef0f4;
-      --tk-k: #8b3fd9; --tk-s: #0f7b4a; --tk-c: #8a93a3; --tk-n: #c2410c; --tk-f: #2457c5; --tk-t: #0e7490;
-      color-scheme: light;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root, :host {
-        --bg: #0c0e13; --bg-grad: #17163a;
-        --surface: #13161d; --surface-2: #171a22; --sunken: #0f1117;
-        --line: #232733; --line-strong: #2f3443;
-        --text: #e7e9f0; --muted: #949bad; --faint: #646b7c;
-        --accent: #8d88ff; --accent-2: #b28bff; --accent-soft: #24224a; --accent-ink: #0c0e13;
-        --sel: #22213f; --hover: #1a1d26;
-        --folder: #f5b454; --archive: #a98bff; --image: #f472b6; --text-ic: #7aa2ff; --code: #34d3a6; --binary: #8a93a6;
-        --ok: #4ade80; --bad: #f87171; --warn: #fbbf24;
-        --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px -6px rgb(0 0 0 / .5);
-        --shadow-lg: 0 24px 64px -20px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .4);
-        --checker: #1b1e27;
-        --tk-k: #c792ea; --tk-s: #a5d6a7; --tk-c: #6b7385; --tk-n: #f7a76c; --tk-f: #82aaff; --tk-t: #7fdbca;
-        color-scheme: dark;
-      }
+    /*
+     * Every colour is `light-dark()`, chosen by the `color-scheme` of whatever uses it: a page on its own follows the
+     * system. **In a window of the desktop** a page is a shadow root, where `:root` matches nothing, and these are not
+     * declared again there: the window inherits them, and its scheme, from the desktop — so the desktop's Settings,
+     * light or dark and its accent, reach every window of its own apps.
+     */
+    :root {
+      --bg: light-dark(#f5f6f8, #0c0e13); --bg-grad: light-dark(#eceefe, #17163a);
+      --surface: light-dark(#ffffff, #13161d); --surface-2: light-dark(#f9fafb, #171a22);
+      --sunken: light-dark(#f1f3f6, #0f1117);
+      --line: light-dark(#e6e8ee, #232733); --line-strong: light-dark(#d6d9e1, #2f3443);
+      --text: light-dark(#121826, #e7e9f0); --muted: light-dark(#616a7d, #949bad);
+      --faint: light-dark(#9aa1b1, #646b7c);
+      --accent: light-dark(#5b55e6, #8d88ff); --accent-2: light-dark(#8b5cf6, #b28bff);
+      --accent-soft: light-dark(#ecebfd, #24224a); --accent-ink: light-dark(#ffffff, #0c0e13);
+      --sel: light-dark(#eeedfd, #22213f); --hover: light-dark(#f4f5f8, #1a1d26);
+      --folder: light-dark(#f0a33a, #f5b454); --archive: light-dark(#8b5cf6, #a98bff);
+      --image: light-dark(#e64a8f, #f472b6); --text-ic: light-dark(#4a7cf0, #7aa2ff);
+      --code: light-dark(#12a383, #34d3a6); --binary: #8a93a6;
+      --ok: light-dark(#16a34a, #4ade80); --bad: light-dark(#dc2626, #f87171); --warn: light-dark(#d97706, #fbbf24);
+      --shadow: 0 1px 2px light-dark(rgb(16 24 40 / .05), rgb(0 0 0 / .4)),
+                0 8px 24px -6px light-dark(rgb(16 24 40 / .08), rgb(0 0 0 / .5));
+      --shadow-lg: 0 24px 64px -20px light-dark(rgb(44 40 120 / .28), rgb(0 0 0 / .7)),
+                   0 2px 6px light-dark(rgb(16 24 40 / .05), rgb(0 0 0 / .4));
+      --checker: light-dark(#eef0f4, #1b1e27);
+      --tk-k: light-dark(#8b3fd9, #c792ea); --tk-s: light-dark(#0f7b4a, #a5d6a7); --tk-c: light-dark(#8a93a3, #6b7385);
+      --tk-n: light-dark(#c2410c, #f7a76c); --tk-f: light-dark(#2457c5, #82aaff); --tk-t: light-dark(#0e7490, #7fdbca);
+      color-scheme: light dark;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; }
@@ -106,7 +104,7 @@ export string css() {
     .ic.sm { width: 15px; height: 15px; }
     .ic.lg { width: 22px; height: 22px; }
     .c-folder { color: var(--folder); } .c-archive { color: var(--archive); } .c-image { color: var(--image); }
-    .c-text { color: var(--text-ic); } .c-terminal { color: var(--text); } .c-trash { color: var(--muted); } .c-stackfall { color: #a78bfa; } .c-fractal { color: #f59e0b; } .c-lantern { color: #eab308; } .c-calc { color: var(--accent-2); } .c-code { color: var(--code); } .c-binary, .c-link { color: var(--binary); }
+    .c-text { color: var(--text-ic); } .c-terminal { color: var(--text); } .c-trash { color: var(--muted); } .c-stackfall { color: #a78bfa; } .c-fractal { color: #f59e0b; } .c-lantern { color: #eab308; } .c-calc { color: var(--accent-2); } .c-settings { color: var(--muted); } .c-markdown { color: var(--text-ic); } .c-code { color: var(--code); } .c-binary, .c-link { color: var(--binary); }
 
     .btn { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px; border-radius: 9px;
            border: 1px solid var(--line-strong); background: var(--surface); cursor: pointer; font-weight: 550;

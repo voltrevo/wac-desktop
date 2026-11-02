@@ -11,6 +11,8 @@ import { Desk, MAX_WINDOWS, NO_WINDOW, Placed, Running, Start, Win, close, dragT
 import { Grants } from "../src/desk/grants.wac";
 import { builtin } from "../src/desk/builtin.wac";
 import { Entry, entries, found } from "../src/desk/launcher.wac";
+import { Prefs, defaultPrefs, deskClasses, loudnessOf, prefsCss, prefsJson, prefsOf } from "../src/desk/prefs.wac";
+import { appFor } from "../src/desk/files.wac";
 
 /** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
 T run<T>(Runner r, Ticket<T> t) {
@@ -286,5 +288,56 @@ export string test_the_clock_keeps_one_timer_as_it_ticks() {
   }
   i32 waiting = doc.sleepAsks.len();
   if (waiting > 1) { return "\{waiting} timers waiting after ninety seconds"; }
+  return "";
+}
+
+/**
+ * **Settings are kept as they were chosen, and a damaged file is the defaults**: every choice survives being written
+ * and read, and anything not understood — a wallpaper there is no longer, a volume past full — is as it would be
+ * without the file, not an error.
+ */
+export string test_settings_are_kept_and_a_damaged_file_is_the_defaults() {
+  Prefs p = defaultPrefs();
+  p.theme = "dark";
+  p.accent = "rose";
+  p.wall = "ocean";
+  p.volume = 35;
+  p.muted = true;
+  p.markdown = "markdown";
+  p.data = "editor";
+  p.text = "viewer";
+  Prefs back = prefsOf(prefsJson(p));
+  string was = string.fromBytes(prefsJson(p));
+  if (string.fromBytes(prefsJson(back)) != was) { return "read back as \{string.fromBytes(prefsJson(back))}, not \{was}"; }
+  if (deskClasses(back) != " theme-dark accent-rose wall-ocean") { return "the desktop wears “\{deskClasses(back)}”"; }
+  if (deskClasses(defaultPrefs()) != "") { return "the defaults need no class: “\{deskClasses(defaultPrefs())}”"; }
+  if (prefsCss().indexOf(".desk.accent-rose {") < 0 || prefsCss().indexOf(".desk.wall-ocean {") < 0) { return "no rule for a class it wears"; }
+  Prefs odd = prefsOf("{\"theme\":\"purple\",\"wallpaper\":\"gone\",\"volume\":250,\"markdown\":\"calc\"}".toBytes());
+  if (odd.theme != "auto" || odd.wall != "aurora" || odd.volume != 100 || odd.markdown != "viewer") {
+    return "not understood, not the defaults: \{string.fromBytes(prefsJson(odd))}";
+  }
+  if (string.fromBytes(prefsJson(prefsOf("not json".toBytes()))) != string.fromBytes(prefsJson(defaultPrefs()))) { return "damaged, not the defaults"; }
+  // The slider's square: half way is a quarter as loud; muted is silent whatever the slider says.
+  Prefs half = defaultPrefs();
+  half.volume = 50;
+  if (loudnessOf(half) != 0.25 || loudnessOf(defaultPrefs()) != 1.0 || loudnessOf(back) != 0.0) { return "loudness \{loudnessOf(half)}"; }
+  return "";
+}
+
+/** **What opens what is the person's**: Markdown, data and other text each go where Settings says; the rest as always. */
+export string test_files_open_in_the_app_settings_chose() {
+  Prefs p = defaultPrefs();
+  if (appFor(p, "a.md") != "viewer" || appFor(p, "b.json") != "viewer" || appFor(p, "c.txt") != "editor" || appFor(p, "d.wac") != "editor") {
+    return "the defaults: \{appFor(p, "a.md")} \{appFor(p, "b.json")} \{appFor(p, "c.txt")} \{appFor(p, "d.wac")}";
+  }
+  p.markdown = "markdown";
+  p.data = "editor";
+  p.text = "viewer";
+  if (appFor(p, "a.md") != "markdown" || appFor(p, "README.markdown") != "markdown" || appFor(p, "b.csv") != "editor" || appFor(p, "c.txt") != "viewer") {
+    return "as chosen: \{appFor(p, "a.md")} \{appFor(p, "b.csv")} \{appFor(p, "c.txt")}";
+  }
+  if (appFor(p, "e.zip") != "files" || appFor(p, "f.wasm") != "program" || appFor(p, "g.png") != "viewer") {
+    return "what Settings does not choose: \{appFor(p, "e.zip")} \{appFor(p, "f.wasm")} \{appFor(p, "g.png")}";
+  }
   return "";
 }

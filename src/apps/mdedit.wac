@@ -1,0 +1,305 @@
+// The Markdown editor: Markdown written on one side and shown on the other as it is typed, and saved back.
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`), as the Editor is: started with the file as its argument and
+// handed that file to change, and nothing else; a new file is saved where the desktop says (`Desktop.newFile`).
+// Opened as a page on its own, it writes a new file it can only download.
+//
+// **The text field is the browser's once it is drawn.** It is drawn with the text as it was loaded, which never changes
+// after: the view redraws a component it skipped before handing it an event, and a field drawn with the text as typed
+// so far would be set back, on every key, to the text before that key — losing what was typed in between. What a key
+// changes is shown beside it, by the preview, handed the document's revision.
+
+import { Desktop, ElementEvent, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.button, html.div, html.input, html.span,
+         html.style, html.textarea } from "web";
+import { MdHost, markdown } from "../markdown.wac";
+import { icon } from "../preview.wac";
+import { css } from "../style.wac";
+import { editorCss, mdeditCss } from "./style.wac";
+import { leafOf } from "./viewer.wac";
+
+struct Doc {
+  /** The file, from the disk's root; `""` for a new one, not saved yet. */
+  string path;
+  string text;
+  /** The text the field was drawn with — as it was loaded — and never changed (see the top of this file). */
+  string loaded;
+  /** The text as it is on the disk, to know whether there is anything to save. */
+  string saved;
+  string error;
+  string unreadable;
+  /** For a new file: the name it will be saved as. */
+  string name;
+  Desktop? desk;
+  /** Bumped by every change to `text`: what the preview redraws on. */
+  i32 rev;
+  /** Where the caret was in the text field when it was last heard from, in UTF-16 code units as the browser counts. */
+  i32 selStart;
+  i32 selEnd;
+  /**
+   * What to select once the field says it has what the toolbar typed into it, or -1: a selection asked for before then
+   * would not land, since the field does not move a caret behind typing the program has not seen yet.
+   */
+  i32 thenStart;
+  i32 thenEnd;
+  /** "split", "write" or "read". */
+  string mode;
+  /** The text field, to type into from the toolbar; and what to call when the text changes. */
+  Ref field;
+  fn<void()> changed;
+}
+
+async void saveDoc(Page page, Doc e) {
+  string path = e.path;
+  if (path == "") {
+    string want = e.name == "" ? "Untitled.md" : e.name;
+    if (want.indexOf("/") >= 0) { e.error = "A name cannot contain “/”"; e.changed(); return; }
+    if (want.indexOf(".") < 0) { want = want + ".md"; }
+    Desktop? desk = e.desk;
+    if (desk is null) { e.error = "Opened on its own, the Markdown editor has nowhere to save: Download keeps a copy"; e.changed(); return; }
+    match (await desk!.newFile(want)) {
+      Ok(p): { path = p; }
+      Err(why): { e.error = why; e.changed(); return; }
+    }
+  }
+  string text = e.text;
+  match (await page.sys.files().writeFile(path, text.toBytes())) {
+    Ok(v): { }
+    Err(why): { e.error = "\{why}"; e.changed(); return; }
+  }
+  e.error = "";
+  e.saved = text;
+  if (e.path != path) {
+    e.path = path;
+    page.title(leafOf(path));
+  }
+  if (e.desk is not null) { e.desk!.note("Saved \{leafOf(path)}"); }
+  e.changed();
+}
+
+// ── where the caret is ──────────────────────────────────────────────────────
+
+/** How many UTF-16 code units the UTF-8 sequence starting with `lead` is: two for what lies past U+FFFF. */
+i32 unitsOf(u8 lead) { return lead >= 0xF0 ? 2 : 1; }
+
+/** The byte in `b` that `units` UTF-16 code units in reaches — the end, past it. */
+i32 byteAt(const u8[] b, i32 units) {
+  i32 u = 0;
+  i32 i = 0;
+  while (i < b.len() && u < units) {
+    u = u + unitsOf(b[i]);
+    i++;
+    while (i < b.len() && (b[i] & 0xC0) == 0x80) { i++; }
+  }
+  return i;
+}
+
+/** How many UTF-16 code units `s` is. */
+i32 unitsIn(string s) {
+  u8[] b = s.toBytes();
+  i32 u = 0;
+  for (i32 i = 0; i < b.len(); i++) { if ((b[i] & 0xC0) != 0x80) { u = u + unitsOf(b[i]); } }
+  return u;
+}
+
+/** `text` typed into the field over what is selected there, and then `start` to `end` selected. */
+void typed(Doc e, string text, i32 start, i32 end) {
+  e.thenStart = start;
+  e.thenEnd = end;
+  e.field.element()!.typeText(text);
+}
+
+/** Remember where the caret is, from an event in the text field. */
+void heard(Doc e, ElementEvent ev) {
+  if (ev.selStart < 0) { return; }
+  e.selStart = ev.selStart;
+  e.selEnd = ev.selEnd;
+}
+
+/** What is selected. */
+string selected(Doc e) {
+  u8[] b = e.text.toBytes();
+  i32 from = byteAt(b, e.selStart);
+  i32 to = byteAt(b, e.selEnd);
+  return to > from ? e.text.slice(from, to) : "";
+}
+
+/**
+ * What is selected, wrapped in `mark` on each side — `**` for bold — typed into the field as if it were typed, so it
+ * is one step to undo; with nothing selected, `hint` between the marks, selected to type over.
+ */
+void wrap(Doc e, string mark, string hint) {
+  Ref f = e.field;
+  if (f.element() is null) { return; }
+  string inner = selected(e);
+  bool empty = inner == "";
+  if (empty) { inner = hint; }
+  i32 at = e.selStart;
+  f.element()!.focus();
+  f.element()!.select(e.selStart, e.selEnd);
+  i32 from = at + unitsIn(mark);
+  typed(e, mark + inner + mark, from, from + unitsIn(inner));
+}
+
+/** `prefix` at the start of the line the caret is on — `## ` for a heading, `- ` for a list — or taken off if there. */
+void linePrefix(Doc e, string prefix) {
+  Ref f = e.field;
+  if (f.element() is null) { return; }
+  u8[] b = e.text.toBytes();
+  i32 caret = byteAt(b, e.selStart);
+  i32 start = caret;
+  while (start > 0 && b[start - 1] != '\n') { start--; }
+  i32 lineAt = unitsIn(e.text.slice(0, start));
+  f.element()!.focus();
+  if (b.len() - start >= prefix.len() && e.text.slice(start, start + prefix.len()) == prefix) {
+    i32 n = unitsIn(prefix);
+    f.element()!.select(lineAt, lineAt + n);
+    // A caret inside what was taken off goes to where it was.
+    typed(e, "", e.selStart - n < lineAt ? lineAt : e.selStart - n, e.selEnd - n < lineAt ? lineAt : e.selEnd - n);
+    return;
+  }
+  f.element()!.select(lineAt, lineAt);
+  typed(e, prefix, e.selStart + unitsIn(prefix), e.selEnd + unitsIn(prefix));
+}
+
+/** A link: the selection as its text, and its address selected to type over. */
+void link(Doc e) {
+  Ref f = e.field;
+  if (f.element() is null) { return; }
+  string inner = selected(e);
+  if (inner == "") { inner = "text"; }
+  i32 at = e.selStart;
+  f.element()!.focus();
+  f.element()!.select(e.selStart, e.selEnd);
+  i32 url = at + unitsIn("[" + inner + "](");
+  typed(e, "[" + inner + "](https://)", url, url + unitsIn("https://"));
+}
+
+// ── counting ────────────────────────────────────────────────────────────────
+
+/** How many words: runs of anything but spaces, tabs and line ends. */
+export i32 wordsIn(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  bool inWord = false;
+  for (i32 i = 0; i < b.len(); i++) {
+    bool space = b[i] == ' ' || b[i] == '\n' || b[i] == '\t' || b[i] == '\r';
+    if (!space && !inWord) { n++; }
+    inWord = !space;
+  }
+  return n;
+}
+
+string counted(string text) {
+  i32 w = wordsIn(text);
+  // About two hundred and thirty words a minute, read on a screen; never "0 min" for something there.
+  i32 mins = (w + 229) / 230;
+  return (w == 1 ? "1 word" : "\{w} words") + (w == 0 ? "" : " · \{mins} min read");
+}
+
+// ── the parts ───────────────────────────────────────────────────────────────
+
+/** The text field, left to the browser once drawn (see the top of this file). */
+Node Source(Ui ui, Page page, Doc e) {
+  return <textarea class="etext mono mdsrc" spellcheck="true" value={e.loaded} ref={e.field} placeholder={"# A title\n\nWrite here."}
+                   prevent="Ctrl+s Meta+s Ctrl+b Meta+b Ctrl+i Meta+i Ctrl+k Meta+k"
+                   onkeydown={(ElementEvent ev) => {
+                     heard(e, ev);
+                     if ((ev.mods & (MOD_CTRL | MOD_META)) == 0) { return; }
+                     string k = ev.value;
+                     if (k == "s" || k == "S") { saveDoc(page, e); }
+                     if (k == "b" || k == "B") { wrap(e, "**", "bold"); }
+                     if (k == "i" || k == "I") { wrap(e, "*", "italic"); }
+                     if (k == "k" || k == "K") { link(e); }
+                   }}
+                   onkeyup={(ElementEvent ev) => { heard(e, ev); }}
+                   onpointerup={(ElementEvent ev) => { heard(e, ev); }}
+                   oninput={(ElementEvent ev) => {
+                     heard(e, ev);
+                     if (e.thenStart >= 0) {
+                       e.field.element()!.select(e.thenStart, e.thenEnd);
+                       e.selStart = e.thenStart;
+                       e.selEnd = e.thenEnd;
+                       e.thenStart = 0 - 1;
+                     }
+                     e.text = ev.value;
+                     e.rev++;
+                     e.changed();
+                   }}></textarea>;
+}
+
+/** What the text makes, redrawn at each revision. */
+Node Shown(Ui ui, Doc e, i32 rev) {
+  if (e.text == "") { return <div class="mdshown"><div class="mdempty">What you write shows here.</div></div>; }
+  // Only the file itself was handed to this program: an image beside it cannot be read, and shows as its alt text.
+  MdHost host = MdHost("", (string path) => null, (string path) => { });
+  return <div class="mdshown">{markdown(e.text.toBytes(), host)}</div>;
+}
+
+Node tool(string ic, string label, string tip, fn<void()> act) {
+  return <button class="btn mdt" title={tip} onclick={(ElementEvent ev) => { act(); }}>
+    {ic == "" ? <span class="mdglyph">{label}</span> : icon(ic, "sm")}</button>;
+}
+
+Node Writer(Ui ui, Page page, Doc e) {
+  auto version = ui.state(0);
+  e.changed = () => { version.update((i32 v) => v + 1); };
+  if (e.unreadable != "") {
+    return <div class="placeholder"><div>{icon("alert", "")}<div>{e.unreadable}</div></div></div>;
+  }
+  bool dirty = e.text != e.saved;
+  fn<Node(string, string)> modeButton = (string m, string label) =>
+    <button class={e.mode == m ? "seg on" : "seg"} onclick={(ElementEvent ev) => { e.mode = m; e.changed(); }}>{label}</button>;
+  return <div class={"editor mded " + e.mode}>
+    <div class="etools">
+      {e.path == ""
+        ? <input class="ename" placeholder="Untitled.md" value={e.name} oninput={(ElementEvent ev) => { e.name = ev.value; }}/>
+        : <span class="epath" title={e.path}>{e.path}</span>}
+      <span class={dirty || e.error != "" ? "estate dirty" : "estate"}>
+        {e.error != "" ? e.error : (dirty ? "Unsaved changes" : (e.path == "" ? "New file" : "Saved"))}</span>
+      <div class="segs">{modeButton("write", "Write")}{modeButton("split", "Both")}{modeButton("read", "Read")}</div>
+      <button class={dirty || e.path == "" ? "btn primary" : "btn"} title="Save (Ctrl+S)" onclick={(ElementEvent ev) => { saveDoc(page, e); }}>
+        {icon("save", "sm")}<span class="label">Save</span></button>
+      <button class="btn" title="Download a copy"
+              onclick={(ElementEvent ev) => { page.download(e.path == "" ? (e.name == "" ? "Untitled.md" : e.name) : leafOf(e.path), e.text.toBytes()); }}>
+        {icon("download", "sm")}</button>
+    </div>
+    <div class="mdtools">
+      {tool("", "H", "Heading", () => { linePrefix(e, "## "); })}
+      {tool("", "B", "Bold (Ctrl+B)", () => { wrap(e, "**", "bold"); })}
+      {tool("", "I", "Italic (Ctrl+I)", () => { wrap(e, "*", "italic"); })}
+      {tool("", "<>", "Code", () => { wrap(e, "`", "code"); })}
+      {tool("link", "", "Link (Ctrl+K)", () => { link(e); })}
+      {tool("", "•", "List", () => { linePrefix(e, "- "); })}
+      {tool("", "1.", "Numbered list", () => { linePrefix(e, "1. "); })}
+      {tool("", "☐", "Task", () => { linePrefix(e, "- [ ] "); })}
+      {tool("", "❝", "Quote", () => { linePrefix(e, "> "); })}
+      <span class="mdcount num">{counted(e.text)}</span>
+    </div>
+    <div class="mdpanes">
+      <div class="mdpane mdwrite"><Source page={page} e={e}/></div>
+      <div class="mdpane mdread"><Shown e={e} rev={e.rev}/></div>
+    </div>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  string[] args = page.sys.args();
+  Doc e = Doc(args.len() > 0 ? args[0] : "", "", "", "", "", "", "", null, 0, 0, 0, 0 - 1, 0 - 1, "split", Ref {}, () => { });
+  page.title(e.path == "" ? "Untitled.md" : leafOf(e.path));
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { e.desk = d; }
+    Err(why): { }
+  }
+  if (e.path != "") {
+    match (await page.sys.files().readFile(e.path)) {
+      Ok(bytes): {
+        e.text = string.toUtf8(bytes);
+        e.saved = e.text;
+        e.loaded = e.text;
+      }
+      Err(why): { e.unreadable = "\{why}"; }
+    }
+  }
+  page.mount((Ui ui) => <div class="editorpage"><style>{css() + editorCss() + mdeditCss()}</style><Writer page={page} e={e}/></div>);
+  return 0;
+}

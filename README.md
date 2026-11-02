@@ -3,9 +3,9 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Stackfall**, and the **wac IDE** —
-each a program of its own on the site the desktop is served from, started in windows it opens itself. Deleting moves things to a
-**Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
+**Editor**, a **Markdown editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Stackfall**, and the **wac IDE** —
+each a program of its own on the site the desktop is served from, started in windows it opens itself — and
+**Settings**. Deleting moves things to a **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
 It is written in [wac](https://github.com/voltrevo/wac), uses the DOM for everything it draws, and builds
 to single HTML files. The standalone **Archive Explorer** it grew from is built alongside it.
@@ -41,6 +41,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task serve       # http://localhost:8080 — over http the desktop gets its storage
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:pip       # Pip played, heard, measured, paused, muted and silenced, in Chromium
+    wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
     wac task test:stackfall # Stackfall controls, focus, saves and restart in Chromium (needs Playwright)
@@ -80,7 +81,8 @@ shares, so their pages can see each other's files.
 
 - **First launch** puts `Welcome.md` and `demo.zip` on the desktop and opens the welcome note.
 - **Files** lists the disk. Double-click a folder to go in, an archive to browse it in place, anything
-  else to open it — text and code in the Editor, the rest in a Viewer. Beside the listing, the selected
+  else to open it — text and code in the Editor, Markdown and data in the Viewer (or wherever Settings says), the
+  rest in a Viewer. Beside the listing, the selected
   file is previewed (rendered Markdown, a JSON tree, a CSV table, highlighted code, images, hex, checksums)
   with Open, Edit, Rename (F2) and Delete (it asks twice). New folder, and Add files from your computer.
 - **Inside an archive**, Files is the Archive Explorer — its listing, filter and previews — with the
@@ -182,7 +184,17 @@ shares, so their pages can see each other's files.
   no program can restyle the desktop — its consent dialog included — or another program, and the desktop's rules do
   not reach in. The window's body contains its layout and paint, so `position: fixed` stays in the window too.
 - **The Editor** saves with Ctrl+S or its Save button. A new file is saved on the Desktop, under the name typed or
-  the first free one like it (`Desktop.newFile`); the Viewer's Edit opens its file in the Editor (`Desktop.edit`).
+  the first free one like it (`Desktop.newFile`); the Viewer's Edit opens its file in the Editor (`Desktop.edit`) —
+  or, for Markdown, in the Markdown editor.
+- **The Markdown editor** shows what is written beside it as it is typed — Write, Both or Read — with a toolbar
+  (and Ctrl+B, Ctrl+I, Ctrl+K) that wraps what is selected or starts the line, a count of words and minutes to read,
+  and saving as the Editor saves. The text field is never redrawn as it is typed into, so the caret is the browser's.
+- **Settings** (in the launcher) sets light, dark or as the system is, an accent and a wallpaper; a volume and Mute for
+  every program; and which app opens Markdown, JSON and CSV, and other text. Each choice takes effect as it is made
+  and is kept in `.desktop/settings.json`. **The look reaches every window**: each colour is a `light-dark()` pair
+  chosen by the `color-scheme`, which a program's window — a shadow root that declares no colours of its own —
+  inherits from the desktop, accent and all. **The volume reaches every sound**: the desktop's `PageServer` for each
+  window scales what that program plays (web's `PageServer.louder`), and fades what is playing already.
 - **The clock says UTC**: a page is told the time, but not its reader's time zone.
 
 ## Layout
@@ -195,7 +207,8 @@ shares, so their pages can see each other's files.
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac` | Files |
 | `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
-| `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
+| `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/mdedit.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Markdown editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
+| `src/desk/prefs.wac`, `src/desk/settings.wac` | what Settings keeps — the look as classes and their rules, the volume, what opens what — and its window |
 | `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, and the logarithms, powers and decimals it needs, which wac's core leaves out |
 | `src/apps/pip.wac`, `src/apps/pip/` | Pip: its page, its rules (`world.wac`), levels, pictures (`art.wac`), sounds (`chip.wac`) and stylesheet |
 | `src/apps/stackfall.wac`, `src/apps/stackfall/` | Stackfall: its page, independent game rules, versioned saves and stylesheet |

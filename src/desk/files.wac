@@ -7,6 +7,7 @@
 import { Ticket, Vec } from "core";
 import { ElementEvent, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Ref, Ui, html.b, html.br, html.button, html.div, html.h3, html.header, html.input, html.label, html.nav, html.p, html.section,
          html.span } from "web";
+import { Prefs } from "./prefs.wac";
 import { Vfs, Got, Info, nowMillis, copyInto, join, leafOf, moveInto, parentOf, freeName, within } from "./vfs.wac";
 import { Desk, Win, canDrop, dragging, dropOn, hover, moved, open, pressFiles, startOf } from "./wm.wac";
 import { startApp } from "./builtin.wac";
@@ -125,31 +126,38 @@ Item[] sorted(FilesState s) {
 }
 
 /**
- * What opening a file does: a wasm module runs, in a window of its own; archives open in place; documents the
- * Viewer renders — Markdown, JSON, CSV — open there, with Edit a click away; other text and code open in the Editor;
+ * What opening a file does: a wasm module runs, in a window of its own; archives open in place; Markdown, data the
+ * Viewer renders — JSON, CSV — and other text and code each open in the app Settings chose for them (`prefs.wac`);
  * the rest in a Viewer.
  */
-export string appFor(string name) {
+export string appFor(Prefs p, string name) {
   if (extOf(name) == "wasm") { return "program"; }
   string ic = iconFor(name);
   if (ic == "archive") { return "files"; }
-  string[] rendered = ["md", "markdown", "mdx", "json", "json5", "jsonc", "geojson", "ipynb", "csv", "tsv"];
-  for (i32 i = 0; i < rendered.len(); i++) { if (extOf(name) == rendered[i]) { return "viewer"; } }
-  if (ic == "text" || ic == "code") { return "editor"; }
+  if (isMarkdown(name)) { return p.markdown; }
+  string[] rendered = ["json", "json5", "jsonc", "geojson", "ipynb", "csv", "tsv"];
+  for (i32 i = 0; i < rendered.len(); i++) { if (extOf(name) == rendered[i]) { return p.data; } }
+  if (ic == "text" || ic == "code") { return p.text; }
   return "viewer";
+}
+
+/** Whether `name` is Markdown: what the Markdown editor is for, and edits as text in it. */
+export bool isMarkdown(string name) {
+  string e = extOf(name);
+  return e == "md" || e == "markdown" || e == "mdx";
 }
 
 /** Open the file at `path` on the disk, from anywhere on the desktop. */
 export void openPath(Desk d, string path, bool isDir) {
   if (isDir) { open(d, "files", path, leafOf(path) == "" ? "Home" : leafOf(path), "folder"); return; }
-  string app = appFor(leafOf(path));
+  string app = appFor(d.prefs, leafOf(path));
   // **A program is started, not shown**: it opens its own windows, if it has anything to show.
   if (app == "program") {
     if (d.launch is not null) { d.launch!(startOf(path)); }
     return;
   }
-  // A document, in the desktop's Viewer or Editor — programs on its site.
-  if (app == "viewer" || app == "editor") {
+  // A document, in the desktop's Viewer or an editor — programs on its site.
+  if (app == "viewer" || app == "editor" || app == "markdown") {
     startApp(d, app, path);
     return;
   }
@@ -330,7 +338,7 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
   fn<void(Item)> activate = (Item it) => {
     string path = join(s.dir, it.name);
     if (it.isDir) { goTo(d, w, s, path, bump); return; }
-    if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
+    if (appFor(d.prefs, it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
     openPath(d, path, false);
     bumpDesk();
   };
@@ -617,13 +625,13 @@ Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<voi
   Item it = found!;
   fn<void()> openIt = () => {
     if (it.isDir) { goTo(d, w, s, path, bump); return; }
-    if (appFor(it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
+    if (appFor(d.prefs, it.name) == "files") { openArchiveHere(d, page, s, path, bump); return; }
     openPath(d, path, false);
     bumpDesk();
   };
   bool trash = inTrash(s.dir);
   Node actions = <div class="actions">
-    {!it.isDir && appFor(it.name) == "files" && !trash
+    {!it.isDir && appFor(d.prefs, it.name) == "files" && !trash
       ? <button class="btn primary" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>
       : <button class="btn" onclick={(ElementEvent e) => { openIt(); }}>{icon("open", "sm")}<span class="label">Open</span></button>}
     {d.site && !it.isDir && !trash && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
@@ -668,7 +676,7 @@ export Node FilesApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 f
   Ref cursorRef = ui.ref();
   // The window's argument is where it is: a folder, or an archive to open in place.
   ui.effect("\{rev}", () => {
-    if (appFor(leafOf(w.arg)) == "files" && w.arg != "" && iconFor(leafOf(w.arg)) == "archive") {
+    if (appFor(d.prefs, leafOf(w.arg)) == "files" && w.arg != "" && iconFor(leafOf(w.arg)) == "archive") {
       s.dir = parentOf(w.arg);
       s.selected = leafOf(w.arg);
       openArchiveHere(d, page, s, w.arg, bump);

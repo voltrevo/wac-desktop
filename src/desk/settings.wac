@@ -1,0 +1,122 @@
+// Settings: how the desktop looks, how loud it is, and what opens what (`prefs.wac`).
+//
+// **Every choice takes effect as it is made, and is kept.** The look is classes on the desktop, which every window
+// inherits; the volume is handed to every program's page server (`PageServer.louder`), which scales what each program
+// plays — the program is not asked, and cannot play past it; what opens what is asked when a file is opened. Each
+// change is written to `.desktop/settings.json` there and then.
+
+import { ElementEvent, Node, Page, Ui, html.button, html.div, html.h3, html.input, html.p, html.section, html.span } from "web";
+import { Accent, Prefs, SETTINGS, Wallpaper, accents, defaultPrefs, loudnessOf, openerTitle, prefsJson, wallpapers } from "./prefs.wac";
+import { Desk, Running, Win, open } from "./wm.wac";
+import { icon } from "../preview.wac";
+
+/** Keep `d`'s preferences, and hand every running program the volume they now say. */
+export async void keepPrefs(Desk d) {
+  hear(d, 150);
+  await d.fs.mkdir(".desktop");
+  await d.fs.write(SETTINGS, prefsJson(d.prefs));
+}
+
+/** Every window of every running program, as loud as the preferences say, getting there over `ms`. */
+export void hear(Desk d, i32 ms) {
+  f64 loud = loudnessOf(d.prefs);
+  for (i32 i = 0; i < d.running.len(); i++) {
+    Running r = d.running.get(i);
+    for (i32 k = 0; k < r.servers.len(); k++) {
+      if (r.servers.get(k) is not null) { r.servers.get(k)!.louder(loud, ms); }
+    }
+  }
+}
+
+/** A row of choices, one of them chosen: `values` as `titles`, `pick` told the one clicked. */
+Node choices(string label, string[] values, string[] titles, string chosen, fn<void(string)> pick) {
+  Node[] bs = Node[].filled(values.len(), Node.Text(""));
+  for (i32 i = 0; i < values.len(); i++) {
+    string v = values[i];
+    bs[i] = <button class={v == chosen ? "seg on" : "seg"}
+                    onclick={(ElementEvent e) => { pick(v); }}>{titles[i]}</button>;
+  }
+  return <div class="srow"><span class="slabel">{label}</span><div class="segs">{bs}</div></div>;
+}
+
+/** A whole number from what a range field says. */
+i32 wholeFrom(string s) {
+  i32 v = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len() && b[i] != '.'; i++) { if (b[i] >= '0' && b[i] <= '9') { v = v * 10 + (b[i] - '0') as i32; } }
+  return v;
+}
+
+export Node SettingsApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 rev) {
+  auto version = ui.state(0);
+  fn<void()> changed = () => {
+    keepPrefs(d);
+    version.update((i32 v) => v + 1);
+    bumpDesk();
+  };
+  Prefs p = d.prefs;
+
+  Accent[] all = accents();
+  Node[] swatches = Node[].filled(all.len(), Node.Text(""));
+  for (i32 i = 0; i < all.len(); i++) {
+    Accent a = all[i];
+    swatches[i] = <button class={a.name == p.accent ? "swatch on" : "swatch"} title={a.title}
+                          style={"background: light-dark(\{a.main.light}, \{a.main.dark})"}
+                          onclick={(ElementEvent e) => { p.accent = a.name; changed(); }}></button>;
+  }
+  Wallpaper[] ws = wallpapers();
+  Node[] walls = Node[].filled(ws.len(), Node.Text(""));
+  for (i32 i = 0; i < ws.len(); i++) {
+    Wallpaper wp = ws[i];
+    string look = "background: radial-gradient(60% 70% at 15% 20%, light-dark(\{wp.a.light}, \{wp.a.dark}), transparent 70%),"
+                + " radial-gradient(55% 60% at 85% 25%, light-dark(\{wp.b.light}, \{wp.b.dark}), transparent 70%),"
+                + " radial-gradient(70% 70% at 60% 95%, light-dark(\{wp.c.light}, \{wp.c.dark}), transparent 70%), var(--bg)";
+    walls[i] = <button class={wp.name == p.wall ? "wall on" : "wall"} title={wp.title}
+                       onclick={(ElementEvent e) => { p.wall = wp.name; changed(); }}>
+      <span class="wthumb" style={look}></span><span class="wname">{wp.title}</span></button>;
+  }
+
+  string[] apps3 = ["viewer", "markdown", "editor"];
+  string[] apps2 = ["viewer", "editor"];
+  string[] text2 = ["editor", "viewer"];
+  fn<string[](string[])> titled = (string[] apps) => {
+    string[] out = string[].filled(apps.len(), "");
+    for (i32 i = 0; i < apps.len(); i++) { out[i] = openerTitle(apps[i]); }
+    return out;
+  };
+
+  return <div class="settings">
+    <section class="sgroup">
+      <h3>Appearance</h3>
+      {choices("Theme", ["auto", "light", "dark"], ["As the system", "Light", "Dark"], p.theme, (string v) => { p.theme = v; changed(); })}
+      <div class="srow"><span class="slabel">Accent</span><div class="swatches">{swatches}</div></div>
+      <div class="srow top"><span class="slabel">Wallpaper</span><div class="walls">{walls}</div></div>
+    </section>
+    <section class="sgroup">
+      <h3>Sound</h3>
+      <div class="srow">
+        <span class="slabel">Volume</span>
+        <div class="vol">
+          <button class={p.muted ? "seg on" : "seg"} title="Silence every program"
+                  onclick={(ElementEvent e) => { p.muted = !p.muted; changed(); }}>{p.muted ? "Muted" : "Mute"}</button>
+          <input class="vrange" type="range" min="0" max="100" step="5" value={"\{p.volume}"} disabled={p.muted ? "" : null}
+                 title="Volume"
+                 oninput={(ElementEvent e) => { p.volume = wholeFrom(e.value); changed(); }}/>
+          <span class="vnum num">{p.muted ? "—" : "\{p.volume}%"}</span>
+        </div>
+      </div>
+      <p class="snote">For every program, as it plays: Stackfall's and Pip's own switches still work under it.</p>
+    </section>
+    <section class="sgroup">
+      <h3>Opening files</h3>
+      {choices("Markdown", apps3, titled(apps3), p.markdown, (string v) => { p.markdown = v; changed(); })}
+      {choices("JSON and CSV", apps2, titled(apps2), p.data, (string v) => { p.data = v; changed(); })}
+      {choices("Other text and code", text2, titled(text2), p.text, (string v) => { p.text = v; changed(); })}
+    </section>
+    <div class="sfoot">
+      <button class="btn" onclick={(ElementEvent e) => { open(d, "allowed", "", "Permissions", "shield"); bumpDesk(); }}>
+        {icon("shield", "sm")}<span class="label">Permissions…</span></button>
+      <button class="btn" onclick={(ElementEvent e) => { d.prefs = defaultPrefs(); changed(); }}>Back to how it was</button>
+    </div>
+  </div>;
+}

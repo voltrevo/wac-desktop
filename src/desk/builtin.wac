@@ -1,5 +1,5 @@
-// The desktop's own apps — the Calculator, the Viewer and the Editor, the Terminal, the Archive Explorer and the wac
-// IDE — as programs on the site it was served from.
+// The desktop's own apps — the Calculator, the Viewer, the Editor and the Markdown editor, the Terminal, the Archive
+// Explorer and the wac IDE — as programs on the site it was served from.
 //
 // **Each is a program like any other**, built beside the desktop into `dist/apps/<name>.wasm` and started from
 // `/site/apps/` by `launch`, in windows it opens itself. What makes one the desktop's own is only how it is started:
@@ -29,9 +29,11 @@ export Start builtin(string app, string arg) {
   if (app == "viewer") {
     g.grant(arg, false);
     ic = "text";
-  } else if (app == "editor") {
+  } else if (app == "editor" || app == "markdown") {
     if (arg != "") { g.grant(arg, true); }
-    ic = "edit";
+    ic = app == "editor" ? "edit" : "markdown";
+    // The Markdown editor shows what it writes beside it.
+    if (app == "markdown") { w = 1040; h = 640; }
   } else if (app == "terminal") {
     // **The Terminal is handed the whole disk**, as the owner chose: it is a shell, and what it runs is the person's.
     g.grant("", true);
@@ -88,7 +90,7 @@ export void startApp(Desk d, string app, string arg) { startPlaced(d, app, arg, 
 /** As `startApp`, its windows where a session had them. */
 export void startPlaced(Desk d, string app, string arg, Vec<Placed> places) {
   if (!d.site || d.launch is null) {
-    if (app == "viewer" || app == "editor") {
+    if (app == "viewer" || app == "editor" || app == "markdown") {
       if (places.len() == 0) {
         open(d, "files", parentOf(arg), leafOf(parentOf(arg)) == "" ? "Home" : leafOf(parentOf(arg)), "folder");
         d.note = "Opened from a file, the desktop has no " + app + ": " + leafOf(arg) + " is shown here";
