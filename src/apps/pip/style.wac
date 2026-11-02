@@ -27,6 +27,10 @@ export string pipCss() {
     .plevel.locked { opacity: .45; }
     .plevel.on { background: rgba(255, 212, 92, .2); box-shadow: 0 0 0 1px #ffd45c inset; }
     .pgo { color: #c8cce8; }
+    .pm { display: inline-block; width: 9px; height: 9px; margin-left: 6px; border-radius: 50%; vertical-align: 0; }
+    .pm.gold { background: #ffd45c; box-shadow: 0 0 6px #ffb040; } .pm.silver { background: #d8dce8; }
+    .pm.bronze { background: #c8844a; } .pm.none { background: transparent; box-shadow: inset 0 0 0 1px #4a4e70; }
+    .pmedal { text-transform: capitalize; }
     .pbest { color: #7fe08a; font-weight: 700; }
     .pfaint { color: #9aa0c8; }
   """;

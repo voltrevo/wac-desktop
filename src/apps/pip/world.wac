@@ -40,6 +40,11 @@ static i32 WALL_LOCK = 9;
 static i32 DYING = 45;
 static i32 CRUMBLE = 26;
 static i32 CRUMBLED = 150;
+/** An updraft's lift a step, and the fastest it carries Pip up; wind's push a step, and the fastest it carries Pip. */
+static f64 UPDRAFT = 0.75;
+static f64 RISE = 3.6;
+static f64 WIND = 0.2;
+static f64 GUST = 3.4;
 /** What a spring throws Pip up at: about seven tiles high. */
 static f64 SPRING = 9.4;
 
@@ -87,9 +92,19 @@ export struct Hero {
   bool jumping;
 }
 
-/** A beetle that patrols (`hops` false), or a frog that hops toward Pip. */
+/** What a foe is. */
+export static i32 BEETLE = 0;
+export static i32 FROG = 1;
+export static i32 BAT = 2;
+export static i32 GHOST = 3;
+export static i32 CRAWLER = 4;
+
+/**
+ * A foe: a beetle that patrols, a frog that hops at Pip, a bat that swoops from its perch, a ghost that creeps up only
+ * while Pip looks away, or a crawler that walks round whatever it is on — floor, wall and ceiling.
+ */
 export struct Foe {
-  bool hops;
+  i32 kind;
   f64 x;
   f64 y;
   f64 vx;
@@ -99,14 +114,20 @@ export struct Foe {
   bool ground;
   f64 startX;
   f64 startY;
+  /** A crawler's way, 0 right, 1 down, 2 left, 3 up — its surface always on its right — and the tile it is going to. */
+  i32 dir;
+  i32 toX;
+  i32 toY;
 }
 
-/** A plank that slides three tiles right of where it starts, and back. */
+/** A plank that slides three tiles right of where it starts and back — or, a lift, three tiles up and back. */
 export struct Mover {
   f64 x0;
   f64 x;
   f64 y;
   f64 dir;
+  f64 y0;
+  bool lift;
 }
 
 export struct World {
@@ -156,11 +177,16 @@ export World load(Level l) {
         sx = px + 3.0;
         sy = py + (TILE as f64) - HERO_H;
         c = '.';
-      } else if (c == 'p' || c == 'h') {
-        foes.push(Foe(c == 'h', px + 2.0, py + 4.0, c == 'h' ? 0.0 : 0.0 - 0.6, 0.0, true, 40 + x * 7 % 50, false, px + 2.0, py + 4.0));
+      } else if (c == 'p' || c == 'h' || c == 'b' || c == 'g' || c == 'w') {
+        i32 kind = c == 'p' ? BEETLE : (c == 'h' ? FROG : (c == 'b' ? BAT : (c == 'g' ? GHOST : CRAWLER)));
+        f64 fy = kind == BEETLE || kind == FROG ? py + 4.0 : py + 2.0;
+        // A frog's first hop is staggered by where it is; a bat starts perched.
+        i32 timer = kind == FROG ? 40 + x * 7 % 50 : 0;
+        foes.push(Foe(kind, px + 2.0, fy, kind == BEETLE ? 0.0 - 0.6 : 0.0, 0.0, true, timer, false, px + 2.0, fy,
+                      0, x, y));
         c = '.';
-      } else if (c == 'M') {
-        movers.push(Mover(px, px, py, 1.0));
+      } else if (c == 'M' || c == 'V') {
+        movers.push(Mover(px, px, py, c == 'V' ? 0.0 - 1.0 : 1.0, py, c == 'V'));
         c = '.';
       } else if (c == 'L') {
         lanterns++;
@@ -169,8 +195,49 @@ export World load(Level l) {
     }
   }
   Hero h = Hero(sx, sy, 0.0, 0.0, false, 99, 99, 0, 0, 1, 0, 0, false);
-  return World(l, t, cols, rows, i32[].filled(cols * rows, 0), i32[].filled(cols * rows, 0), h, foes, movers, sx, sy, lanterns, 0,
+  World made = World(l, t, cols, rows, i32[].filled(cols * rows, 0), i32[].filled(cols * rows, 0), h, foes, movers, sx, sy, lanterns, 0,
                0, 0, false, Vec.create(), 0 - 1);
+  for (i32 i = 0; i < foes.len(); i++) { if (foes.get(i).kind == CRAWLER) { settle(made, foes.get(i)); } }
+  return made;
+}
+
+/** A tile's neighbour in way `d`: 0 right, 1 down, 2 left, 3 up. */
+i32 stepX(i32 d) { return d == 0 ? 1 : (d == 2 ? 0 - 1 : 0); }
+i32 stepY(i32 d) { return d == 1 ? 1 : (d == 3 ? 0 - 1 : 0); }
+
+/** A crawler, set going with whatever it is on at its right: its tile, and a way that keeps a surface there. */
+void settle(World w, Foe f) {
+  i32 cx = f.toX;
+  i32 cy = f.toY;
+  for (i32 d = 0; d < 4; d++) {
+    i32 r = (d + 1) % 4;
+    if (solid(tileAt(w, cx + stepX(r), cy + stepY(r)))) {
+      f.dir = d;
+      return;
+    }
+  }
+}
+
+/**
+ * A crawler's next tile, by the right hand on the wall: round the corner when its surface ends, on while it goes on,
+ * and turning away from a wall ahead — so it goes round and round whatever it is on.
+ */
+void nextTile(World w, Foe f) {
+  for (i32 tries = 0; tries < 4; tries++) {
+    i32 r = (f.dir + 1) % 4;
+    if (!solid(tileAt(w, f.toX + stepX(r), f.toY + stepY(r)))) {
+      f.dir = r;
+      f.toX = f.toX + stepX(r);
+      f.toY = f.toY + stepY(r);
+      return;
+    }
+    if (!solid(tileAt(w, f.toX + stepX(f.dir), f.toY + stepY(f.dir)))) {
+      f.toX = f.toX + stepX(f.dir);
+      f.toY = f.toY + stepY(f.dir);
+      return;
+    }
+    f.dir = (f.dir + 3) % 4;
+  }
 }
 
 /** The tile at column `x`, row `y`: bedrock beyond the sides and below, air above. */
@@ -302,6 +369,15 @@ void respawn(World w) {
     f.y = f.startY;
     f.vy = 0.0;
     f.alive = true;
+    if (f.kind == BAT || f.kind == GHOST) {
+      f.vx = 0.0;
+      f.timer = 0;
+    }
+    if (f.kind == CRAWLER) {
+      f.toX = tileOf(f.startX);
+      f.toY = tileOf(f.startY);
+      settle(w, f);
+    }
   }
   w.riding = 0 - 1;
 }
@@ -310,13 +386,21 @@ void stepMovers(World w) {
   for (i32 i = 0; i < w.movers.len(); i++) {
     Mover m = w.movers.get(i);
     f64 before = m.x;
-    m.x = m.x + 0.7 * m.dir;
-    if (m.x > m.x0 + 48.0) { m.x = m.x0 + 48.0; m.dir = 0.0 - 1.0; }
-    if (m.x < m.x0) { m.x = m.x0; m.dir = 1.0; }
-    // Pip rides the plank it stood on.
+    f64 beforeY = m.y;
+    if (m.lift) {
+      m.y = m.y + 0.6 * m.dir;
+      if (m.y < m.y0 - 48.0) { m.y = m.y0 - 48.0; m.dir = 1.0; }
+      if (m.y > m.y0) { m.y = m.y0; m.dir = 0.0 - 1.0; }
+    } else {
+      m.x = m.x + 0.7 * m.dir;
+      if (m.x > m.x0 + 48.0) { m.x = m.x0 + 48.0; m.dir = 0.0 - 1.0; }
+      if (m.x < m.x0) { m.x = m.x0; m.dir = 1.0; }
+    }
+    // Pip rides the plank it stood on, across or up and down.
     if (w.riding == i && w.hero.dying == 0) {
-      Moved r = slideBox(w, w.hero.x, w.hero.y, HERO_W, HERO_H, m.x - before, 0.0);
+      Moved r = slideBox(w, w.hero.x, w.hero.y, HERO_W, HERO_H, m.x - before, m.y - beforeY);
       w.hero.x = r.x;
+      w.hero.y = r.y;
     }
   }
 }
@@ -358,10 +442,13 @@ void stepHero(World w, Keys k) {
   }
   if (want != 0) { h.facing = want; }
   f64 accel = h.ground ? ACCEL : AIR_ACCEL;
+  // In wind, Pip's running does not hold Pip back to running speed: a tailwind carries Pip faster.
+  u8 here = tileAt(w, tileOf(h.x + HERO_W / 2.0), tileOf(h.y + HERO_H / 2.0));
+  f64 top = here == '<' || here == '>' ? GUST : RUN;
   if (want != 0) {
     h.vx = h.vx + accel * (want as f64);
-    if (h.vx > RUN) { h.vx = RUN; }
-    if (h.vx < 0.0 - RUN) { h.vx = 0.0 - RUN; }
+    if (h.vx > top) { h.vx = top; }
+    if (h.vx < 0.0 - top) { h.vx = 0.0 - top; }
   } else if (h.ground) {
     if (h.vx > FRICTION) { h.vx = h.vx - FRICTION; } else if (h.vx < 0.0 - FRICTION) { h.vx = h.vx + FRICTION; } else { h.vx = 0.0; }
   } else {
@@ -394,6 +481,19 @@ void stepHero(World w, Keys k) {
   h.vy = h.vy + GRAVITY;
   f64 fall = h.wall != 0 && want == h.wall && h.vy > 0.0 ? WALL_SLIDE : MAX_FALL;
   if (h.vy > fall) { h.vy = fall; }
+  // The air where Pip is: an updraft carries Pip up, and wind pushes across.
+  u8 air = tileAt(w, tileOf(h.x + HERO_W / 2.0), tileOf(h.y + HERO_H / 2.0));
+  if (air == '|') {
+    h.vy = h.vy - UPDRAFT;
+    if (h.vy < 0.0 - RISE) { h.vy = 0.0 - RISE; }
+    h.jumping = false;
+    h.ground = false;
+  }
+  if (air == '<' || air == '>') {
+    h.vx = h.vx + (air == '>' ? WIND : 0.0 - WIND);
+    if (h.vx > GUST) { h.vx = GUST; }
+    if (h.vx < 0.0 - GUST) { h.vx = 0.0 - GUST; }
+  }
 
   bool wasGround = h.ground;
   f64 fellAt = h.vy;
@@ -483,38 +583,93 @@ void touch(World w) {
   }
 }
 
+/** A flying foe's way to (`tx`, `ty`) at `speed`, or as far as it is. */
+void toward(Foe f, f64 tx, f64 ty, f64 speed) {
+  f64 dx = tx - f.x;
+  f64 dy = ty - f.y;
+  f64 d = dx * dx + dy * dy;
+  if (d <= speed * speed) {
+    f.vx = dx;
+    f.vy = dy;
+    return;
+  }
+  // The length by Newton's method from a good guess: enough for a bat's heading.
+  f64 len = d > 1.0 ? d / 2.0 : 1.0;
+  for (i32 k = 0; k < 12; k++) { len = (len + d / len) / 2.0; }
+  f.vx = dx / len * speed;
+  f.vy = dy / len * speed;
+}
+
 void stepFoes(World w) {
   Hero h = w.hero;
   for (i32 i = 0; i < w.foes.len(); i++) {
     Foe f = w.foes.get(i);
     if (!f.alive) { continue; }
-    if (f.hops) {
-      f.timer--;
-      if (f.ground && f.timer <= 0) {
-        f.vy = 0.0 - 4.6;
-        f.vx = h.x < f.x ? 0.0 - 1.1 : 1.1;
-        f.timer = 75;
+    if (f.kind == BAT) {
+      // Perched until Pip is near and below; then a dive at where Pip was, and back to the perch.
+      bool near = h.y > f.y && h.y - f.y < 128.0 && h.x - f.x < 96.0 && f.x - h.x < 96.0;
+      if (f.timer == 0 && near && h.dying == 0) {
+        f.timer = 70;
+        toward(f, h.x, h.y, 1.8);
+      } else if (f.timer > 0) {
+        f.timer--;
+        if (f.timer == 0) { f.timer = 0 - 1; }
+      } else if (f.timer < 0) {
+        toward(f, f.startX, f.startY, 1.0);
+        if (f.vx * f.vx + f.vy * f.vy < 1.01 && (f.x - f.startX) * (f.x - f.startX) + (f.y - f.startY) * (f.y - f.startY) < 1.5) {
+          f.x = f.startX;
+          f.y = f.startY;
+          f.vx = 0.0;
+          f.vy = 0.0;
+          f.timer = 0;
+        }
       }
-      if (f.ground && f.timer > 0) { f.vx = 0.0; }
+      f.x = f.x + f.vx;
+      f.y = f.y + f.vy;
+    } else if (f.kind == GHOST) {
+      // Only while Pip looks the other way, it drifts closer, through anything.
+      bool behind = (h.facing > 0 && f.x + 6.0 < h.x) || (h.facing < 0 && f.x > h.x + HERO_W);
+      if (behind && h.dying == 0) { toward(f, h.x - 1.0, h.y + 1.0, 0.55); } else { f.vx = 0.0; f.vy = 0.0; }
+      f.x = f.x + f.vx;
+      f.y = f.y + f.vy;
+    } else if (f.kind == CRAWLER) {
+      // Along its surface a tile at a time, centred two pixels into each.
+      f64 tx = ((f.toX * TILE) as f64) + 2.0;
+      f64 ty = ((f.toY * TILE) as f64) + 2.0;
+      toward(f, tx, ty, 0.6);
+      f.x = f.x + f.vx;
+      f.y = f.y + f.vy;
+      if (f.x == tx && f.y == ty) { nextTile(w, f); }
     } else {
-      // A beetle turns at a wall, and at the edge of what it walks on.
-      f64 ahead = f.vx > 0.0 ? f.x + 12.0 + 1.0 : f.x - 1.0;
-      bool wall = hits(w, f.vx > 0.0 ? f.x + 1.0 : f.x - 1.0, f.y, 12.0, 12.0);
-      u8 below = tileAt(w, tileOf(ahead), tileOf(f.y + 12.0 + 1.0));
-      bool edge = f.ground && !solid(below) && below != '=';
-      if (wall || edge) { f.vx = 0.0 - f.vx; }
+      if (f.kind == FROG) {
+        f.timer--;
+        if (f.ground && f.timer <= 0) {
+          f.vy = 0.0 - 4.6;
+          f.vx = h.x < f.x ? 0.0 - 1.1 : 1.1;
+          f.timer = 75;
+        }
+        if (f.ground && f.timer > 0) { f.vx = 0.0; }
+      } else {
+        // A beetle turns at a wall, and at the edge of what it walks on.
+        f64 ahead = f.vx > 0.0 ? f.x + 12.0 + 1.0 : f.x - 1.0;
+        bool wall = hits(w, f.vx > 0.0 ? f.x + 1.0 : f.x - 1.0, f.y, 12.0, 12.0);
+        u8 below = tileAt(w, tileOf(ahead), tileOf(f.y + 12.0 + 1.0));
+        bool edge = f.ground && !solid(below) && below != '=';
+        if (wall || edge) { f.vx = 0.0 - f.vx; }
+      }
+      f.vy = f.vy + GRAVITY;
+      if (f.vy > MAX_FALL) { f.vy = MAX_FALL; }
+      Moved r = slideBox(w, f.x, f.y, 12.0, 12.0, f.vx, f.vy);
+      f.x = r.x;
+      f.y = r.y;
+      f.ground = r.ground;
+      if (r.ground) { f.vy = 0.0; }
+      if (f.y > ((w.rows * TILE) as f64)) { f.alive = false; }
     }
-    f.vy = f.vy + GRAVITY;
-    if (f.vy > MAX_FALL) { f.vy = MAX_FALL; }
-    Moved r = slideBox(w, f.x, f.y, 12.0, 12.0, f.vx, f.vy);
-    f.x = r.x;
-    f.y = r.y;
-    f.ground = r.ground;
-    if (r.ground) { f.vy = 0.0; }
-    if (f.y > ((w.rows * TILE) as f64)) { f.alive = false; }
-    // Met by Pip: from above, it is stomped; from anywhere else, Pip is hurt.
+    // Met by Pip: from above, a beetle, frog or bat is stomped; a ghost or crawler cannot be, and anything else hurts.
+    bool stompable = f.kind == BEETLE || f.kind == FROG || f.kind == BAT;
     if (h.dying == 0 && h.x < f.x + 12.0 && h.x + HERO_W > f.x && h.y < f.y + 12.0 && h.y + HERO_H > f.y) {
-      if (h.vy > 0.0 && h.y + HERO_H - f.y < 8.0) {
+      if (stompable && h.vy > 0.0 && h.y + HERO_H - f.y < 8.0) {
         f.alive = false;
         h.vy = 0.0 - 4.2;
         // Bounced off a foe, Pip goes higher holding jump, as from a jump.

@@ -12,8 +12,8 @@ import sys
 H = 12
 
 class Lv:
-    def __init__(s, name):
-        s.name = name; s.cols = {}; s.x = 0; s.g = 9
+    def __init__(s, name, dark=False):
+        s.name = name; s.dark = dark; s.cols = {}; s.x = 0; s.g = 9
     def put(s, x, y, c):
         assert 0 <= y < 11, (s.name, x, y, c)
         s.cols.setdefault(x, ['.'] * H)[y] = c
@@ -25,7 +25,8 @@ class Lv:
     # Pieces: each starts at the cursor and leaves it after itself, on ground at `s.g` unless it says otherwise.
     def run(s, n, foe=None, lantern=None, flag=False, high=3):
         for i in range(n): s.solid(s.x + i, s.g)
-        if foe: s.put(s.x + n // 2, s.g - 1, foe)
+        # A bat perches high, a ghost floats; the rest walk on the ground.
+        if foe: s.put(s.x + n // 2, s.g - {'b': 5, 'g': 2}.get(foe, 1), foe)
         if lantern is not None: s.put(s.x + lantern, s.g - high, 'L')
         if flag: s.put(s.x + 1, s.g - 1, 'C')
         s.x += n; return s
@@ -67,6 +68,38 @@ class Lv:
             for i in range(2): s.put(x0 + dx + i, s.g - dy, '=')
         if lantern: s.put(x0 + 9, s.g - 8, 'L')
         s.run(9); return s
+    def updraft(s, up, lantern=True):
+        # A spike pit four wide with an updraft up its middle, to ground `up` higher (at most 6) beyond it.
+        x0 = s.x; s.pit(4)
+        top = s.g - up - 1
+        for y in range(top, 10):
+            for d in (1, 2): s.put(x0 + d, y, '|')
+        if lantern: s.put(x0 + 1, s.g - 3, 'L')
+        s.g -= up
+        assert 4 <= s.g <= 9, (s.name, s.x, s.g)
+        return s
+    def gale(s, n, lantern=True):
+        # A spike pit `n` wide (at most 7), too wide to jump but for the wind behind Pip, the five tiles above it.
+        assert n <= 7 and s.g >= 6, (s.name, s.x, s.g, 'a gale needs room above it')
+        x0 = s.x; s.pit(n)
+        for x in range(x0, x0 + n):
+            for y in range(s.g - 5, s.g): s.put(x, y, '>')
+        # Its lantern is where Pip lands, so the wind blows clear across.
+        if lantern: s.put(x0 + n + 1, s.g - 3, 'L')
+        return s
+    def lift(s, lantern=True):
+        # A spike pit seven wide with a lift in it, level with the ground, up to ground three higher beyond.
+        x0 = s.x; s.pit(7); s.put(x0 + 2, s.g, 'V')
+        if lantern: s.put(x0 + 3, s.g - 6, 'L')
+        s.g -= 3
+        assert 4 <= s.g <= 9, (s.name, s.x, s.g)
+        return s
+    def block(s, crawler=True):
+        # Ground with a block two high on it, three wide, and a crawler going round it.
+        x0 = s.x; s.run(7)
+        for x in range(x0 + 2, x0 + 5): s.put(x, s.g - 1, '#'); s.put(x, s.g - 2, '#')
+        if crawler: s.put(x0 + 3, s.g - 3, 'w')
+        return s
     def door(s):
         s.run(6); s.put(s.x - 2, s.g - 1, 'E'); return s
     def rows(s):
@@ -80,7 +113,9 @@ def check(name, rows, show=False):
     for r in rows: assert len(r) == W, (name, len(r))
     at = lambda x, y: rows[y][x] if 0 <= x < W and 0 <= y < H else ('.' if y < 0 else '#')
     moving = {(x + dx, y) for y in range(H) for x in range(W) if rows[y][x] == 'M' for dx in range(6)}
-    floor = lambda x, y: at(x, y + 1) in SOLID or at(x, y + 1) == '=' or (x, y + 1) in moving
+    # A lift's plank is somewhere from where it starts to three tiles up; it does not stand in the way of anything.
+    lifts = {(x + dx, y - k) for y in range(H) for x in range(W) if rows[y][x] == 'V' for dx in range(3) for k in range(4)}
+    floor = lambda x, y: at(x, y + 1) in SOLID or at(x, y + 1) == '=' or (x, y + 1) in moving or (x, y + 1) in lifts
     open_ = lambda x, y: at(x, y) not in SOLID and at(x, y) != '^' and (x, y) not in moving
     room = lambda x, y: open_(x, y) and open_(x, y - 1)
     stands = {(x, y) for y in range(H - 1) for x in range(W) if room(x, y) and floor(x, y)}
@@ -97,7 +132,9 @@ def check(name, rows, show=False):
         dx = abs(u - x); dy = y - v
         ok = (dy == 3 and dx <= 2) or (dy == 2 and dx <= 4) or (0 <= dy <= 1 and dx <= 5) or (dy < 0 and dx <= 5 + (-dy) // 2 + 1)
         return ok or (sprung and 0 <= dy <= 7 and dx <= 3)
-    spots = stands | set(clings)
+    # Updrafts: anywhere in one, Pip is carried up it.
+    drafts = {(x, y) for y in range(H) for x in range(W) if rows[y][x] == '|'}
+    spots = stands | set(clings) | drafts
     seen = {start}; todo = [start]
     while todo:
         x, y = todo.pop()
@@ -106,6 +143,16 @@ def check(name, rows, show=False):
             if (u, v) in seen: continue
             ok = False
             if (x, y) in stands and leap(x, y, u, v, sprung): ok = True
+            # A jump carried by the wind: up to eight across, level or down, the wind that way over every tile between.
+            if (x, y) in stands and (u, v) in stands and 0 <= v - y <= 2 and 2 <= abs(u - x) <= 8:
+                way = 1 if u > x else -1
+                wind = '>' if way > 0 else '<'
+                if all(at(k, y - 1) == wind and at(k, y - 3) == wind for k in range(x + way, u, way)): ok = True
+            if (x, y) in drafts:
+                # Up the draft, through nothing but draft; off its top, as from a jump; or out and down.
+                if (u, v) in drafts and u == x and v < y and all((x, k) in drafts for k in range(v, y)): ok = True
+                if (u, v) not in drafts and abs(u - x) <= 3 and 0 <= y - v <= 2: ok = True
+                if v > y and abs(u - x) <= 5: ok = True
             for side in clings.get((x, y), ()):
                 away = -side; across = (u - x) * away; up = y - v
                 # Off the wall: across to the facing wall, up to two higher; to ground, as a jump; or slid or fallen down.
@@ -126,8 +173,8 @@ def start(name):
 class Tower:
     """A tower of floors seven apart, walked right and left in turn, each joined to the one above at the end it reaches."""
     B = 7
-    def __init__(s, name, width, floors):
-        s.name = name; s.W = width; s.F = floors; s.H = floors * s.B + 3
+    def __init__(s, name, width, floors, dark=False):
+        s.name = name; s.dark = dark; s.W = width; s.F = floors; s.H = floors * s.B + 3
         s.g = [['.'] * width for _ in range(s.H)]
         for y in range(s.H):
             s.g[y][0] = '#'; s.g[y][width - 1] = '#'
@@ -175,6 +222,16 @@ class Tower:
         for j in range(2): s.put(s.at(k, e - 2 + j), s.slab(k) - 5, '=')
         for j in range(3): s.put(s.at(k, e - 2 + j), s.slab(k + 1), '=')
         return s
+    def draft(s, k):
+        # An updraft near the end of floor k, up through a hole of two in the floor above, to just over it.
+        e = s.end()
+        for j in range(2):
+            x = s.at(k, e - 2 + j)
+            s.put(x, s.slab(k + 1), '.')
+            for y in range(s.slab(k + 1) - 1, s.slab(k)): s.put(x, y, '|')
+        return s
+    def bat(s, k, i): return s.put(s.at(k, i), s.slab(k + 1) + 1 if k + 1 < s.F else s.slab(k) - 5, 'b')
+    def crawl(s, k, i): return s.put(s.at(k, i), s.slab(k) - 1, 'w')
     def start(s): return s.put(s.at(0, 1), s.slab(0) - 1, 'P')
     def door(s): k = s.F - 1; return s.put(s.at(k, s.end() - 1), s.slab(k) - 1, 'E')
     def rows(s): return [''.join(r) for r in s.g]
@@ -255,7 +312,38 @@ t.flag(8, 6).foe(8, 10).crumbles(8, 15, 4).lantern(8, 15).chimney(8, 2)
 t.lantern(9, 8).foe(9, 16, 'h').door()
 levels.append(t)
 
+l = start("Updraft Cliffs")
+# Ground 9: a gale, then up an updraft to 5; down to 8, a gale, up to 4; down to 8, a gale, up to 5; down, a gale, up.
+l.run(6, lantern=3).gale(7).run(5, flag=True).updraft(4).run(8, foe='b', lantern=4).step(-3).run(4).gale(6, lantern=False)
+l.run(6, foe='p', flag=True).updraft(4).run(6, lantern=2).step(-4).run(5, foe='b').gale(7).run(5).updraft(3)
+l.run(8, foe='h', lantern=5).step(-3).run(4).gale(5).run(6, foe='b', flag=True).updraft(3).run(6, lantern=3).step(-3).door()
+levels.append(l)
+
+l = start("The Lift Works")
+l.run(5).lift().run(6, foe='g', lantern=3).block().step(-3).run(5, flag=True).lift().run(5, foe='p').gale(6).run(5, lantern=2)
+l.step(-3).block().run(4, foe='g', flag=True).lift().run(6, lantern=4).step(-3).run(4).block().run(6, foe='b').lift(lantern=False)
+l.run(5, foe='g', lantern=2).step(-3).run(5).door()
+levels.append(l)
+
+l = start("Lights Out")
+l.dark = True
+l.run(6, lantern=4).planks(12).run(6, foe='g').bridge(10).run(5, flag=True).updraft(3).run(6, foe='b', lantern=3).step(-3)
+l.run(4).gale(6).run(5, lantern=2).block().run(4, flag=True).lift().run(6, foe='g', lantern=4).step(-3).run(4).planks(14)
+l.run(6, foe='b', flag=True).bridge(13).run(5, lantern=2).spring(4).run(6, foe='g').step(-4).run(5).door()
+levels.append(l)
+
+t = Tower("Deep Dark", 38, 8, dark=True).start()
+t.lantern(0, 7).crawl(0, 14).spikes(0, 20, 2).chimney(0, 2)
+t.lantern(1, 8).bat(1, 14).spikes(1, 18, 3).draft(1)
+t.flag(2, 6).crawl(2, 12).lantern(2, 16).crumbles(2, 20, 3).chimney(2, 3)
+t.bat(3, 10).lantern(3, 13).foe(3, 20, 'g').draft(3)
+t.flag(4, 6).spikes(4, 10, 2).lantern(4, 11).crawl(4, 18).stair(4)
+t.lantern(5, 8).bat(5, 12).crumbles(5, 16, 4).chimney(5, 2)
+t.flag(6, 6).foe(6, 12, 'g').lantern(6, 17).spikes(6, 22, 2).spring(6)
+t.crawl(7, 8).lantern(7, 14).bat(7, 18).door()
+levels.append(t)
+
 ok = all([check(l.name, l.rows(), '-v' in sys.argv) for l in levels])
 if '--wac' in sys.argv:
-    for l in levels: print('    Level("' + l.name + '", [\n' + ',\n'.join('      "' + r + '"' for r in l.rows()) + ']),')
+    for l in levels: print('    Level("' + l.name + '", ' + ('true' if l.dark else 'false') + ', [\n' + ',\n'.join('      "' + r + '"' for r in l.rows()) + ']),')
 sys.exit(0 if ok else 1)

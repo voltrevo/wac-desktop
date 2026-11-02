@@ -6,8 +6,8 @@ import { Level, allLevels } from "../src/apps/pip/levels.wac";
 import { Vec } from "core";
 import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
-import { Screen, follow, snap } from "../src/apps/pip/art.wac";
-import { clock, restoreBest } from "../src/apps/pip.wac";
+import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
+import { clock, keyByte, keysOf, medal, par, restoreBest } from "../src/apps/pip.wac";
 
 /** A level of `rows`, padded with air to the full width, bedrock below. */
 World made(string[] rows) {
@@ -18,7 +18,7 @@ World made(string[] rows) {
     while (r.len() < 64) { r = r + string.fromBytes([fill]); }
     full[y] = r;
   }
-  return load(Level("test", full));
+  return load(Level("test", false, full));
 }
 
 Keys pressing(bool left, bool right, bool jump, bool jumped) { return Keys(left, right, jump, jumped); }
@@ -139,16 +139,15 @@ export string test_landing_on_a_beetle_stomps_it_and_walking_into_one_hurts() {
 
 export string test_every_level_has_a_start_a_door_and_lanterns() {
   Level[] ls = allLevels();
-  if (ls.len() != 15) { return "\{ls.len()} levels"; }
+  if (ls.len() != 19) { return "\{ls.len()} levels"; }
   for (i32 i = 0; i < ls.len(); i++) {
     World w = load(ls[i]);
     if (ls[i].rows.len() < 12) { return "\{ls[i].name}: \{ls[i].rows.len()} rows"; }
     for (i32 y = 0; y < w.rows; y++) {
       if (ls[i].rows[y].len() != w.cols) { return "\{ls[i].name}, row \{y}: \{ls[i].rows[y].len()} wide, not \{w.cols}"; }
     }
-    // The first five are short; the next seven at least twice as long, and the last three towers.
-    if (i >= 5 && i < 12 && w.cols < 128) { return "\{ls[i].name}: \{w.cols} wide"; }
-    if (i >= 12 && w.rows < 40) { return "\{ls[i].name}: \{w.rows} high"; }
+    // The first five are short; the rest long, or towers.
+    if (i >= 5 && w.cols < 100 && w.rows < 40) { return "\{ls[i].name}: \{w.cols} wide and \{w.rows} high"; }
     if (w.lanterns < 3) { return "\{ls[i].name}: \{w.lanterns} lanterns"; }
     if (w.hero.x <= 0.0) { return "\{ls[i].name}: no start"; }
     bool door = false;
@@ -233,12 +232,43 @@ u8 at(Level l, i32 x, i32 y) {
 
 bool firm(u8 c) { return c == '#' || c == 'X' || c == 'S'; }
 
-/** One place Pip can be: standing, or against a wall in the air — `side` -1 a wall on the left, 1 on the right. */
+/**
+ * One place Pip can be: standing, against a wall in the air — `side` -1 a wall on the left, 1 on the right — or in an
+ * updraft (`draft`).
+ */
 struct Spot {
   i32 x;
   i32 y;
   bool stands;
   i32 side;
+  bool draft;
+}
+
+/**
+ * A jump carried by the wind: up to eight across, level or down, the wind blowing that way over every tile between, as
+ * high as the jump goes.
+ */
+bool tailwind(Level l, Spot a, Spot b) {
+  if (!a.stands || !b.stands || b.y < a.y || b.y > a.y + 2) { return false; }
+  i32 dx = b.x > a.x ? b.x - a.x : a.x - b.x;
+  if (dx < 2 || dx > 8) { return false; }
+  i32 way = b.x > a.x ? 1 : 0 - 1;
+  u8 wind = way > 0 ? '>' : '<';
+  for (i32 x = a.x + way; x != b.x; x = x + way) {
+    if (at(l, x, a.y - 1) != wind || at(l, x, a.y - 3) != wind) { return false; }
+  }
+  return true;
+}
+
+/** From somewhere in an updraft: up it, through nothing but draft; off its top as from a jump; or out and down. */
+bool upTheDraft(Level l, Spot a, Spot b) {
+  i32 dx = b.x > a.x ? b.x - a.x : a.x - b.x;
+  if (b.draft && b.x == a.x && b.y < a.y) {
+    for (i32 y = b.y; y < a.y; y++) { if (at(l, a.x, y) != '|') { return false; } }
+    return true;
+  }
+  if (!b.draft && dx <= 3 && a.y - b.y >= 0 && a.y - b.y <= 2) { return true; }
+  return b.y > a.y && dx <= 5;
 }
 
 /** Whether a jump from standing at (`x`, `y`) reaches (`u`, `v`): the envelope, smaller than Pip's own leaps. */
@@ -273,11 +303,18 @@ export string test_every_lantern_flag_and_door_can_be_reached() {
     Level l = ls[n];
     i32 cols = l.rows[0].len();
     i32 rows = l.rows.len();
-    // Where a sliding plank can be: three tiles from its left end, and the two of its width beyond.
+    // Where a sliding plank can be: three tiles from its left end, and the two of its width beyond. And where a lift's
+    // can be: from where it starts to three tiles up, three wide — which stands in nothing's way.
     bool[] slides = bool[].filled(cols * (rows + 1), false);
+    bool[] lifts = bool[].filled(cols * (rows + 1), false);
     for (i32 y = 0; y < rows; y++) {
       for (i32 x = 0; x < cols; x++) {
         if (at(l, x, y) == 'M') { for (i32 d = 0; d < 6 && x + d < cols; d++) { slides[y * cols + x + d] = true; } }
+        if (at(l, x, y) == 'V') {
+          for (i32 d = 0; d < 3 && x + d < cols; d++) {
+            for (i32 k = 0; k < 4 && y - k >= 0; k++) { lifts[(y - k) * cols + x + d] = true; }
+          }
+        }
       }
     }
     // Where Pip can be: two tiles of room, standing on something or against a wall two tiles high.
@@ -290,14 +327,18 @@ export string test_every_lantern_flag_and_door_can_be_reached() {
         u8 below = at(l, x, y + 1);
         bool room = !firm(c) && c != '^' && !slides[y * cols + x] && !firm(above) && above != '^';
         if (!room) { continue; }
-        bool held = firm(below) || below == '=' || slides[(y + 1) * cols + x];
+        bool held = firm(below) || below == '=' || slides[(y + 1) * cols + x] || lifts[(y + 1) * cols + x];
         if (held) {
           if (c == 'P') { start = spots.len(); }
-          spots.push(Spot(x, y, true, 0));
+          spots.push(Spot(x, y, true, 0, false));
+          continue;
+        }
+        if (c == '|') {
+          spots.push(Spot(x, y, false, 0, true));
           continue;
         }
         for (i32 side = 0 - 1; side <= 1; side = side + 2) {
-          if (firm(at(l, x + side, y)) && firm(at(l, x + side, y - 1))) { spots.push(Spot(x, y, false, side)); }
+          if (firm(at(l, x + side, y)) && firm(at(l, x + side, y - 1))) { spots.push(Spot(x, y, false, side, false)); }
         }
       }
     }
@@ -313,7 +354,8 @@ export string test_every_lantern_flag_and_door_can_be_reached() {
       for (i32 k = 0; k < spots.len(); k++) {
         if (seen[k]) { continue; }
         Spot b = spots.get(k);
-        if ((a.stands && leap(a.x, a.y, b.x, b.y, sprung)) || (!a.stands && offTheWall(a, b))) {
+        bool ok = a.stands ? leap(a.x, a.y, b.x, b.y, sprung) || tailwind(l, a, b) : (a.draft ? upTheDraft(l, a, b) : offTheWall(a, b));
+        if (ok) {
           seen[k] = true;
           todo.push(k);
         }
@@ -353,7 +395,7 @@ bool chimney(i32 gap) {
     }
     rows[y] = r;
   }
-  World w = load(Level("chimney", rows));
+  World w = load(Level("chimney", false, rows));
   i32 dir = 1;
   for (i32 i = 0; i < 900; i++) {
     // Standing on the floor above: out. The last jump off the outer wall is the one that carries Pip over the inner.
@@ -377,17 +419,21 @@ export string test_pip_climbs_a_chimney_and_steps_out_at_the_top() {
  * Whether Pip, running from the left and jumping at the last moment, lands `across` tiles on (counting from the last
  * tile of ground) and `up` tiles higher — on real physics, the leaps the reachability check above takes for granted.
  */
-bool leaps(i32 across, i32 up) {
+bool leaps(i32 across, i32 up) { return leapsIn(across, up, false); }
+
+/** The same, with a tailwind blowing across the gap, the five tiles above the ground's level. */
+bool leapsIn(i32 across, i32 up, bool windy) {
   string[] rows = string[].filled(12, "");
   for (i32 y = 0; y < 12; y++) {
     string r = "";
     for (i32 x = 0; x < 64; x++) {
       bool ground = (x <= 9 && y >= 9) || (x >= 9 + across && y >= 9 - up) || y == 11;
-      r = r + (ground ? "#" : (x == 2 && y == 8 ? "P" : "."));
+      bool wind = windy && x > 9 && x < 9 + across && y >= 4 && y <= 8;
+      r = r + (ground ? "#" : (x == 2 && y == 8 ? "P" : (wind ? ">" : ".")));
     }
     rows[y] = r;
   }
-  World w = load(Level("leap", rows));
+  World w = load(Level("leap", false, rows));
   bool jumped = false;
   for (i32 i = 0; i < 240; i++) {
     bool now = !jumped && w.hero.x + 10.0 >= 158.0;
@@ -402,6 +448,10 @@ export string test_the_leaps_the_reachability_check_assumes_are_real() {
   if (!leaps(4, 2)) { return "four across and two up"; }
   if (!leaps(5, 1)) { return "five across and one up"; }
   if (!leaps(5, 0)) { return "five across"; }
+  // A tailwind across the gap carries Pip eight.
+  if (!leapsIn(8, 0, true)) { return "eight across with the wind behind"; }
+  if (leapsIn(11, 0, true)) { return "eleven across, even with the wind, should be too far"; }
+  if (leaps(8, 0)) { return "eight across without it should be too far"; }
   // And it can tell: what is out of reach is not reached.
   if (leaps(9, 0)) { return "nine across should be too far"; }
   if (leaps(1, 5)) { return "five up should be too high"; }
@@ -428,4 +478,157 @@ export string test_the_camera_follows_pip_up_and_down() {
   if (shown < 40.0 || shown > 140.0) { return "Pip is \{shown} px down the view, not near its middle"; }
   if (worst > 60.0) { return "the view jumped \{worst} px in a step"; }
   return "";
+}
+
+export string test_an_updraft_carries_pip_up_and_wind_pushes_pip_along() {
+  World w = made([".", ".", "..|", "..|", "..|", "..|", "..|", "..|", "..|", "####"]);
+  // Pip steps into the column's foot.
+  w.hero.x = 34.0;
+  f64 top = w.hero.y;
+  for (i32 i = 0; i < 120; i++) {
+    step(w, Keys.none());
+    if (w.hero.y < top) { top = w.hero.y; }
+  }
+  if (top > 3.0 * 16.0) { return "the updraft carried Pip only to \{top}"; }
+  // In the air, wind carries Pip: a jump straight up in it lands well downwind. On the ground it is a drift.
+  World v = made([".", ".", ".", ".", ".", ">>>>>>>>>>>>", ">>>>>>>>>>>>", ">>>>>>>>>>>>", "..P>>>>>>>>>", "################"]);
+  v.hero.x = 3.0 * 16.0 + 3.0;
+  stepFor(v, Keys.none(), 2, 0);
+  f64 from = v.hero.x;
+  stepFor(v, pressing(false, false, true, true), 1, 0);
+  stepFor(v, pressing(false, false, true, false), 40, 0);
+  if (v.hero.x < from + 30.0) { return "the wind carried a jump only \{v.hero.x - from} px"; }
+  return "";
+}
+
+export string test_a_lift_carries_pip_up_and_down() {
+  World w = made([".", ".", ".", ".", ".", "..P", "..V", ".", ".", "####"]);
+  f64 top = 999.0;
+  f64 low = 0.0;
+  for (i32 i = 0; i < 400; i++) {
+    step(w, Keys.none());
+    if (w.hero.y < top) { top = w.hero.y; }
+    if (w.hero.y > low) { low = w.hero.y; }
+  }
+  if (low - top < 44.0) { return "the lift moved Pip \{low - top} px; it goes three tiles"; }
+  if (w.deaths != 0) { return "Pip fell off the lift"; }
+  return "";
+}
+
+export string test_a_bat_swoops_at_pip_and_goes_home() {
+  World w = made([".", "....b", ".", ".", ".", ".", ".", ".", "..P", "#########"]);
+  Foe bat = w.foes.get(0);
+  f64 perch = bat.y;
+  f64 lowest = perch;
+  for (i32 i = 0; i < 60; i++) {
+    step(w, Keys.none());
+    if (bat.y > lowest) { lowest = bat.y; }
+  }
+  if (lowest < perch + 40.0) { return "the bat did not swoop: \{lowest - perch} px"; }
+  // Pip out of reach — and coming back there, if the swoop hurt — it goes home.
+  w.hero.x = 900.0;
+  w.backX = 900.0;
+  stepFor(w, Keys.none(), 400, 0);
+  if (bat.alive && (bat.y != perch || bat.timer != 0)) { return "the bat did not go home: \{bat.y} not \{perch}"; }
+  return "";
+}
+
+export string test_a_ghost_creeps_only_while_pip_looks_away() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", "g", "........P", "##############"]);
+  Foe g = w.foes.get(0);
+  f64 from = g.x;
+  // Pip faces right, away from the ghost on the left.
+  stepFor(w, Keys.none(), 30, 0);
+  if (g.x <= from + 10.0) { return "the ghost did not creep up: \{g.x - from} px"; }
+  // A step's turn to the left, toward it, and it stops.
+  stepFor(w, pressing(true, false, false, false), 1, 0);
+  stepFor(w, Keys.none(), 2, 0);
+  f64 at = g.x;
+  stepFor(w, Keys.none(), 30, 0);
+  if (g.x != at) { return "the ghost moved while Pip looked at it"; }
+  return "";
+}
+
+export string test_a_crawler_walks_round_a_block() {
+  World w = made([".", ".", ".", ".", "....w", "...###", "...###", ".", ".", "P", "##"]);
+  Foe c = w.foes.get(0);
+  bool above = false;
+  bool right = false;
+  bool below = false;
+  bool left = false;
+  for (i32 i = 0; i < 2000; i++) {
+    step(w, Keys.none());
+    i32 tx = (c.x / 16.0).floor() as~ i32;
+    i32 ty = (c.y / 16.0).floor() as~ i32;
+    if (ty == 4 && tx >= 3 && tx <= 5) { above = true; }
+    if (tx == 6 && ty >= 5 && ty <= 6) { right = true; }
+    if (ty == 7 && tx >= 3 && tx <= 5) { below = true; }
+    if (tx == 2 && ty >= 5 && ty <= 6) { left = true; }
+  }
+  if (!(above && right && below && left)) { return "round the block: above \{above}, right \{right}, below \{below}, left \{left}"; }
+  return "";
+}
+
+/** **The ghost is the run again**: the same keys, a byte a step, played into a fresh world, end where the run did. */
+export string test_a_recorded_run_plays_back_exactly() {
+  string[] course = [".", ".", ".", ".", ".", ".............................................................==",
+                     "...........................==.............==......L.............",
+                     ".", "P.........p.........XXX......h.......S........^^.........b......", "################################################################"];
+  World w = made(course);
+  Vec<u8> keys = Vec.create();
+  for (i32 i = 0; i < 900; i++) {
+    // A run of its own: right, a jump every so often held for a while, now and then a step back.
+    Keys k = pressing(i % 97 > 90, i % 97 <= 90, i % 40 < 14, i % 40 == 0);
+    keys.push(keyByte(k));
+    step(w, k);
+  }
+  World again = made(course);
+  for (i32 i = 0; i < keys.len(); i++) { step(again, keysOf(keys.get(i))); }
+  if (again.hero.x != w.hero.x || again.hero.y != w.hero.y || again.deaths != w.deaths || again.lit != w.lit) {
+    return "played back: \{again.hero.x},\{again.hero.y} (\{again.deaths} falls) not \{w.hero.x},\{w.hero.y} (\{w.deaths})";
+  }
+  if (w.hero.x < 200.0) { return "the run went nowhere, which proves little"; }
+  return "";
+}
+
+export string test_medals_are_measured_against_par() {
+  if (medal(0, 1000) != 0 || medal(900, 1000) != 3 || medal(1400, 1000) != 2 || medal(1600, 1000) != 1) { return "medals"; }
+  Level[] ls = allLevels();
+  for (i32 i = 0; i < ls.len(); i++) {
+    i32 p = par(load(ls[i]));
+    // At least as long as running straight across at full speed, and not absurdly more.
+    World w = load(ls[i]);
+    if (p < (w.cols * 16 * 10 / 23) || p > 20000) { return "\{ls[i].name}: par \{p}"; }
+  }
+  return "";
+}
+
+
+/** **A dark level is dark**, but for its lights: around Pip it is lit, and far from any light it is a deep shadow. */
+export string test_a_dark_level_is_lit_only_near_its_lights() {
+  Level[] ls = allLevels();
+  i32 dark = 0 - 1;
+  for (i32 i = 0; i < ls.len(); i++) { if (ls[i].dark && dark < 0) { dark = i; } }
+  if (dark < 0) { return "no level is dark"; }
+  World w = load(ls[dark]);
+  Screen s = Screen.create();
+  snap(s, w);
+  drawWorld(s, w, null, 0);
+  // Pip's middle on the screen, and a corner far from it.
+  i32 px = (w.hero.x as~ i32) + 5 - s.camX;
+  i32 py = (w.hero.y as~ i32) + 7 - s.camY;
+  i32 near = brightness(s, px + 14, py);
+  i32 far = brightness(s, px > 160 ? 2 : 317, 2);
+  if (near < far * 3) { return "beside Pip \{near}, far away \{far}: not dark enough, or not lit"; }
+  World lit = load(ls[0]);
+  Screen t = Screen.create();
+  snap(t, lit);
+  drawWorld(t, lit, null, 0);
+  if (brightness(t, 317, 2) <= far) { return "a level that is not dark is as dark"; }
+  return "";
+}
+
+i32 brightness(Screen s, i32 x, i32 y) {
+  i32 at = (y * 320 + x) * 4;
+  return (s.px[at] as i32) + (s.px[at + 1] as i32) + (s.px[at + 2] as i32);
 }

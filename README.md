@@ -101,15 +101,16 @@ shares, so their pages can see each other's files.
   from the middle out a block at a time. A drag or the wheel moves the picture at once by the canvas's transform and
   draws it once still; what was worked out is kept, so a drag works out only what came into view and new colours work
   out nothing. The view is kept in its folder, and *Save picture* writes a PNG to the desktop.
-- **Pip and the Lost Lanterns** is a little platformer in fifteen levels — five short, seven of 150 to 210 tiles, and
-  three towers 45 to 73 tiles high, climbed by wall-jumping up chimneys, all built by `tools/pip_levels.py` — with
-  springs, planks, crumbling blocks and sliding planks: light every lantern, then reach the door. The camera follows
-  across and up and down.
-  Pip runs, jumps higher the longer the key is held, slides down walls and jumps off them, and stomps beetles and
-  frogs, with coyote time and a buffered jump; the rules run sixty steps a second whatever the screen's rate. Its
-  sounds and tune are a chip's, made by the program and played through wac-web's `Page.sound`. **It is made to feel
-  latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to send its
-  jump's sound, measured from the browser's own stamp on the key. Best times are kept in its folder.
+- **Pip and the Lost Lanterns** is a little platformer in nineteen levels — five short, long ones of 120 to 210 tiles,
+  towers 45 to 73 high climbed by wall-jumping up chimneys, and two in the dark, lit only by the lanterns Pip lights
+  and Pip's own glow — all but the first five built by `tools/pip_levels.py`. Light every lantern, then reach the
+  door. There are springs, updrafts, wind, lifts, planks, crumbling blocks and sliding planks; beetles, frogs, bats
+  that swoop, ghosts that creep up while Pip looks away, and crawlers that walk round walls and ceilings. The rules
+  run sixty steps a second whatever the screen's rate, and nothing in them is random, so a run is its keys: the best
+  run of each level comes back as a **ghost** to race (`G` hides it), and each level has a par for **gold, silver and
+  bronze**. Its sounds and tune are a chip's, made by the program and played through wac-web's `Page.sound`. **It is
+  made to feel latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to
+  send its jump's sound, measured from the browser's own stamp on the key. Best times and runs are kept in its folder.
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;
   ←/→ move, ↑/X rotate clockwise, Z anticlockwise, ↓ soft-drops, Space hard-drops, and C/Shift holds once per
