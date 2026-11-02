@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `c405f554d`, `web` to `0abc650` and the wac IDE (`ide`) to `eea26f1`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `4e953ac5f`, `web` to `d4d4521` and the wac IDE (`ide`) to `984e0e1`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
@@ -31,7 +31,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
   own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (42 unit tests, 101 desktop checks, 18 drop cases). The build makes the
+  All of them pass at the latest commit (43 unit tests, 108 desktop checks, 18 drop cases). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
   runs them, so it needs `wac` on `PATH`.

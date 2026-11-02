@@ -143,6 +143,13 @@ export struct Placed {
   bool min;
   bool max;
   bool focused;
+  /**
+   * Which of its program's windows it was, and its title then. The first window is found again by its slot; any
+   * other by its title — a program reopening its windows after a reload is handed slots in the order it opens them,
+   * which need not be the order they had, while the IDE's, say, are titled by their projects.
+   */
+  i32 slot;
+  string title;
 }
 
 /**
@@ -170,12 +177,24 @@ export struct Start {
    */
   string app;
   string arg;
-  /** Where its first window goes, when a session is putting it back. */
-  Placed? place;
+  /** Where its windows go, when a session is putting them back; each used once. */
+  Vec<Placed> places;
 }
 
 /** A module from the disk, started as itself: no arguments, and nothing handed it. */
-export Start startOf(string path) { return Start(path, string[](), Grants.create(), 0, 0, "terminal", true, "", "", null); }
+export Start startOf(string path) { return Start(path, string[](), Grants.create(), 0, 0, "terminal", true, "", "", Vec.create()); }
+
+/** Where a session had window `slice` of a program, titled `title`: taken from `places`, or null. */
+Placed? placeFor(Vec<Placed> places, i32 slice, string title) {
+  for (i32 i = 0; i < places.len(); i++) {
+    Placed p = places.get(i);
+    if (slice == 0 ? p.slot == 0 : (p.slot != 0 && p.title == title)) {
+      places.remove(i);
+      return p;
+    }
+  }
+  return null;
+}
 
 /** How many windows a program may have open at once: its share of `wac.page`'s numbers is this many slices. */
 export static i32 MAX_WINDOWS = 16;
@@ -227,9 +246,9 @@ export Win openWindowFor(Desk d, Running r, i32 slice, string title) {
   // window that had it unless it had it itself.
   i32 before = d.focused;
   Win w = open(d, "program", "\{r.id}/\{slice}", title, r.start.icon);
-  if (slice == 0) {
-    Placed? p = r.start.place;
-    if (p is not null) {
+  Placed? p = placeFor(r.start.places, slice, title);
+  if (p is not null) {
+    {
       w.x = p!.x;
       w.y = p!.y;
       w.w = p!.w < MIN_W ? MIN_W : p!.w;
@@ -238,10 +257,10 @@ export Win openWindowFor(Desk d, Running r, i32 slice, string title) {
       w.max = p!.max;
       if (p!.min) { minimise(d, w.id); }
       if (!p!.focused && before >= 0 && before != w.id) { focus(d, before); }
-    } else {
-      if (r.start.width > 0) { w.w = r.start.width; }
-      if (r.start.height > 0) { w.h = r.start.height; }
     }
+  } else if (slice == 0) {
+    if (r.start.width > 0) { w.w = r.start.width; }
+    if (r.start.height > 0) { w.h = r.start.height; }
   }
   r.wins.set(slice, w.id);
   r.shown = true;
@@ -566,13 +585,18 @@ export u8[] sessionOf(Desk d) {
   i32 wrote = 0;
   for (i32 i = 0; i < order.len(); i++) {
     Win w = d.wins.get(order[i]);
-    // A program's window is its process's, which a reload does not bring back — except the first window of one of
-    // the desktop's own apps, which is kept as the app and what it was opened on, and started again.
+    // A program's window is its process's, which a reload does not bring back — except a window of one of the
+    // desktop's own apps, kept as the app and what it was opened on, which is started again, and which slot of it
+    // the window was: the app opens its windows again, and each goes back where it was.
     string app = w.app;
     string arg = w.arg;
+    i32 slot = 0;
     if (app == "program") {
       Running? r = programOf(d, w);
-      if (r is null || r!.start.app == "" || r!.wins.get(0) != w.id) { continue; }
+      if (r is null || r!.start.app == "") { continue; }
+      slot = 0 - 1;
+      for (i32 k = 0; k < MAX_WINDOWS; k++) { if (r!.wins.get(k) == w.id) { slot = k; } }
+      if (slot < 0) { continue; }
       app = "start:" + r!.start.app;
       arg = r!.start.arg;
     }
@@ -584,6 +608,7 @@ export u8[] sessionOf(Desk d) {
     b.pushStr(",\"icon\":"); str(b, w.icon);
     b.pushStr(",\"x\":\{w.x},\"y\":\{w.y},\"w\":\{w.w},\"h\":\{w.h},\"snap\":\{w.snap}");
     b.pushStr(",\"min\":\{w.min ? "true" : "false"},\"max\":\{w.max ? "true" : "false"}");
+    if (slot != 0) { b.pushStr(",\"slot\":\{slot}"); }
     b.pushStr(",\"focused\":\{d.focused == w.id ? "true" : "false"}}");
   }
   b.pushStr("]}");
@@ -623,9 +648,13 @@ Running? programOf(Desk d, Win w) {
 
 /**
  * Restore windows from saved JSON; answers how many came back. A damaged file restores nothing. One of the desktop's
- * own apps is handed to `again` — the app, what it was opened on, and where its window was — to start once more.
+ * own apps is handed to `again` — the app, what it was opened on, and where each of its windows was — to start once
+ * more, after every other window is back.
  */
-export i32 restore(Desk d, u8[] json, fn<void(string, string, Placed)> again) {
+export i32 restore(Desk d, u8[] json, fn<void(string, string, Vec<Placed>)> again) {
+  Vec<string> apps = Vec.create();
+  Vec<string> args = Vec.create();
+  Vec<Vec<Placed>> placed = Vec.create();
   JsonValue? doc = parse(json).ok();
   if (doc is null) { return 0; }
   JsonValue? ws = doc!.member("windows");
@@ -641,9 +670,19 @@ export i32 restore(Desk d, u8[] json, fn<void(string, string, Placed)> again) {
         // The desktop's own apps, and — from a session saved before they were programs — the windows they had then.
         bool builtin = app == "viewer" || app == "editor" || app == "terminal" || app == "calc";
         if (builtin || (app.len() > 6 && app.slice(0, 6) == "start:")) {
-          again(builtin ? app : app.slice(6, app.len()), app == "calc" ? "" : text(o, "arg"),
-                Placed(num(o, "x", 0), num(o, "y", 0), num(o, "w", 0), num(o, "h", 0), num(o, "snap", 0), flag(o, "min"),
-                       flag(o, "max"), flag(o, "focused")));
+          string which = builtin ? app : app.slice(6, app.len());
+          string on = app == "calc" ? "" : text(o, "arg");
+          Placed p = Placed(num(o, "x", 0), num(o, "y", 0), num(o, "w", 0), num(o, "h", 0), num(o, "snap", 0),
+                            flag(o, "min"), flag(o, "max"), flag(o, "focused"), num(o, "slot", 0), text(o, "title"));
+          i32 at = 0 - 1;
+          for (i32 k = 0; k < apps.len(); k++) { if (apps.get(k) == which && args.get(k) == on) { at = k; } }
+          if (at < 0) {
+            apps.push(which);
+            args.push(on);
+            placed.push(Vec.create());
+            at = apps.len() - 1;
+          }
+          placed.get(at).push(p);
           n++;
           continue;
         }
@@ -662,6 +701,7 @@ export i32 restore(Desk d, u8[] json, fn<void(string, string, Placed)> again) {
     default: { }
   }
   if (focusId >= 0) { focus(d, focusId); }
+  for (i32 k = 0; k < apps.len(); k++) { again(apps.get(k), args.get(k), placed.get(k)); }
   d.dirty = false;
   return n;
 }

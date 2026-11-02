@@ -203,6 +203,9 @@ void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void
 /** Window `slice` of program `r` closed: its slice answers no more, and the program stops if that was its last. */
 void shut(Desk d, Running r, Win w, i32 slice) {
   dropHand(d, w.id);
+  // Its page hears it is closed (web's `Page.closed`): a program with other windows goes on without this one.
+  PageServer? server = r.servers.get(slice);
+  if (server is not null) { server!.close(); }
   r.servers.set(slice, null);
   if (r.wins.get(slice) == w.id) { r.wins.set(slice, CLOSED_WINDOW); }
   if (r.done) { return; }

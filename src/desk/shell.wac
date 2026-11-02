@@ -54,7 +54,7 @@ async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
     }
     startApp(d, "viewer", "Desktop/Welcome.md");
   } else {
-    restore(d, saved.value, (string app, string arg, Placed at) => { startPlaced(d, app, arg, at); });
+    restore(d, saved.value, (string app, string arg, Vec<Placed> at) => { startPlaced(d, app, arg, at); });
   }
   d.dirty = true;
   ready();

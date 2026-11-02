@@ -88,6 +88,8 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   const c = await win.boundingBox();
   check(Math.abs(c.width - b.width + 120) <= 3 && Math.abs(c.height - b.height + 80) <= 3, 'a corner resizes it', [c.width - b.width, c.height - b.height]);
   await p.mouse.move(c.x + 120, c.y + 20); await p.mouse.down(); await p.mouse.move(2, 300, { steps: 10 });
+  // The desktop draws in a worker, so the ghost appears a moment after the pointer arrives.
+  await p.waitForSelector('.snapghost.l', { timeout: 2000 }).catch(() => {});
   check(!!(await p.$('.snapghost.l')), 'the left edge shows where it will snap', null);
   await p.mouse.up(); await settle(300);
   const d = await win.boundingBox();
@@ -439,7 +441,48 @@ const check = (ok, what, seen) => { if (!ok) failed++; console.log(`${ok ? 'ok  
   await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .toast'); return e !== null && /Built|could not|did not/.test(e.textContent); }, null, { timeout: 90000 }).catch(() => {});
   check((await p.textContent('.win.focus .toast').catch(() => '')).includes('Built main.wasm —'), 'and Build writes the module beside its source', await p.textContent('.win.focus .toast').catch(() => ''));
   await shot('8-ide');
-  await p.locator('.win.focus .wbtn[title=Close]').click(); await settle(400);
+
+  // **One IDE, a window per project.** A second project in this window, the first in a window of its own: both
+  // are the one program, and a reload brings both back.
+  // A window brought forward by its taskbar button, as a person would, unless it is in front already; then closed.
+  const closeWin = async (title) => {
+    const exact = new RegExp(`^${title}$`);
+    if ((await p.textContent('.win.focus .tt').catch(() => '')) !== title) {
+      await p.locator('.tbwin', { has: p.locator('.t', { hasText: exact }) }).click(); await settle(300);
+    }
+    await p.locator('.win.focus .wbtn[title=Close]').click();
+  };
+  const ideWindows = async () => (await texts('.win .tt')).filter((t) => t === 'hello' || t === 'hello 2').sort().join();
+  await p.locator('.win.focus .proj').click(); await settle(500);
+  await p.locator('.win.focus .home .btn.primary').click();
+  check((await ideChecked()) === 'No problems', 'a second project opens in the same window', await p.textContent('.win.focus .tt').catch(() => ''));
+  await p.locator('.win.focus .proj').click(); await settle(500);
+  await p.locator('.win.focus .pcard', { has: p.locator('.nm', { hasText: /^hello$/ }) }).locator('.btn[title="Open in a window of its own"]').click();
+  await p.waitForFunction(() => [...document.querySelectorAll('.win .tt')].some((e) => e.textContent === 'hello'), null, { timeout: 30000 }).catch(() => {});
+  await settle(800);
+  // The first window goes back to the second project.
+  const firstIde = p.locator('.win', { has: p.locator('.tt', { hasText: /^wac IDE$/ }) });
+  await p.locator('.tbwin', { hasText: 'wac IDE' }).click(); await settle(400);
+  await firstIde.locator('.pcard', { has: p.locator('.nm', { hasText: /^hello 2$/ }) }).click(); await settle(1200);
+  check(await ideWindows() === 'hello,hello 2', 'a project opens in a window of its own, beside the other', await texts('.win .tt'));
+  check((await texts('.tbwin')).filter((t) => t.startsWith('hello')).length === 2, 'each with its own button on the taskbar', await texts('.tbwin'));
+  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'wac IDE' }).click(); await settle(1000);
+  check(await ideWindows() === 'hello,hello 2' && !(await texts('.win .tt')).includes('wac IDE'), 'the launcher brings the IDE forward, not a second IDE', await texts('.win .tt'));
+  await settle(1500);
+  await p.reload();
+  await p.waitForSelector('.dicons', { timeout: 20000 });
+  await p.waitForFunction(() => [...document.querySelectorAll('.win .tt')].filter((e) => e.textContent === 'hello' || e.textContent === 'hello 2').length === 2, null, { timeout: 60000 }).catch(() => {});
+  check(await ideWindows() === 'hello,hello 2', 'a reload brings both project windows back', await texts('.win .tt'));
+  // Closed, a window is forgotten; the other goes on, and a reload brings back only it.
+  await closeWin('hello'); await settle(1200);
+  check(await ideWindows() === 'hello 2', 'closing one project window leaves the other', await texts('.win .tt'));
+  await settle(1500);
+  await p.reload();
+  await p.waitForSelector('.dicons', { timeout: 20000 });
+  await p.waitForFunction(() => [...document.querySelectorAll('.win .tt')].some((e) => e.textContent === 'hello 2'), null, { timeout: 60000 }).catch(() => {});
+  await settle(1500);
+  check(await ideWindows() === 'hello 2', 'and after a reload it stays closed', await texts('.win .tt'));
+  await closeWin('hello 2'); await settle(400);
   await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Files' }).first().click(); await settle(800);
   await row('Projects').dblclick(); await settle(600);
   await row('hello').dblclick(); await settle(600);

@@ -12,8 +12,8 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 
 ## Building it
 
-**Everything is pinned in `wac.lock`**: wac at `c405f554d` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `0abc650` — and the wac IDE at `eea26f1`. All are
+**Everything is pinned in `wac.lock`**: wac at `4e953ac5f` — the `wac` command should be built from that commit, and
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `d4d4521` — and the wac IDE at `984e0e1`. All are
 repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
@@ -26,7 +26,7 @@ git clone https://git.voltrevo.com/wac.git ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout c405f554da08b10461211e3cb9a934d746cc1e10
+git -C ~/src/wac checkout 4e953ac5f17cbc90678178e70fcd2a898e92891a
 ```
 
 ```bash
@@ -131,13 +131,15 @@ shares, so their pages can see each other's files.
   Explorer are there, in `site/apps/`, and start as any program does (`src/desk/builtin.wac`), handed what they are
   opened on and no more — the Viewer its file to read, the Editor its file to change, the Terminal the disk — at
   the size their windows suit. A session keeps their windows as the app and what it showed, and a reload starts
-  them again. Each is also a page on its own, in `dist/apps/<name>/`. Files and Permissions stay the desktop's own:
+  them again — every window of one, each put back where it was: the first by its slot, the rest by their titles,
+  which an app reopening its windows gives them again. A closed window's page hears so (web's `Page.closed`). Each is also a page on its own, in `dist/apps/<name>/`. Files and Permissions stay the desktop's own:
   one is how it shows its disk, and the other governs what programs may reach.
 - **The wac IDE** (https://git.voltrevo.com/wac-ide.git, pinned as `ide` and built by `src/apps/ide.wac`) is one of
   them: wac's compiler checking as you type, in a process of its own, and the name at the caret explained. Its
   projects are the folders in `Projects` on the desktop's disk, which it is handed — so Files and the Terminal see
-  them, a dropped folder or archive becomes one, and Build writes the module beside its source, where a
-  double-click runs it.
+  them, a dropped folder or archive becomes one, Run and Test run what is in front in the IDE's Output panel, and
+  Build writes the module beside its source, where a double-click runs it. It is one program with a window per
+  project (`Desktop.openWindow`): the launcher brings it forward rather than starting a second.
 - **A program's page is a shadow root of its window**, so its stylesheet applies in its window and nowhere else:
   no program can restyle the desktop — its consent dialog included — or another program, and the desktop's rules do
   not reach in. The window's body contains its layout and paint, so `position: fixed` stays in the window too.
@@ -197,7 +199,7 @@ shares, so their pages can see each other's files.
 - **`wac` on the site.** `tools/wacbin.py`, run by `wac task build`, compiles the pinned commit's `wac` command
   (2.5 MB) into `dist/bin/wac`. Every terminal has `WACPATH=/site/bin`, so the shell finds `wac` and spawns it as it
   would any program, handed the shell's files, which is why it works on the desktop's disk.
-- **Size.** The desktop is about 0.9 MB of module at wac `c405f554d` — 2.6 MB while it carried the Terminal and
+- **Size.** The desktop is about 0.9 MB of module at wac `4e953ac5f` — 2.6 MB while it carried the Terminal and
   `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
   Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
   when it is first started. It also needs a

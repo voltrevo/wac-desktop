@@ -13,7 +13,8 @@
 
 import { Grants } from "./grants.wac";
 import { leafOf, parentOf } from "./vfs.wac";
-import { Desk, Placed, Running, Start, focus, open } from "./wm.wac";
+import { Vec } from "core";
+import { Desk, Placed, Running, Start, MAX_WINDOWS, focus, open } from "./wm.wac";
 
 /** Where the build leaves the desktop's own apps, on the site. */
 export string appPath(string app) { return "site/apps/" + app + ".wasm"; }
@@ -51,43 +52,45 @@ export Start builtin(string app, string arg) {
     h = 720;
     ic = "code";
   }
-  return Start(appPath(app), args, g, w, h, ic, app == "explorer" || app == "ide", app, arg, null);
+  return Start(appPath(app), args, g, w, h, ic, app == "explorer" || app == "ide", app, arg, Vec.create());
 }
 
-/** Running app `app`, if one is, with a window. */
-Running? runningApp(Desk d, string app) {
+/** A window of running app `app`, if one has a window open; -1 if not. */
+i32 windowOf(Desk d, string app) {
   for (i32 i = 0; i < d.running.len(); i++) {
     Running r = d.running.get(i);
-    if (r.start.app == app && r.wins.get(0) >= 0) { return r; }
+    if (r.start.app != app) { continue; }
+    for (i32 k = 0; k < MAX_WINDOWS; k++) { if (r.wins.get(k) >= 0) { return r.wins.get(k); } }
   }
-  return null;
+  return 0 - 1;
 }
 
 /**
- * Open the desktop's app `app` on `arg`: started from the site, or — the Calculator, which there is one of — its window
- * brought forward. Without a site, a file's folder opens in Files instead, and anything else is not there to open.
+ * Open the desktop's app `app` on `arg`: started from the site, or — the Calculator and the IDE, which there is one
+ * of — a window of it brought forward: the IDE opens a window per project itself. Without a site, a file's folder
+ * opens in Files instead, and anything else is not there to open.
  */
-export void startApp(Desk d, string app, string arg) { startPlaced(d, app, arg, null); }
+export void startApp(Desk d, string app, string arg) { startPlaced(d, app, arg, Vec.create()); }
 
-/** As `startApp`, its first window where a session had it. */
-export void startPlaced(Desk d, string app, string arg, Placed? place) {
+/** As `startApp`, its windows where a session had them. */
+export void startPlaced(Desk d, string app, string arg, Vec<Placed> places) {
   if (!d.site || d.launch is null) {
     if (app == "viewer" || app == "editor") {
-      if (place is null) {
+      if (places.len() == 0) {
         open(d, "files", parentOf(arg), leafOf(parentOf(arg)) == "" ? "Home" : leafOf(parentOf(arg)), "folder");
         d.note = "Opened from a file, the desktop has no " + app + ": " + leafOf(arg) + " is shown here";
       }
     }
     return;
   }
-  if (app == "calc") {
-    Running? r = runningApp(d, "calc");
-    if (r is not null) {
-      focus(d, r!.wins.get(0));
+  if (app == "calc" || app == "ide") {
+    i32 open = windowOf(d, app);
+    if (open >= 0) {
+      focus(d, open);
       return;
     }
   }
   Start s = builtin(app, arg);
-  s.place = place;
+  s.places = places;
   d.launch!(s);
 }

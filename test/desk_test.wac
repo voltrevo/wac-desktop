@@ -168,8 +168,8 @@ export string test_the_session_comes_back(Sys sys) {
   focus(d, b.id);
   Desk e = desk(sys);
   string[] again = noted();
-  i32 n = restore(e, sessionOf(d), (string app, string arg, Placed at) => {
-    again[0] = again[0] + "\{app}:\{arg}@\{at.x},\{at.w}\{at.focused ? " focused" : ""};";
+  i32 n = restore(e, sessionOf(d), (string app, string arg, Vec<Placed> at) => {
+    again[0] = again[0] + "\{app}:\{arg}@\{at.get(0).x},\{at.get(0).w}\{at.get(0).focused ? " focused" : ""};";
   });
   if (n != 3) { return "restored \{n} windows"; }
   if (again[0] != "editor:notes \"one\".txt@300,640 focused;") { return "the editor, to start again: \{again[0]}"; }
@@ -179,8 +179,32 @@ export string test_the_session_comes_back(Sys sys) {
     if (w.app == "files" && w.snap != 2) { return "the snap"; }
     if (w.app == "allowed" && !w.min) { return "minimised"; }
   }
-  if (restore(desk(sys), "{ not json".toBytes(), (string app, string arg, Placed at) => { }) != 0) {
+  if (restore(desk(sys), "{ not json".toBytes(), (string app, string arg, Vec<Placed> at) => { }) != 0) {
     return "a damaged session restored something";
+  }
+  return "";
+}
+
+/**
+ * **Every window of one of the desktop's apps comes back**: the app is started once, handed where each of its
+ * windows was — the first by its slot, the rest by their titles, which a reopened window will have again.
+ */
+export string test_each_window_of_an_app_comes_back_where_it_was(Sys sys) {
+  Desk d = desk(sys);
+  Win first = running(d, builtin("ide", "Projects"));
+  Running r = d.running.get(0);
+  Win second = openWindowFor(d, r, 3, "hello");
+  first.x = 150;
+  second.x = 420;
+  Desk e = desk(sys);
+  string[] again = noted();
+  restore(e, sessionOf(d), (string app, string arg, Vec<Placed> at) => {
+    again[0] = again[0] + "\{app}:\{arg}";
+    for (i32 i = 0; i < at.len(); i++) { again[0] = again[0] + " \{at.get(i).slot}/\{at.get(i).title}@\{at.get(i).x}"; }
+    again[0] = again[0] + ";";
+  });
+  if (again[0] != "ide:Projects 0/ide.wasm@150 3/hello@420;" && again[0] != "ide:Projects 3/hello@420 0/ide.wasm@150;") {
+    return "started once with both windows' places: \{again[0]}";
   }
   return "";
 }
@@ -195,7 +219,7 @@ export string test_an_older_sessions_app_windows_are_started_again(Sys sys) {
              + "{\"app\":\"files\",\"arg\":\"\"}]}";
   Desk e = desk(sys);
   string[] again = noted();
-  i32 n = restore(e, old.toBytes(), (string app, string arg, Placed at) => { again[0] = again[0] + "\{app}:\{arg};"; });
+  i32 n = restore(e, old.toBytes(), (string app, string arg, Vec<Placed> at) => { again[0] = again[0] + "\{app}:\{arg};"; });
   if (n != 4 || e.wins.len() != 1) { return "\{n} restored, \{e.wins.len()} opened"; }
   if (again[0] != "viewer:Desktop/Welcome.md;calc:;terminal:Desktop;") { return again[0]; }
   return "";
