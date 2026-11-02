@@ -1,0 +1,125 @@
+// Exercise the actual rules with fixed seeds and deliberate board positions, without a page or a clock.
+import { Game, cell, clearRows, draw, fits, hardDrop, hold, landing, level, move, newGame, restored, rotate, saved, softDrop, tick } from "../src/apps/stackfall/game.wac";
+
+Game playing() { Game g = newGame(1 as i64, 0); g.paused = false; return g; }
+i32 blocks(Game g) { i32 n = 0; for (i32 i = 0; i < 220; i++) { if (g.board[i] != 0) { n++; } } return n; }
+
+export string test_stackfall_pieces_have_four_cells_in_every_orientation() {
+  for (i32 piece = 0; piece < 7; piece++) {
+    for (i32 r = 0; r < 4; r++) {
+      i32 n = 0;
+      for (i32 y = 0; y < 4; y++) { for (i32 x = 0; x < 4; x++) { if (cell(piece, r, x, y)) { n++; } } }
+      if (n != 4) { return "piece \{piece} rotation \{r} has \{n} cells"; }
+    }
+  }
+  return "";
+}
+
+export string test_stackfall_random_draws_allow_repeats_and_droughts() {
+  Game g = playing();
+  i32 previous = -1;
+  i32 repeats = 0;
+  i32[] counts = i32[].filled(7, 0);
+  bool drought = false;
+  i32[] since = i32[].filled(7, 0);
+  for (i32 i = 0; i < 7000; i++) {
+    i32 piece = draw(g);
+    if (piece == previous) { repeats++; }
+    counts[piece]++; previous = piece;
+    for (i32 k = 0; k < 7; k++) { since[k] = k == piece ? 0 : since[k] + 1; if (since[k] > 20) { drought = true; } }
+  }
+  if (repeats < 800 || !drought) { return "draws have been constrained like a bag"; }
+  for (i32 i = 0; i < 7; i++) { if (counts[i] < 800 || counts[i] > 1200) { return "bad distribution: \{counts[i]}"; } }
+  return "";
+}
+
+export string test_stackfall_collision_and_wall_kicks() {
+  Game g = playing(); g.piece = 0; g.rotation = 1; g.x = -2; g.y = 10;
+  if (!fits(g, 0, 1, -2, 10) || fits(g, 0, 1, -3, 10)) { return "left boundary"; }
+  if (!rotate(g, 1) || !fits(g, g.piece, g.rotation, g.x, g.y)) { return "rotation failed to kick away from wall"; }
+  g.board[21 * 10 + 4] = 1;
+  if (fits(g, 0, 0, 3, 20)) { return "fell through existing block"; }
+  return "";
+}
+
+export string test_stackfall_row_compaction_preserves_order_and_clears_the_top() {
+  Game g = playing();
+  g.board[19 * 10 + 2] = 3; g.board[17 * 10 + 1] = 4; g.board[0] = 7;
+  for (i32 x = 0; x < 10; x++) { g.board[21 * 10 + x] = 1; g.board[18 * 10 + x] = 2; }
+  if (clearRows(g) != 2) { return "did not clear both rows"; }
+  if (g.board[20 * 10 + 2] != 3 || g.board[19 * 10 + 1] != 4 || g.board[20] != 7) { return "rows moved in the wrong order"; }
+  for (i32 i = 0; i < 20; i++) { if (g.board[i] != 0) { return "top rows retained old blocks"; } }
+  return "";
+}
+
+export string test_stackfall_four_rows_score_and_level_together() {
+  Game g = playing(); g.piece = 0; g.rotation = 1; g.x = 2; g.y = 18; g.lines = 9;
+  for (i32 y = 18; y < 22; y++) { for (i32 x = 0; x < 10; x++) { if (x != 4) { g.board[y * 10 + x] = 3; } } }
+  hardDrop(g);
+  if (g.score != 800 || g.best != 800 || g.lines != 13 || level(g) != 2 || blocks(g) != 0) { return "four-row clear or level scoring"; }
+  return "";
+}
+
+export string test_stackfall_hold_is_once_per_piece_and_resets_rotation() {
+  Game g = playing(); i32 first = g.piece; i32 next = g.next;
+  hold(g);
+  if (g.held != first || g.piece != next || !g.heldOnce) { return "first hold"; }
+  i32 after = g.piece; hold(g);
+  if (g.piece != after || g.held != first) { return "held twice without locking"; }
+  hardDrop(g); g.rotation = 2; hold(g);
+  if (g.piece != first || g.rotation != 0 || !g.heldOnce) { return "hold swap did not reset the piece"; }
+  return "";
+}
+
+export string test_stackfall_lock_delay_has_a_finite_reset_budget() {
+  Game g = playing(); g.piece = 1; g.x = 3; g.y = landing(g);
+  tick(g, 499);
+  if (blocks(g) != 0) { return "locked early"; }
+  move(g, 1); tick(g, 499);
+  if (blocks(g) != 0) { return "ground movement did not reset delay"; }
+  for (i32 i = 0; i < 14; i++) { move(g, i % 2 == 0 ? -1 : 1); }
+  tick(g, 499); move(g, -1); tick(g, 1);
+  if (blocks(g) != 4) { return "movement stalled locking beyond fifteen resets"; }
+  return "";
+}
+
+export string test_stackfall_drop_points_and_pause() {
+  Game g = playing(); i32 y = g.y;
+  softDrop(g);
+  if (g.y != y + 1 || g.score != 1) { return "soft drop"; }
+  i32 distance = landing(g) - g.y;
+  hardDrop(g);
+  if (g.score != 1 + 2 * distance || blocks(g) != 4) { return "hard drop"; }
+  g.paused = true; string before = saved(g);
+  move(g, 1); rotate(g, 1); softDrop(g); hardDrop(g); hold(g); tick(g, 5000);
+  if (saved(g) != before) { return "paused input changed game"; }
+  return "";
+}
+
+export string test_stackfall_spawn_collision_ends_the_game() {
+  Game g = playing(); g.piece = 1; g.next = 1; g.y = 20;
+  g.board[14] = 7;
+  hardDrop(g);
+  if (!g.over) { return "blocked spawn kept playing"; }
+  return "";
+}
+
+export string test_stackfall_save_restores_paused_with_the_same_random_stream() {
+  Game g = playing(); hold(g); hardDrop(g); move(g, -1); rotate(g, -1); tick(g, 183);
+  Game? r = restored(saved(g));
+  if (r is null || !r!.paused || saved(r!) != saved(g)) { return "save round trip"; }
+  for (i32 i = 0; i < 100; i++) { if (draw(g) != draw(r!)) { return "random stream changed across reload"; } }
+  return "";
+}
+
+export string test_stackfall_corrupt_saves_do_not_restore() {
+  if (restored("broken") is not null || restored("{}") is not null) { return "malformed save accepted"; }
+  Game g = playing(); g.board[0] = 99;
+  if (restored(saved(g)) is not null) { return "invalid cell accepted"; }
+  for (i32 x = 0; x < 10; x++) { g.board[x] = 1; }
+  if (restored(saved(g)) is not null) { return "completed row accepted"; }
+  for (i32 x = 0; x < 10; x++) { g.board[x] = 0; }
+  g.seed = 0;
+  if (restored(saved(g)) is not null) { return "zero random seed accepted"; }
+  return "";
+}

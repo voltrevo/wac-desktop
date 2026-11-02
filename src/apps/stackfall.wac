@@ -1,0 +1,196 @@
+// A separate desktop program: the rules know nothing of this DOM, and the desktop knows nothing of the game.
+import { ElementEvent, MOD_ALT, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.b, html.button, html.div, html.h1, html.p, html.span, html.style } from "web";
+import { Game, cell, draw, hardDrop, hold, landing, level, move, newGame, restored, rotate, saved, softDrop, tick } from "./stackfall/game.wac";
+import { stackfallCss } from "./stackfall/style.wac";
+
+struct Play {
+  Game g;
+  string[] down;
+  string horizontal;
+  i32 repeatMs;
+  i32 softMs;
+  f64 last;
+  string wanted;
+  string written;
+  bool writing;
+  string error;
+  bool confirm;
+}
+
+bool pressed(Play p, string key) {
+  for (i32 i = 0; i < p.down.len(); i++) { if (p.down[i] == key) { return true; } }
+  return false;
+}
+void release(Play p) { p.down = string[](); p.horizontal = ""; p.repeatMs = 0; p.softMs = 0; }
+void pause(Play p) { p.g.paused = true; release(p); }
+
+/** Serialise writes and coalesce changes made during one, so an older save can never finish last. */
+async void keep(Page page, Play p, fn<void()> notify) {
+  p.wanted = saved(p.g);
+  if (p.writing || p.wanted == p.written) { return; }
+  p.writing = true;
+  while (p.wanted != p.written) {
+    string text = p.wanted;
+    auto result = await page.sys.files().writeFile("game.json", text.toBytes());
+    if (result.isErr()) {
+      if (p.error == "") { p.error = "Could not save this game"; notify(); }
+      break;
+    }
+    p.written = text;
+    if (p.error != "") { p.error = ""; notify(); }
+  }
+  p.writing = false;
+}
+
+void resume(Play p, Page page) {
+  if (p.g.over) { return; }
+  p.g.paused = false; p.confirm = false; release(p); p.last = page.now();
+}
+
+string control(string key) {
+  if (key == "ArrowLeft" || key == "ArrowRight" || key == "ArrowDown" || key == "ArrowUp" || key == " ") { return key; }
+  if (key == "z" || key == "Z") { return "z"; }
+  if (key == "x" || key == "X") { return "x"; }
+  if (key == "c" || key == "C" || key == "Shift") { return "c"; }
+  if (key == "p" || key == "P" || key == "Escape" || key == "Enter") { return "pause"; }
+  return "";
+}
+
+void keyDown(Play p, Page page, string key) {
+  if (key == "" || pressed(p, key)) { return; }
+  // Key repeat comes from the game's clock, never the operating system's settings.
+  string[] keys = string[].filled(p.down.len() + 1, "");
+  for (i32 i = 0; i < p.down.len(); i++) { keys[i] = p.down[i]; }
+  keys[p.down.len()] = key; p.down = keys;
+  if (key == "pause") {
+    if (p.g.paused) { resume(p, page); } else { pause(p); }
+    // Keep this edge held too: auto-repeat must not toggle pause or start a second game.
+    p.down = [key]; return;
+  }
+  if (p.g.paused || p.g.over) { return; }
+  if (key == "ArrowLeft" || key == "ArrowRight") {
+    p.horizontal = key; p.repeatMs = -160; move(p.g, key == "ArrowLeft" ? -1 : 1);
+  } else if (key == "ArrowDown") { softDrop(p.g); p.softMs = 0; }
+  else if (key == "ArrowUp" || key == "x") { rotate(p.g, 1); }
+  else if (key == "z") { rotate(p.g, -1); }
+  else if (key == "c") { hold(p.g); }
+  else if (key == " ") { hardDrop(p.g); }
+}
+void keyUp(Play p, string key) {
+  i32 count = 0;
+  for (i32 i = 0; i < p.down.len(); i++) { if (p.down[i] != key) { count++; } }
+  string[] keys = string[].filled(count, "");
+  i32 j = 0;
+  for (i32 i = 0; i < p.down.len(); i++) { if (p.down[i] != key) { keys[j++] = p.down[i]; } }
+  p.down = keys;
+  if (p.horizontal == key) {
+    string other = key == "ArrowLeft" ? "ArrowRight" : "ArrowLeft";
+    p.horizontal = pressed(p, other) ? other : ""; p.repeatMs = -160;
+  }
+}
+
+Node preview(i32 piece) {
+  Node[] cells = Node[].filled(8, Node.Text(""));
+  for (i32 i = 0; i < 8; i++) {
+    cells[i] = <span class={"sf-cell " + (piece >= 0 && cell(piece, 0, i % 4, i / 4) ? "sf-p\{piece}" : "sf-empty")}></span>;
+  }
+  return <div class="sf-preview">{cells}</div>;
+}
+
+Node Stackfall(Ui ui, Page page, Play p) {
+  auto revision = ui.state(0);
+  Ref root = ui.ref();
+  fn<void()> bump = () => { revision.update((i32 n) => n + 1); };
+  fn<void()> focus = () => { if (root.element() is not null) { root.element()!.focus(); } };
+  ui.effect("", () => { focus(); return () => { }; });
+  ui.effect("", () => ui.every(16, () => {
+    f64 now = page.now();
+    i32 elapsed = (now - p.last) as~ i32; p.last = now;
+    // A background tab or suspended computer cannot accumulate surprise gravity or repeated keys.
+    if (elapsed > 250) { pause(p); keep(page, p, bump); bump(); return; }
+    if (p.g.paused || p.g.over || elapsed <= 0) { return; }
+    if (p.horizontal != "") {
+      p.repeatMs += elapsed;
+      while (p.repeatMs >= 40) { move(p.g, p.horizontal == "ArrowLeft" ? -1 : 1); p.repeatMs -= 40; }
+    }
+    if (pressed(p, "ArrowDown")) {
+      p.softMs += elapsed;
+      while (p.softMs >= 35) { softDrop(p.g); p.softMs -= 35; }
+    }
+    tick(p.g, elapsed); bump();
+  }));
+  ui.effect("", () => ui.every(200, () => { keep(page, p, bump); }));
+  Game g = p.g;
+  i32 ghost = landing(g);
+  Node[] cells = Node[].filled(200, Node.Text(""));
+  for (i32 i = 0; i < 200; i++) {
+    i32 x = i % 10;
+    i32 y = i / 10 + 2;
+    i32 colour = g.board[y * 10 + x] - 1;
+    bool active = !g.over && cell(g.piece, g.rotation, x - g.x, y - g.y);
+    bool shadow = !g.over && colour < 0 && !active && cell(g.piece, g.rotation, x - g.x, y - ghost);
+    if (active) { colour = g.piece; }
+    string cls = colour >= 0 ? "sf-p\{colour}" : (shadow ? "sf-ghost" : "sf-empty");
+    cells[i] = <span class={"sf-cell " + cls}></span>;
+  }
+  fn<void()> toggle = () => { if (g.paused) { resume(p, page); } else { pause(p); } keep(page, p, bump); focus(); bump(); };
+  return <div class="sf" tabindex="0" ref={root}
+      prevent="ArrowLeft ArrowRight ArrowDown ArrowUp Space ' ' Enter Escape Shift z x c p"
+      onkeydown={(ElementEvent e) => {
+        if ((e.mods & (MOD_CTRL | MOD_META | MOD_ALT)) != 0) { return; }
+        keyDown(p, page, control(e.value)); keep(page, p, bump); bump();
+      }}
+      onkeyup={(ElementEvent e) => { keyUp(p, control(e.value)); }}
+      onblur={(ElementEvent e) => { pause(p); keep(page, p, bump); bump(); }}>
+    <style>{stackfallCss()}</style>
+    <div class="sf-head"><div><h1>Stackfall</h1><p>Find room for the unexpected.</p></div><span class="sf-tag">ENDLESS</span></div>
+    <div class="sf-main">
+      <div class="sf-well" onpointerdown={(ElementEvent e) => { focus(); }}>
+        <div class="sf-board" role="img" title="Playfield, ten columns and twenty rows">{cells}</div>
+        {g.paused || g.over ? <div class="sf-overlay">
+          <span class="sf-eyebrow">{g.over ? "GAME OVER" : "TAKE YOUR TIME"}</span>
+          <div class="sf-message">{g.over ? "Another round?" : "Ready when you are."}</div>
+          <p>{g.over ? "\{g.lines} rows · \{g.score} points" : "Press Enter to play"}</p>
+        </div> : Node.Text("")}
+      </div>
+      <div class="sf-side">
+        <div class="sf-stat"><span>SCORE</span><b class="sf-score">{"\{g.score}"}</b></div>
+        <div class="sf-pair"><div class="sf-stat"><span>LEVEL</span><b>{"\{level(g)}"}</b></div><div class="sf-stat"><span>ROWS</span><b>{"\{g.lines}"}</b></div></div>
+        <div class="sf-stat"><span>BEST</span><b class="sf-best">{"\{g.best}"}</b></div>
+        <div class="sf-stat"><span>NEXT</span>{preview(g.next)}</div>
+        <div class="sf-stat"><span>HOLD · C</span>{preview(g.held)}</div>
+      </div>
+    </div>
+    <div class="sf-actions">
+      <button class="sf-primary" disabled={g.over ? "true" : null} tabindex="-1" prevent="*"
+        onpointerdown={(ElementEvent e) => { }} onclick={(ElementEvent e) => { toggle(); }}>{g.paused ? "Play" : "Pause"}</button>
+      <button tabindex="-1" prevent="*" onpointerdown={(ElementEvent e) => { }} onclick={(ElementEvent e) => {
+        if (!p.confirm && !g.over && g.score > 0) { pause(p); p.confirm = true; }
+        else { p.g = newGame(g.seed, g.best); resume(p, page); p.confirm = false; }
+        keep(page, p, bump); focus(); bump();
+      }}>{p.confirm ? "Confirm new game" : "New game"}</button>
+      <span class="sf-save">{p.error != "" ? p.error : "Saves automatically"}</span>
+    </div>
+    <div class="sf-help"><span>← → move</span><span>↑ / X rotate · Z reverse</span><span>↓ soft drop</span><span>Space drop</span><span>C / Shift hold</span><span>P / Esc pause</span></div>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Stackfall");
+  i64 seed = 1;
+  auto random = await page.sys.random().bytes(4);
+  if (random.isOk()) {
+    u8[] bytes = random.ok()!;
+    for (i32 i = 0; i < bytes.len(); i++) { seed = (seed * 256 + bytes[i] as i64) % 2147483646; }
+    seed++;
+  }
+  Game g = newGame(seed, 0);
+  auto file = await page.sys.files().readFile("game.json");
+  if (file.isOk()) {
+    Game? kept = restored(string.fromBytes(file.ok()!));
+    if (kept is not null) { g = kept!; }
+  }
+  Play p = Play(g, string[](), "", 0, 0, page.now(), "", "", false, "", false);
+  page.mount((Ui ui) => <Stackfall page={page} p={p}/>);
+  return 0;
+}

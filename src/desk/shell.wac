@@ -434,6 +434,7 @@ Node launcher(Desk d, fn<void()> bump) {
     {siteItem(d, bump, "terminal", "Terminal", "A shell on this desktop's disk", "terminal", "Desktop")}
     {siteItem(d, bump, "code", "wac IDE", "Write wac, checked as you type, in Projects", "ide", "Projects")}
     {siteItem(d, bump, "edit", "Text editor", "A new text file", "editor", "")}
+    {siteItem(d, bump, "stackfall", "Stackfall", "Falling blocks, fresh rolls", "stackfall", "")}
     {siteItem(d, bump, "calc", "Calculator", "Sums, typed or clicked", "calc", "")}
     {launcherItem("trash", "Trash", "What was deleted, to restore or let go", () => { open(d, "files", TRASH, "Trash", "trash"); bump(); })}
     {launcherItem("shield", "Permissions", "What programs were allowed, to take back", () => { open(d, "allowed", "", "Permissions", "shield"); bump(); })}
@@ -464,7 +465,8 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
   }
   // A window takes no drop of its own — only a Files window does, and says so before this hears of it —
   // but it is in the way of the desktop behind it.
-  return <div class={cls} style={style} key={"w\{id}"}
+  // A click on the frame takes DOM focus as well as desktop focus, so a game in another window hears blur.
+  return <div class={cls} style={style} tabindex="-1" key={"w\{id}"}
               onpointermove={dragging(drop) ? (ElementEvent e) => { hover(d, null, ""); } : null}
               onpointerdown={(ElementEvent e) => { if (d.focused != id || d.launcher) { focus(d, id); bump(); } }}>
     <div class="tbar"
