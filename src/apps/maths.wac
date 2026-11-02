@@ -167,25 +167,3 @@ export string magnitude(f64 x) {
   }
   return "\{fixed(m, 1)} × 10^\{e}";
 }
-
-static f64 TWO_PI = 6.283185307179586;
-
-/** The sine of `x`, in radians: reduced to a quarter turn, where a short series is exact enough for sound. */
-export f64 sin(f64 x) {
-  f64 t = x - (x / TWO_PI).floor() * TWO_PI;
-  // t in [0, 2π): fold into [-π/2, π/2] with the sign the fold leaves.
-  f64 sign = 1.0;
-  if (t > 3.141592653589793) {
-    t = t - 3.141592653589793;
-    sign = 0.0 - 1.0;
-  }
-  if (t > 1.5707963267948966) { t = 3.141592653589793 - t; }
-  f64 t2 = t * t;
-  f64 term = t;
-  f64 sum = t;
-  for (i32 n = 1; n < 9; n++) {
-    term = 0.0 - term * t2 / (((2 * n) * (2 * n + 1)) as f64);
-    sum = sum + term;
-  }
-  return sign * sum;
-}

@@ -108,10 +108,11 @@ shares, so their pages can see each other's files.
   that swoop, ghosts that creep up while Pip looks away, and crawlers that walk round walls and ceilings. The rules
   run sixty steps a second whatever the screen's rate, and nothing in them is random, so a run is its keys: the best
   run of each level comes back as a **ghost** to race (`G` hides it), and each level has a par for **gold, silver and
-  bronze**. Its music is one theme arranged for each kind of place — the title, the fields, the
-  towers, the wind, the dark, a fanfare and a finale — on a little sound chip written down as a tracker would
-  (`pip/music.wac`); each song is layers started for one moment, and lanterns bring them in as they are lit, the open
-  door adds a sparkle, and a ticking hat plays while Pip is ahead of its ghost. `wac task pip:music` renders the songs
+  bronze**. Its music is its first tune, kept as it sounds — a plucked pulse lead over a triangle
+  bass and ticks of noise — played for each kind of place: slower for the title and the dark, up a tone and faster in
+  the towers, in the major in the wind and for the finale (`pip/music.wac`, written down as a tracker would). Each
+  song is layers started for one moment: lanterns gently bring in a second voice, high plucks and a quicker tick as
+  they are lit, the open door adds an arpeggio, and a racing tick plays while Pip is ahead of its ghost. `wac task pip:music` renders the songs
   as WAV files. **It is
   made to feel latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to
   send its jump's sound, measured from the browser's own stamp on the key. Best times and runs are kept in its folder.

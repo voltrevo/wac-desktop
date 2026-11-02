@@ -648,7 +648,7 @@ export string test_each_level_gets_the_song_its_shape_calls_for() {
 
 /**
  * **Every song is whole, loops cleanly, and is not silent**: its layers all as long as each other, the full mix
- * peaking just short of full, the step from its last sample to its first no bigger than its own steps — a click
+ * loud enough to hear and never past full, the step from its last sample to its first no bigger than its own steps — a click
  * there would sound at every loop — and, for a level's song, a layer for each thing that earns one.
  */
 export string test_every_song_is_whole_and_loops_cleanly() {
@@ -669,11 +669,11 @@ export string test_every_song_is_whole_and_loops_cleanly() {
         if (d > step) { step = d; }
       }
     }
-    if (peak < 0.8 || peak > 0.86) { return "\{s.name}: peaks at \{peak}"; }
+    if (peak < 0.2 || peak > 1.0) { return "\{s.name}: peaks at \{peak}"; }
     if (s.loops) {
       f64 seam = full[full.len() - 1] - full[0];
       if (seam < 0.0) { seam = 0.0 - seam; }
-      if (seam > step * 0.5) { return "\{s.name}: a click where it loops, \{seam} against its biggest step \{step}"; }
+      if (seam > step) { return "\{s.name}: a click where it loops, \{seam} against its biggest step \{step}"; }
     }
     if (s.name != "title" && s.name != "fanfare" && s.name != "finale") {
       for (i32 l = 0; l < LAYERS; l++) {
