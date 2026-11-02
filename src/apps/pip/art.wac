@@ -1,8 +1,8 @@
 // Pip's pictures: a 320 × 180 screen of pixels, drawn afresh each frame into one buffer the page sends whole.
 //
 // **Everything is drawn by hand here**, as an old machine's game would be: sprites are rows of letters, each a
-// colour; tiles are drawn from rectangles; the night sky is a gradient with stars and two ranges of hills that move
-// slower than the ground, which is all it takes to look far away. A lit lantern throws a warm glow, added to what is
+// colour; clustered earth, moss and stone share a restrained palette. The moon, mist, hills and layered fir trees
+// move more slowly than the ground, giving the little stage depth. A lit lantern throws a warm glow, added to what is
 // under it, and so does Pip.
 
 import { Vec } from "core";
@@ -26,7 +26,7 @@ export struct Screen {
 
   Screen create() {
     i32[] sky = i32[].filled(SCREEN_H, 0);
-    for (i32 y = 0; y < SCREEN_H; y++) { sky[y] = mix(0x0B1026, 0x30285A, (y as f64) / ((SCREEN_H - 1) as f64)); }
+    for (i32 y = 0; y < SCREEN_H; y++) { sky[y] = mix(0x101B35, 0x65516B, (y as f64) / ((SCREEN_H - 1) as f64)); }
     i32[] stars = i32[].filled(120, 0);
     i32 seed = 12345;
     for (i32 i = 0; i < 60; i++) {
@@ -89,20 +89,23 @@ void halo(Screen s, i32 cx, i32 cy, i32 r, i32 c, f64 strength) {
 
 /** The colour each letter of a sprite stands for; a `.` is not drawn. */
 i32 paint(u8 ch) {
-  if (ch == 'o') { return 0x1B1530; }
-  if (ch == 'C') { return 0x2F7D7A; }
-  if (ch == 'c') { return 0x55B8AC; }
+  if (ch == 'o') { return 0x152039; }
+  if (ch == 'h') { return 0x80D4BB; }
+  if (ch == 'F') { return 0xC99882; }
+  if (ch == 'B') { return 0xA57857; }
+  if (ch == 'C') { return 0x285C69; }
+  if (ch == 'c') { return 0x4A9F9B; }
   if (ch == 'f') { return 0xF2C9A0; }
-  if (ch == 'e') { return 0x1B1530; }
+  if (ch == 'e') { return 0x152039; }
   if (ch == 'b') { return 0x6B4430; }
-  if (ch == 'r') { return 0xC8443A; }
-  if (ch == 'R') { return 0x8A2A2A; }
+  if (ch == 'r') { return 0xCD716B; }
+  if (ch == 'R') { return 0x743E57; }
   if (ch == 'w') { return 0xFFF4D6; }
-  if (ch == 'g') { return 0x5DBB4F; }
-  if (ch == 'G') { return 0x2F7A3A; }
+  if (ch == 'g') { return 0x96B67C; }
+  if (ch == 'G') { return 0x4C7567; }
   if (ch == 'y') { return 0xFFD45C; }
-  if (ch == 'v') { return 0x6A4A9C; }
-  if (ch == 'V') { return 0x3E2866; }
+  if (ch == 'v') { return 0x9A86B3; }
+  if (ch == 'V') { return 0x524569; }
   if (ch == 'W') { return 0xE8ECFF; }
   if (ch == 'k') { return 0x30365A; }
   if (ch == 'O') { return 0xE07A2A; }
@@ -167,17 +170,17 @@ string[] pip(string legs) {
   if (legs == "jump") { a = "..obo..obo.."; b = "............"; }
   if (legs == "fall") { a = "..obo...obo."; b = "..oo.....oo."; }
   return ["....oooo....",
-          "...occcco...",
-          "..occcccco..",
-          "..oCCCCCCo..",
-          ".oCCffffCCo.",
-          ".oCfffefeCo.",
-          ".oCffffffCo.",
-          "..oCffffCo..",
-          "..oCCCCCCo..",
-          ".oCCCCCCCCo.",
-          ".oCCcCCcCCo.",
-          ".oCCCCCCCCo.",
+          "...ohhhco...",
+          "..ohccccCo..",
+          "..ohccCCCo..",
+          ".ohCffffCCo.",
+          ".ocFfffweCo.",
+          ".ocFfffffCo.",
+          "..oCFFFfCo..",
+          "..ohCyyCCo..",
+          ".ohccyCCbCo.",
+          ".ohccyCCBCo.",
+          ".ocCCyCCCCo.",
           "..oCCCCCCo..",
           a, b, "............"];
 }
@@ -219,6 +222,15 @@ i32 hash(i32 x, i32 y) {
   return (h ^ (h >> 16)) & 0x7FFFFFFF;
 }
 
+/** The same wood grain and brass nails on fixed and moving platforms. */
+void plank(Screen s, i32 x, i32 y, i32 width) {
+  rect(s, x, y, width, 5, 0x594050);
+  rect(s, x, y, width, 1, 0xDBAE7C);
+  rect(s, x, y + 1, width, 2, 0xA97660);
+  rect(s, x + 2, y + 2, width - 4, 1, 0xC18E6A);
+  for (i32 at = 2; at < width; at += 8) { dot(s, x + at, y + 1, 0xF4D8A0); dot(s, x + at, y + 2, 0x594050); }
+}
+
 /** A tile at (`sx`, `sy`) on the screen. */
 void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
   u8 c = tileAt(w, tx, ty);
@@ -226,25 +238,52 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
     // Grass grows where there is air above, not under spikes or a block.
     u8 above = tileAt(w, tx, ty - 1);
     bool top = ty > 0 && above != '#' && above != '^' && above != 'X' && above != 'S';
-    rect(s, sx, sy, TILE, TILE, 0x4A3226);
-    for (i32 k = 0; k < 5; k++) {
+    // Broad clusters read as earth and stones; independent speckles made every block look like static.
+    rect(s, sx, sy, TILE, TILE, 0x3D3546);
+    rect(s, sx, sy + 12, TILE, 4, 0x342F40);
+    for (i32 k = 0; k < 3; k++) {
       i32 h = hash(tx * 7 + k, ty);
-      dot(s, sx + h % 16, sy + (h >> 8) % 16, 0x3A261C);
-      dot(s, sx + (h >> 4) % 16, sy + (h >> 12) % 16, 0x5C4031);
+      i32 x = sx + 1 + h % 10;
+      i32 y = sy + 5 + (h >> 8) % 8;
+      i32 width = 3 + (h >> 4) % 3;
+      rect(s, x, y, width, 3, 0x292B3D);
+      rect(s, x, y, width - 1, 1, 0x665061);
+      rect(s, x + 1, y + 1, width - 1, 1, 0x4F4153);
     }
+    if (tileAt(w, tx - 1, ty) != '#') { rect(s, sx, sy, 1, TILE, 0x756075); }
+    if (tileAt(w, tx + 1, ty) != '#') { rect(s, sx + 15, sy, 1, TILE, 0x24293C); }
     if (top) {
-      rect(s, sx, sy, TILE, 3, 0x3E9A4A);
-      rect(s, sx, sy + 3, TILE, 1, 0x2C6E37);
-      for (i32 k = 0; k < 16; k = k + 3) { if (hash(tx * 16 + k, ty) % 3 == 0) { dot(s, sx + k, sy - 1, 0x3E9A4A); } }
+      rect(s, sx, sy, TILE, 1, 0xA0C78D);
+      rect(s, sx, sy + 1, TILE, 2, 0x63976E);
+      rect(s, sx, sy + 3, TILE, 2, 0x3C685A);
+      for (i32 k = 0; k < 4; k++) {
+        i32 h = hash(tx * 4 + k, ty);
+        i32 x = sx + k * 4;
+        rect(s, x, sy + 4, 2 + h % 2, 1 + (h >> 4) % 3, 0x36564F);
+        if (h % 3 == 0) {
+          rect(s, x + 1, sy - 3, 1, 3, 0x63976E);
+          dot(s, x, sy - 2, 0x8EB885); dot(s, x + 2, sy - 1, 0x8EB885);
+        }
+      }
+      if (hash(tx, ty) % 9 == 0) {
+        rect(s, sx + 8, sy - 4, 1, 4, 0x63976E);
+        rect(s, sx + 7, sy - 5, 3, 2, 0xD6A291);
+        dot(s, sx + 8, sy - 5, 0xF3D6AF);
+      }
     }
   } else if (c == 'X') {
     i32 shake = w.crumbling[ty * w.cols + tx] > 0 ? (frame / 2 % 2 == 0 ? 1 : 0 - 1) : 0;
-    rect(s, sx + shake, sy, TILE, TILE, 0x7E6E60);
-    rect(s, sx + shake, sy, TILE, 1, 0x9C8B7A);
-    rect(s, sx + shake + 1, sy + 8, 14, 1, 0x5E5046);
-    rect(s, sx + shake + 7, sy + 1, 1, 7, 0x5E5046);
-    rect(s, sx + shake + 4, sy + 9, 1, 6, 0x5E5046);
-    rect(s, sx + shake + 11, sy + 9, 1, 6, 0x5E5046);
+    rect(s, sx + shake, sy, TILE, TILE, 0x38394D);
+    rect(s, sx + shake + 1, sy + 1, 14, 6, 0x8C8591);
+    rect(s, sx + shake + 1, sy + 1, 14, 1, 0xB9ABA6);
+    rect(s, sx + shake + 2, sy + 2, 11, 1, 0xA3979C);
+    rect(s, sx + shake + 1, sy + 8, 6, 7, 0x77717F);
+    rect(s, sx + shake + 8, sy + 8, 7, 7, 0x817987);
+    rect(s, sx + shake + 1, sy + 8, 6, 1, 0xA3979C);
+    rect(s, sx + shake + 8, sy + 8, 7, 1, 0xA3979C);
+    dot(s, sx + shake + 10, sy + 4, 0x38394D);
+    rect(s, sx + shake + 9, sy + 5, 1, 3, 0x38394D);
+    if (tileAt(w, tx, ty - 1) == '.') { rect(s, sx + shake + 2, sy, 5, 1, 0x91A488); }
   } else if (c == '|') {
     // An updraft: motes rising through it.
     for (i32 k = 0; k < 3; k++) {
@@ -272,11 +311,7 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
     rect(s, sx + 1, sy + top, 14, 3, 0xD84A3A);
     rect(s, sx + 1, sy + top, 14, 1, 0xF07A5A);
   } else if (c == '=') {
-    rect(s, sx, sy, TILE, 5, 0xA0703C);
-    rect(s, sx, sy, TILE, 1, 0xC28A4C);
-    rect(s, sx, sy + 4, TILE, 1, 0x6E4A26);
-    dot(s, sx + 2, sy + 2, 0x6E4A26);
-    dot(s, sx + 13, sy + 2, 0x6E4A26);
+    plank(s, sx, sy, TILE);
   } else if (c == '^') {
     for (i32 k = 0; k < 4; k++) {
       for (i32 j = 0; j < 8; j++) {
@@ -289,31 +324,51 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
     i32 bob = lit ? 0 : ((frame / 20 + tx) % 2);
     i32 lx = sx + 4;
     i32 ly = sy + 3 + bob;
-    rect(s, lx + 3, ly - 2, 2, 2, 0x2A2A38);
-    rect(s, lx, ly, 8, 1, 0x2A2A38);
-    rect(s, lx, ly + 10, 8, 1, 0x2A2A38);
-    rect(s, lx, ly + 1, 1, 9, 0x2A2A38);
-    rect(s, lx + 7, ly + 1, 1, 9, 0x2A2A38);
-    rect(s, lx + 1, ly + 1, 6, 9, lit ? 0xFFD45C : 0x3A3C52);
+    rect(s, lx + 2, ly - 2, 4, 1, 0xC39B69);
+    dot(s, lx + 1, ly - 1, 0x8B684D); dot(s, lx + 6, ly - 1, 0x8B684D);
+    rect(s, lx, ly, 8, 11, 0x202438);
+    rect(s, lx, ly, 8, 2, 0xA7784B);
+    rect(s, lx + 1, ly, 6, 1, 0xE4BD78);
+    rect(s, lx + 1, ly + 2, 6, 7, lit ? 0xEBA956 : 0x344C69);
+    rect(s, lx + 1, ly + 2, 1, 6, lit ? 0xFFE4A3 : 0x6E98A3);
+    rect(s, lx + 6, ly + 2, 1, 7, lit ? 0xC77E46 : 0x263B57);
+    rect(s, lx, ly + 9, 8, 2, 0x8B684D);
+    rect(s, lx + 1, ly + 9, 6, 1, 0xE4BD78);
     if (lit) {
       i32 flick = (frame / 6 + tx) % 3;
-      rect(s, lx + 3, ly + 3 + (flick == 1 ? 1 : 0), 2, 5, 0xFFF4D6);
+      rect(s, lx + 3, ly + 4 + (flick == 1 ? 1 : 0), 2, 4, 0xFFF4D6);
+      dot(s, lx + 4, ly + 3, 0xFFD078);
     } else {
-      rect(s, lx + 3, ly + 5, 2, 3, 0x56596E);
+      rect(s, lx + 3, ly + 6, 2, 2, 0x7D8A97);
+      dot(s, lx + 2, ly + 3, 0xA7BAC1);
     }
   } else if (c == 'C' || c == 'c') {
     rect(s, sx + 5, sy + 1, 2, 15, 0xB8B8C8);
     i32 wave = (frame / 10) % 2;
-    rect(s, sx + 7, sy + 2 + wave, 7, 5, c == 'c' ? 0xFFD45C : 0xC8443A);
+    rect(s, sx + 7, sy + 2 + wave, 7, 5, c == 'c' ? 0xFFD45C : 0xCD716B);
   } else if (c == 'E') {
     bool open = w.lit == w.lanterns;
-    // The door is the tile and the one above.
-    rect(s, sx + 1, sy - 15, 14, 31, 0x2A1E1A);
-    rect(s, sx + 3, sy - 13, 10, 29, open ? 0xFFE08A : 0x5A3A26);
+    // A little stone arch, still occupying the same doorway as the rules' original rectangle.
+    rect(s, sx + 3, sy - 15, 10, 2, 0xA3979C);
+    rect(s, sx + 1, sy - 13, 14, 29, 0x77717F);
+    rect(s, sx + 1, sy - 13, 2, 28, 0xA3979C);
+    rect(s, sx + 13, sy - 13, 2, 28, 0x474354);
+    rect(s, sx + 3, sy - 12, 10, 27, open ? 0xF0C780 : 0x49394D);
+    rect(s, sx + 4, sy - 13, 8, 1, open ? 0xFFE3A3 : 0x8F6872);
     if (!open) {
-      rect(s, sx + 3, sy - 3, 10, 1, 0x3E281A);
-      rect(s, sx + 10, sy + 2, 2, 2, 0xFFD45C);
+      rect(s, sx + 4, sy - 11, 1, 25, 0x775467);
+      rect(s, sx + 7, sy - 11, 1, 25, 0x332D43);
+      rect(s, sx + 10, sy - 11, 1, 25, 0x332D43);
+      rect(s, sx + 5, sy - 8, 6, 5, 0x202D46);
+      rect(s, sx + 7, sy - 8, 1, 5, 0xB79371);
+      rect(s, sx + 5, sy - 6, 6, 1, 0xB79371);
+      rect(s, sx + 10, sy + 3, 2, 2, 0xF4D8A0);
     }
+    for (i32 y = 0; y < 5; y++) {
+      rect(s, sx + 1, sy - 9 + y * 5, 2, 1, 0x474354);
+      rect(s, sx + 13, sy - 9 + y * 5, 2, 1, 0x303044);
+    }
+    rect(s, sx, sy + 15, 16, 1, 0xB9ABA6);
   }
 }
 
@@ -329,10 +384,28 @@ void drawSky(Screen s, i32 frame, i32 up) {
     i32 twinkle = (frame / 15 + i) % 7 == 0 ? 0x8890C0 : 0xD8DCF0;
     dot(s, x, s.stars[i * 2 + 1], twinkle);
   }
-  rect(s, 262 - s.camX / 16 % 400, 22, 12, 12, 0xF4EED8);
-  rect(s, 266 - s.camX / 16 % 400, 22, 8, 8, 0xD8D0B4);
-  hills(s, s.camX / 4, 118 + up / 6, 0x1A1F3E, 40);
-  hills(s, s.camX / 2, 140 + up / 3, 0x232A4E, 26);
+  // Chunked clouds and a round, cratered moon keep their edges on the same one-pixel grid as the sprites.
+  for (i32 i = 0; i < 4; i++) {
+    i32 cx = (i * 119 + 39 - s.camX / 12) % 480;
+    rect(s, cx, 34 + i % 2 * 22, 36, 2, 0x3D3D60);
+    rect(s, cx + 8, 32 + i % 2 * 22, 19, 2, 0x3D3D60);
+    rect(s, cx + 2, 36 + i % 2 * 22, 48, 1, 0x343653);
+  }
+  i32 moon = 269 - s.camX / 16 % 400;
+  for (i32 y = -9; y <= 9; y++) {
+    for (i32 x = -9; x <= 9; x++) {
+      if (x * x + y * y <= 82) { dot(s, moon + x, 27 + y, x > 3 || y > 5 ? 0xC6B8AE : 0xF2DEC0); }
+    }
+  }
+  rect(s, moon + 2, 23, 3, 2, 0xD3C1AD);
+  rect(s, moon - 4, 29, 2, 3, 0xD3C1AD);
+  dot(s, moon + 3, 32, 0xB2A8A5);
+  hills(s, s.camX / 5, 117 + up / 6, 0x343A57, 32);
+  hills(s, s.camX / 3, 145 + up / 3, 0x344652, 24);
+  forest(s, s.camX / 5, 122 + up / 5, 40, false);
+  // A thin strip of mist separates the distant ridges from the nearer trees.
+  rect(s, 0, 124 + up / 5, SCREEN_W, 2, 0x4B5365);
+  forest(s, s.camX / 3, 164 + up / 3, 72, true);
 }
 
 void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
@@ -345,6 +418,29 @@ void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
     i32 tb = b < 48 ? b : 97 - b;
     i32 top = base - (ta * height) / 80 - (tb * height) / 160;
     for (i32 y = top < 0 ? 0 : top; y < SCREEN_H; y++) { dot(s, x, y, c); }
+  }
+}
+
+/** Jagged fir silhouettes, with a few cool edges catching moonlight. Stable world coordinates avoid shimmer. */
+void forest(Screen s, i32 shift, i32 base, i32 size, bool near) {
+  i32 spacing = near ? 47 : 29;
+  i32 start = shift / spacing;
+  for (i32 i = start - 1; i <= start + SCREEN_W / spacing + 2; i++) {
+    i32 h = hash(i + 30, near ? 11 : 7);
+    i32 x = i * spacing - shift + h % 15;
+    i32 height = size / 2 + h % (size / 2);
+    i32 bottom = base + h % 12;
+    i32 colour = near ? 0x243C48 : 0x303F55;
+    rect(s, x - 1, bottom - height + 3, 3, height, colour);
+    for (i32 tier = 0; tier < 3; tier++) {
+      i32 top = bottom - height + tier * height / 5;
+      i32 depth = height / 2;
+      for (i32 y = 0; y < depth; y++) {
+        i32 half = y / 3 + tier;
+        rect(s, x - half, top + y, half * 2 + 1, 1, colour);
+        if (near && y % 5 == 0) { rect(s, x - half, top + y, 2, 1, 0x40535B); }
+      }
+    }
   }
 }
 
@@ -416,10 +512,9 @@ export void drawWorld(Screen s, World w, World? best, i32 frame) {
     Mover m = w.movers.get(i);
     i32 mx = (m.x as~ i32) - s.camX;
     i32 my = (m.y as~ i32) - s.camY;
-    rect(s, mx, my, 48, 6, 0xA0703C);
-    rect(s, mx, my, 48, 1, 0xC28A4C);
-    rect(s, mx, my + 5, 48, 1, 0x6E4A26);
-    rect(s, mx + 22, my + 6, 4, 3, 0x6E4A26);
+    plank(s, mx, my, 48);
+    rect(s, mx + 21, my + 5, 6, 2, 0x45313C);
+    rect(s, mx + 22, my + 7, 4, 2, 0x302638);
   }
   for (i32 i = 0; i < w.foes.len(); i++) {
     Foe f = w.foes.get(i);
