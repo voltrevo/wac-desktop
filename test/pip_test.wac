@@ -1,0 +1,164 @@
+// Pip's rules, played a step at a time on small levels made for each test: how high a jump goes and how a tap
+// differs from a hold, the forgiveness at edges and before landing, a wall jump, lanterns and the door, spikes and
+// checkpoints, and a stomp. Then the levels themselves, the tune's notes, and the times kept.
+
+import { Level, allLevels } from "../src/apps/pip/levels.wac";
+import { CUE_HURT, CUE_JUMP, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
+import { noteOf } from "../src/apps/pip/chip.wac";
+import { clock, restoreBest } from "../src/apps/pip.wac";
+
+/** A level of `rows`, padded with air to the full width, bedrock below. */
+World made(string[] rows) {
+  string[] full = string[].filled(12, "");
+  for (i32 y = 0; y < 12; y++) {
+    string r = y < rows.len() ? rows[y] : (y == 11 ? "#" : ".");
+    u8 fill = y == 11 ? '#' : '.';
+    while (r.len() < 64) { r = r + string.fromBytes([fill]); }
+    full[y] = r;
+  }
+  return load(Level("test", full));
+}
+
+Keys pressing(bool left, bool right, bool jump, bool jumped) { return Keys(left, right, jump, jumped); }
+
+/** Steps with `k`, the first with `jumped` as given and the rest without; whether any cued `c`. */
+bool stepFor(World w, Keys k, i32 n, i32 c) {
+  bool seen = false;
+  for (i32 i = 0; i < n; i++) {
+    step(w, k);
+    k.jumped = false;
+    for (i32 j = 0; j < w.cues.len(); j++) { if (w.cues.get(j) == c) { seen = true; } }
+  }
+  return seen;
+}
+
+/** The highest Pip's feet rise above where they started, jumping with jump held for `hold` steps. */
+f64 rise(i32 hold) {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "..P", "####"]);
+  stepFor(w, Keys.none(), 5, 0);
+  f64 floor = w.hero.y;
+  f64 top = floor;
+  for (i32 i = 0; i < 80; i++) {
+    step(w, pressing(false, false, i < hold, i == 0));
+    if (w.hero.y < top) { top = w.hero.y; }
+  }
+  return floor - top;
+}
+
+export string test_a_held_jump_clears_three_tiles_and_a_tap_is_a_hop() {
+  f64 high = rise(80);
+  if (high < 49.0 || high > 60.0) { return "a held jump rises \{high} px; three tiles are 48"; }
+  f64 hop = rise(2);
+  if (hop > 20.0) { return "a tap rises \{hop} px — it should be a hop"; }
+  return "";
+}
+
+export string test_a_jump_just_after_the_edge_still_jumps() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "P.", "###"]);
+  stepFor(w, Keys.none(), 5, 0);
+  // Run right off the edge of the third tile, and jump four steps after leaving it.
+  i32 left = 0 - 1;
+  for (i32 i = 0; i < 120 && left < 0; i++) {
+    step(w, pressing(false, true, false, false));
+    if (!w.hero.ground) { left = i; }
+  }
+  if (left < 0) { return "never left the edge"; }
+  stepFor(w, pressing(false, true, false, false), 3, 0);
+  if (!stepFor(w, pressing(false, true, true, true), 1, CUE_JUMP)) { return "a jump four steps after the edge did nothing"; }
+  World late = made([".", ".", ".", ".", ".", ".", ".", ".", "P.", "###"]);
+  stepFor(late, Keys.none(), 5, 0);
+  while (late.hero.ground) { step(late, pressing(false, true, false, false)); }
+  stepFor(late, pressing(false, true, false, false), 12, 0);
+  if (stepFor(late, pressing(false, true, true, true), 1, CUE_JUMP)) { return "a jump twelve steps after the edge jumped from the air"; }
+  return "";
+}
+
+export string test_a_jump_pressed_just_before_landing_happens_on_landing() {
+  World w = made([".", ".", ".", ".", "..P", ".", ".", ".", ".", "####"]);
+  // Falling; jump pressed a few steps before the ground, and held.
+  i32 landedAt = 0 - 1;
+  World probe = made([".", ".", ".", ".", "..P", ".", ".", ".", ".", "####"]);
+  for (i32 i = 0; i < 80 && landedAt < 0; i++) {
+    step(probe, Keys.none());
+    if (probe.hero.ground) { landedAt = i; }
+  }
+  stepFor(w, Keys.none(), landedAt - 4, 0);
+  if (!stepFor(w, pressing(false, false, true, true), 8, CUE_JUMP)) { return "the jump pressed four steps early was lost"; }
+  return "";
+}
+
+export string test_against_a_wall_pip_slides_and_jumps_off_it() {
+  World w = made([".", ".", "....#", "....#", "....#", "....#", "....#", "....#", "..P.#", "#####"]);
+  stepFor(w, Keys.none(), 5, 0);
+  // Up against the wall, falling, holding toward it.
+  stepFor(w, pressing(false, true, true, true), 14, 0);
+  stepFor(w, pressing(false, true, false, false), 12, 0);
+  if (w.hero.wall != 1) { return "not against the wall: \{w.hero.x}, \{w.hero.y}"; }
+  if (w.hero.vy > 1.4) { return "falling at \{w.hero.vy} against the wall, not sliding"; }
+  if (!stepFor(w, pressing(false, true, true, true), 1, CUE_WALL_JUMP)) { return "no wall jump"; }
+  if (w.hero.vx >= 0.0) { return "the wall jump pushed toward the wall"; }
+  return "";
+}
+
+export string test_the_door_opens_once_every_lantern_is_lit() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "P.L...E..L..#", "#############"]);
+  stepFor(w, Keys.none(), 3, 0);
+  if (!stepFor(w, pressing(false, true, false, false), 30, CUE_LANTERN)) { return "the first lantern was not lit"; }
+  // On past the door, shut, to the last lantern.
+  if (!stepFor(w, pressing(false, true, false, false), 60, CUE_OPEN)) { return "lighting the last lantern did not open the door"; }
+  if (w.won) { return "the door let Pip through with a lantern unlit"; }
+  if (!stepFor(w, pressing(true, false, false, false), 200, CUE_WIN)) { return "the open door was not a way out"; }
+  if (w.lit != 2 || !w.won) { return "lit \{w.lit}, won \{w.won}"; }
+  return "";
+}
+
+export string test_spikes_send_pip_back_to_the_last_flag() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "P..C....^", "#########"]);
+  stepFor(w, Keys.none(), 3, 0);
+  if (!stepFor(w, pressing(false, true, false, false), 90, CUE_HURT)) { return "the spikes did not hurt"; }
+  stepFor(w, Keys.none(), 60, 0);
+  if (w.deaths != 1) { return "\{w.deaths} falls"; }
+  if (w.hero.x < 48.0 || w.hero.x > 56.0) { return "back at \{w.hero.x}, not at the flag (51)"; }
+  return "";
+}
+
+export string test_landing_on_a_beetle_stomps_it_and_walking_into_one_hurts() {
+  World w = made([".", ".", ".", ".", ".", "...P", ".", ".", "...p", "########"]);
+  Foe still = w.foes.get(0);
+  still.vx = 0.0;
+  if (!stepFor(w, Keys.none(), 30, CUE_STOMP)) { return "falling on the beetle did not stomp it"; }
+  if (w.foes.get(0).alive) { return "the beetle lived"; }
+  World v = made([".", ".", ".", ".", ".", ".", ".", ".", "P....p", "########"]);
+  Foe waiting = v.foes.get(0);
+  waiting.vx = 0.0;
+  if (!stepFor(v, pressing(false, true, false, false), 60, CUE_HURT)) { return "walking into the beetle did not hurt"; }
+  return "";
+}
+
+export string test_every_level_has_a_start_a_door_and_lanterns() {
+  Level[] ls = allLevels();
+  if (ls.len() != 5) { return "\{ls.len()} levels"; }
+  for (i32 i = 0; i < ls.len(); i++) {
+    World w = load(ls[i]);
+    if (ls[i].rows.len() != 12) { return "\{ls[i].name}: \{ls[i].rows.len()} rows"; }
+    for (i32 y = 0; y < 12; y++) { if (ls[i].rows[y].len() != 64) { return "\{ls[i].name}, row \{y}: \{ls[i].rows[y].len()} wide"; } }
+    if (w.lanterns < 3) { return "\{ls[i].name}: \{w.lanterns} lanterns"; }
+    if (w.hero.x <= 0.0) { return "\{ls[i].name}: no start"; }
+    bool door = false;
+    for (i32 k = 0; k < w.tiles.len(); k++) { if (w.tiles[k] == 'E') { door = true; } }
+    if (!door) { return "\{ls[i].name}: no door"; }
+    // Standing still at the start, nothing happens to Pip.
+    stepFor(w, Keys.none(), 60, 0);
+    if (w.deaths != 0 || !w.hero.ground) { return "\{ls[i].name}: Pip does not stand at the start"; }
+  }
+  return "";
+}
+
+export string test_notes_and_times_read_as_written() {
+  if (noteOf("A4") != 0 || noteOf("C5") != 3 || noteOf("A2") != 0 - 24 || noteOf("C#4") != 0 - 8) { return "notes"; }
+  if (clock(3600) != "1:00.0" || clock(83) != "0:01.3") { return "clock: \{clock(3600)}, \{clock(83)}"; }
+  i32[] best = i32[].filled(5, 0);
+  i32 reached = restoreBest("2 300 0 451\n", best);
+  if (reached != 2 || best[0] != 300 || best[1] != 0 || best[2] != 451 || best[3] != 0) { return "kept times: \{reached}"; }
+  return "";
+}

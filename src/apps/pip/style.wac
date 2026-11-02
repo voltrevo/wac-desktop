@@ -1,0 +1,32 @@
+// Pip's look: the screen scaled up whole and crisp, in the middle of the window, with the words over it.
+
+export string pipCss() {
+  return """
+    .pippage, .pip { height: 100%; }
+    .pip { position: relative; overflow: hidden; outline: 0; background: #07091a; color: #f4f0e4; user-select: none; -webkit-user-select: none;
+           font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .pscreen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; image-rendering: crisp-edges; }
+    .phud { position: absolute; left: 10px; top: 8px; font-size: 13px; text-shadow: 0 1px 0 #000, 0 0 6px #000; pointer-events: none; }
+    .plat { position: absolute; right: 8px; bottom: 8px; padding: 6px 9px; border-radius: 6px; font-size: 11.5px; line-height: 1.55;
+            background: rgba(7, 9, 26, .72); pointer-events: none; }
+    .plat div { display: flex; justify-content: space-between; gap: 14px; }
+    .plat span { color: #9aa0c8; }
+    .plat b { color: #ffd45c; font-weight: 600; }
+    .pover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(7, 9, 26, .55); }
+    .pcard { max-width: 560px; max-height: calc(100% - 24px); overflow-y: auto; margin: 12px; padding: 18px 24px; border-radius: 10px;
+             background: rgba(16, 18, 42, .94); border: 2px solid #ffd45c; box-shadow: 0 0 40px -10px #ffb040; text-align: center; }
+    .pcard h1 { margin: 0 0 8px; font-size: 22px; color: #ffd45c; letter-spacing: .02em; }
+    .pcard p { margin: 8px 0; font-size: 13.5px; line-height: 1.5; }
+    .pkeys { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 12px 0; font-size: 12.5px; text-align: left; }
+    .pkeys > span:nth-child(odd) { color: #9aa0c8; }
+    .pkeys b, .pgo b { color: #ffd45c; }
+    .plevels { display: flex; flex-direction: column; gap: 3px; margin: 12px 0; font-size: 13px; text-align: left; }
+    .plevel { display: flex; gap: 10px; padding: 3px 8px; border-radius: 5px; background: rgba(255, 255, 255, .05); }
+    .plevel b { color: #ffd45c; }
+    .plevel span { margin-left: auto; color: #9aa0c8; }
+    .plevel.locked { opacity: .45; }
+    .pgo { color: #c8cce8; }
+    .pbest { color: #7fe08a; font-weight: 700; }
+    .pfaint { color: #9aa0c8; }
+  """;
+}

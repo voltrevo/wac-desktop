@@ -371,7 +371,7 @@ void recolour(Mandel m) {
     if (m.vals[at] != UNKNOWN) { m.colours.paint(m.vals[at], m.rgba, at * 4); }
   }
   if (m.canvas is not null) { m.canvas!.pixels(m.drawn.w, m.drawn.h, m.rgba); }
-  keep(m);
+  keepView(m);
   m.bump();
 }
 
@@ -399,7 +399,7 @@ i32[] order(Viewport v) {
  * **Draw the view asked for**: adopt it, then work out and send a block at a time, from the middle out, giving the
  * page each frame — so a move answered in the meantime starts another drawing, and this one stops.
  */
-async void draw(Mandel m) {
+async void drawView(Mandel m) {
   m.gen++;
   i32 gen = m.gen;
   if (m.view.w <= 0 || m.view.h <= 0) { return; }
@@ -433,7 +433,7 @@ async void draw(Mandel m) {
   if (m.colours.reference == 0.0) {
     reference(m);
   }
-  keep(m);
+  keepView(m);
   m.bump();
 }
 
@@ -443,7 +443,7 @@ void moved(Mandel m, i32 ms) {
   i32 mine = m.moves;
   m.bump();
   Ticket<f64> t = m.page.sleep(ms);
-  when(t, () => { if (m.moves == mine && !m.down) { draw(m); } });
+  when(t, () => { if (m.moves == mine && !m.down) { drawView(m); } });
 }
 
 /**
@@ -463,7 +463,7 @@ export string previewCss(Viewport drawn, Viewport view, f64 scale) {
 // ── Keeping, and saving ─────────────────────────────────────────────────────
 
 /** The view and the colours, written to the program's folder; nothing when it has none, as a page on its own. */
-void keep(Mandel m) {
+void keepView(Mandel m) {
   Viewport v = m.view;
   Colours c = m.colours;
   string text = "\{v.cx} \{v.cy} \{v.width} \{v.depth} \{c.seed} \{c.rate} \{c.shift} \{c.reference}\n";
@@ -484,7 +484,7 @@ string[] fields(string s) {
   return out.toArray();
 }
 
-/** A view and colours as `keep` wrote them, onto `v` and `c`; false, changing nothing, when they are not. */
+/** A view and colours as `keepView` wrote them, onto `v` and `c`; false, changing nothing, when they are not. */
 export bool restore(string text, Viewport v, Colours c) {
   string[] f = fields(text);
   if (f.len() < 8) { return false; }
@@ -567,7 +567,7 @@ export u8[] png(i32 w, i32 h, u8[] rgba) {
   return out.toArray();
 }
 
-async void save(Mandel m) {
+async void savePicture(Mandel m) {
   if (m.busy) {
     m.note = "Still drawing — save once it is done";
     m.bump();
@@ -652,11 +652,11 @@ async void holdDepth(Mandel m, Ref range) {
   }
   if (range.element() is not null) { range.element()!.prop("value", "0"); }
   m.push = 0.0;
-  draw(m);
+  drawView(m);
 }
 
 /** What a key does; false for a key that does nothing here. */
-bool key(Mandel m, string k, i32 mods) {
+bool onKey(Mandel m, string k, i32 mods) {
   f64 pan = (m.view.w as f64) / 8.0;
   if (k == "a" || k == "A") { zoomBy(m, 0.0 - 1.0, m.mouseX, m.mouseY); }
   else if (k == "z" || k == "Z") { zoomBy(m, 1.0, m.mouseX, m.mouseY); }
@@ -712,7 +712,7 @@ void resized(Mandel m, ElementEvent e) {
   m.scale = scale;
   m.view.w = w;
   m.view.h = h;
-  draw(m);
+  drawView(m);
 }
 
 // ── The window ──────────────────────────────────────────────────────────────
@@ -785,7 +785,7 @@ Node App(Ui ui, Mandel m) {
                  onpointerup={(ElementEvent e) => { m.sliding = false; }}/>
           <span class="mwhat">{commas(v.depth as i64)}</span></div>
         <div class="mrow mlast">
-          <button class="mwide" onclick={(ElementEvent e) => { save(m); }}>Save picture</button>
+          <button class="mwide" onclick={(ElementEvent e) => { savePicture(m); }}>Save picture</button>
           <button class="mwide" onclick={(ElementEvent e) => { m.about = true; m.bump(); }}>About</button>
         </div>
       </div>
@@ -794,7 +794,7 @@ Node App(Ui ui, Mandel m) {
     <style>{previewCss(m.drawn, m.view, m.scale)}</style>
     <div class="mstage" tabindex="0" ref={stage}
          prevent="a z c = - + _ d 0 ? ArrowUp ArrowDown ArrowLeft ArrowRight Escape"
-         onkeydown={(ElementEvent e) => { if (e.mods == 0 || e.mods == MOD_SHIFT) { key(m, e.value, e.mods); } }}
+         onkeydown={(ElementEvent e) => { if (e.mods == 0 || e.mods == MOD_SHIFT) { onKey(m, e.value, e.mods); } }}
          onpointerdown={(ElementEvent e) => {
            m.down = true;
            m.moved = false;
@@ -819,7 +819,7 @@ Node App(Ui ui, Mandel m) {
            if (!m.down) { return; }
            m.down = false;
            if (m.moved) {
-             draw(m);
+             drawView(m);
              return;
            }
            // A click zooms in where it is; with Shift, out.

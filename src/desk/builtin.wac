@@ -39,6 +39,11 @@ export Start builtin(string app, string arg) {
     w = 340;
     h = 540;
     ic = "calc";
+  } else if (app == "pip") {
+    // Three of the game's pixels to one of the screen's, and the title bar.
+    w = 964;
+    h = 584;
+    ic = "lantern";
   } else if (app == "mandelbrot") {
     w = 900;
     h = 620;
@@ -91,7 +96,7 @@ export void startPlaced(Desk d, string app, string arg, Vec<Placed> places) {
     }
     return;
   }
-  if (app == "calc" || app == "ide" || app == "stackfall") {
+  if (app == "calc" || app == "ide" || app == "stackfall" || app == "pip") {
     i32 open = windowOf(d, app);
     if (open >= 0) {
       focus(d, open);

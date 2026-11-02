@@ -47,6 +47,7 @@ export Entry[] entries() {
     Entry("Tools", "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", ["zip", "tar", "gzip", "zstd", "archive", "unpack", "extract", "compressed"], true, "explorer", ""),
     Entry("Programming", "code", "wac IDE", "Write wac, checked as you type, in Projects", ["code", "programming", "compiler", "develop", "build", "run", "test", "wac", "ide"], true, "ide", "Projects"),
     Entry("Programming", "terminal", "Terminal", "A shell on this desktop's disk", ["shell", "console", "command line", "cli", "sh", "bash", "prompt", "commands", "tty"], true, "terminal", "Desktop"),
+    Entry("Play", "lantern", "Pip and the Lost Lanterns", "A little platformer, and how long a key takes to show", ["game", "platformer", "retro", "jump", "pip", "lanterns", "latency", "arcade", "play"], true, "pip", ""),
     Entry("Play", "fractal", "Mandelbrot", "The set, dragged and zoomed into", ["fractal", "maths", "math", "zoom", "art", "complex", "explore", "mandelbrot"], true, "mandelbrot", ""),
     Entry("Play", "stackfall", "Stackfall", "Falling blocks, fresh rolls", ["game", "blocks", "puzzle", "falling", "arcade", "play"], true, "stackfall", ""),
     Entry("Help", "text", "Welcome", "What this is, and what to try", ["help", "about", "intro", "guide", "readme", "start"], false, "viewer", "Desktop/Welcome.md"),

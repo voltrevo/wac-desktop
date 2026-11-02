@@ -1,0 +1,512 @@
+// Pip's rules: a level, Pip, what moves in it, and one step of all of it — a sixtieth of a second — at a time.
+//
+// **A fixed step, whatever the screen's rate**, so a jump is as high on a 144 Hz screen as on a 60 Hz one, and a
+// test can play a level a step at a time. The page runs as many steps as time has passed (`pip.wac`); nothing here
+// reads a clock.
+//
+// **The keys are state, not events**: each step reads which are held, and a jump pressed since the last step
+// (`Keys.jumped`), so a press and its release between two steps still jump.
+//
+// **Forgiving where a person expects it**: a jump pressed a few steps before landing happens on landing (the
+// buffer), one pressed a few steps after running off an edge still happens (coyote time), and letting go early cuts
+// it short — a tap is a hop, a hold a jump. Against a wall while falling Pip slides, and a jump there pushes off it.
+//
+// Units are pixels and steps; a tile is 16 pixels. `cues` says what happened in a step that has a sound.
+
+import { Vec } from "core";
+import { Level } from "./levels.wac";
+
+export static i32 TILE = 16;
+export static i32 COLS = 64;
+export static i32 ROWS = 12;
+/** Pip's box, inside its sprite. */
+export static f64 HERO_W = 10.0;
+export static f64 HERO_H = 14.0;
+
+static f64 GRAVITY = 0.34;
+static f64 MAX_FALL = 5.5;
+static f64 RUN = 2.3;
+static f64 ACCEL = 0.32;
+static f64 AIR_ACCEL = 0.22;
+static f64 FRICTION = 0.28;
+static f64 JUMP = 6.0;
+/** Let go while rising faster than this, and the rise is cut to it. */
+static f64 CUT = 2.4;
+static f64 WALL_SLIDE = 1.3;
+static f64 WALL_JUMP_X = 2.8;
+static f64 WALL_JUMP_Y = 5.4;
+static i32 COYOTE = 6;
+static i32 BUFFER = 7;
+/** Steps a wall jump holds Pip's direction, so holding toward the wall does not pull Pip straight back. */
+static i32 WALL_LOCK = 9;
+static i32 DYING = 45;
+static i32 CRUMBLE = 26;
+static i32 CRUMBLED = 150;
+
+/** What a step can cue: each has a sound. */
+export static i32 CUE_JUMP = 1;
+export static i32 CUE_WALL_JUMP = 2;
+export static i32 CUE_LANTERN = 3;
+export static i32 CUE_STOMP = 4;
+export static i32 CUE_HURT = 5;
+export static i32 CUE_CHECKPOINT = 6;
+export static i32 CUE_OPEN = 7;
+export static i32 CUE_WIN = 8;
+export static i32 CUE_CRUMBLE = 9;
+export static i32 CUE_LAND = 10;
+
+/** The keys, as the page saw them: held, and whether jump was pressed since the last step. */
+export struct Keys {
+  bool left;
+  bool right;
+  bool jump;
+  bool jumped;
+
+  Keys none() { return Keys(false, false, false, false); }
+}
+
+export struct Hero {
+  f64 x;
+  f64 y;
+  f64 vx;
+  f64 vy;
+  bool ground;
+  /** Steps since Pip was last on the ground, and since jump was pressed — each large when long ago. */
+  i32 air;
+  i32 asked;
+  /** The wall Pip is against while in the air: -1 left, 1 right, 0 none. */
+  i32 wall;
+  i32 lock;
+  i32 facing;
+  /** Steps left of falling over, once hurt; 0 alive. */
+  i32 dying;
+  /** Steps run, for the sprite's stride. */
+  i32 stride;
+}
+
+/** A beetle that patrols (`hops` false), or a frog that hops toward Pip. */
+export struct Foe {
+  bool hops;
+  f64 x;
+  f64 y;
+  f64 vx;
+  f64 vy;
+  bool alive;
+  i32 timer;
+  bool ground;
+  f64 startX;
+  f64 startY;
+}
+
+/** A plank that slides three tiles right of where it starts, and back. */
+export struct Mover {
+  f64 x0;
+  f64 x;
+  f64 y;
+  f64 dir;
+}
+
+export struct World {
+  Level level;
+  /** The tiles, one byte each, row by row; a crumbled block reads as air until it comes back. */
+  u8[] tiles;
+  /** For each crumbling block, by tile: steps until it falls (counting down), or steps until it is back. */
+  i32[] crumbling;
+  i32[] gone;
+  Hero hero;
+  Vec<Foe> foes;
+  Vec<Mover> movers;
+  /** Where Pip comes back: the start, or the last checkpoint touched. */
+  f64 backX;
+  f64 backY;
+  i32 lanterns;
+  i32 lit;
+  i32 steps;
+  i32 deaths;
+  bool won;
+  Vec<i32> cues;
+  /** The plank Pip stood on last step, or -1 — which carries Pip as it moves. */
+  i32 riding;
+}
+
+/** The level `l`, from its start. */
+export World load(Level l) {
+  u8[] t = u8[].filled(COLS * ROWS, '.');
+  Vec<Foe> foes = Vec.create();
+  Vec<Mover> movers = Vec.create();
+  f64 sx = 0.0;
+  f64 sy = 0.0;
+  i32 lanterns = 0;
+  for (i32 y = 0; y < ROWS && y < l.rows.len(); y++) {
+    u8[] row = l.rows[y].toBytes();
+    for (i32 x = 0; x < COLS && x < row.len(); x++) {
+      u8 c = row[x];
+      f64 px = (x * TILE) as f64;
+      f64 py = (y * TILE) as f64;
+      if (c == 'P') {
+        sx = px + 3.0;
+        sy = py + (TILE as f64) - HERO_H;
+        c = '.';
+      } else if (c == 'p' || c == 'h') {
+        foes.push(Foe(c == 'h', px + 2.0, py + 4.0, c == 'h' ? 0.0 : 0.0 - 0.6, 0.0, true, 40 + x * 7 % 50, false, px + 2.0, py + 4.0));
+        c = '.';
+      } else if (c == 'M') {
+        movers.push(Mover(px, px, py, 1.0));
+        c = '.';
+      } else if (c == 'L') {
+        lanterns++;
+      }
+      t[y * COLS + x] = c;
+    }
+  }
+  Hero h = Hero(sx, sy, 0.0, 0.0, false, 99, 99, 0, 0, 1, 0, 0);
+  return World(l, t, i32[].filled(COLS * ROWS, 0), i32[].filled(COLS * ROWS, 0), h, foes, movers, sx, sy, lanterns, 0,
+               0, 0, false, Vec.create(), 0 - 1);
+}
+
+/** The tile at column `x`, row `y`: bedrock beyond the sides and below, air above. */
+export u8 tileAt(World w, i32 x, i32 y) {
+  if (x < 0 || x >= COLS || y >= ROWS) { return '#'; }
+  if (y < 0) { return '.'; }
+  return w.tiles[y * COLS + x];
+}
+
+bool solid(u8 c) { return c == '#' || c == 'X'; }
+
+i32 tileOf(f64 v) { return (v / (TILE as f64)).floor() as~ i32; }
+
+/** Whether the box at (`x`, `y`), `w` by `h`, overlaps a solid tile. */
+bool hits(World w, f64 x, f64 y, f64 bw, f64 bh) {
+  for (i32 ty = tileOf(y); ty <= tileOf(y + bh - 0.01); ty++) {
+    for (i32 tx = tileOf(x); tx <= tileOf(x + bw - 0.01); tx++) {
+      if (solid(tileAt(w, tx, ty))) { return true; }
+    }
+  }
+  return false;
+}
+
+/**
+ * Where something falling from `oldBottom` to `newBottom`, between `x` and `x + bw`, lands on a plank — one of the
+ * level's or a moving one — or -1. A plank is stood on from above only: from below it is jumped through.
+ */
+f64 plankUnder(World w, f64 x, f64 bw, f64 oldBottom, f64 newBottom) {
+  for (i32 tx = tileOf(x); tx <= tileOf(x + bw - 0.01); tx++) {
+    for (i32 ty = tileOf(oldBottom - 0.01); ty <= tileOf(newBottom); ty++) {
+      f64 top = (ty * TILE) as f64;
+      if (tileAt(w, tx, ty) == '=' && oldBottom <= top + 0.01 && newBottom >= top) { return top; }
+    }
+  }
+  return 0.0 - 1.0;
+}
+
+i32 moverUnder(World w, f64 x, f64 bw, f64 oldBottom, f64 newBottom) {
+  for (i32 i = 0; i < w.movers.len(); i++) {
+    Mover m = w.movers.get(i);
+    if (x + bw > m.x && x < m.x + 48.0 && oldBottom <= m.y + 0.01 && newBottom >= m.y) { return i; }
+  }
+  return 0 - 1;
+}
+
+/** Move a box by (`dx`, `dy`) against the tiles: its new place, and what it met — `.ground` when it landed. */
+struct Moved {
+  f64 x;
+  f64 y;
+  bool hitX;
+  bool ground;
+  bool ceiling;
+  i32 mover;
+}
+
+Moved slideBox(World w, f64 x, f64 y, f64 bw, f64 bh, f64 dx, f64 dy) {
+  Moved r = Moved(x, y, false, false, false, 0 - 1);
+  // Across, in steps of at most half a tile, so nothing passes through a wall.
+  f64 left = dx;
+  while (left != 0.0) {
+    f64 part = left > 6.0 ? 6.0 : (left < 0.0 - 6.0 ? 0.0 - 6.0 : left);
+    left = left - part;
+    if (hits(w, r.x + part, r.y, bw, bh)) {
+      r.hitX = true;
+      // Flush against the wall.
+      if (part > 0.0) { r.x = ((tileOf(r.x + part + bw) * TILE) as f64) - bw; } else { r.x = ((tileOf(r.x + part) + 1) * TILE) as f64; }
+      break;
+    }
+    r.x = r.x + part;
+  }
+  f64 down = dy;
+  while (down != 0.0) {
+    f64 part = down > 6.0 ? 6.0 : (down < 0.0 - 6.0 ? 0.0 - 6.0 : down);
+    down = down - part;
+    if (part > 0.0) {
+      f64 bottom = r.y + bh;
+      i32 mv = moverUnder(w, r.x, bw, bottom, bottom + part);
+      if (mv >= 0) {
+        r.y = w.movers.get(mv).y - bh;
+        r.ground = true;
+        r.mover = mv;
+        break;
+      }
+      f64 plank = plankUnder(w, r.x, bw, bottom, bottom + part);
+      if (plank >= 0.0) {
+        r.y = plank - bh;
+        r.ground = true;
+        break;
+      }
+    }
+    if (hits(w, r.x, r.y + part, bw, bh)) {
+      if (part > 0.0) {
+        r.y = ((tileOf(r.y + part + bh) * TILE) as f64) - bh;
+        r.ground = true;
+      } else {
+        r.y = ((tileOf(r.y + part) + 1) * TILE) as f64;
+        r.ceiling = true;
+      }
+      break;
+    }
+    r.y = r.y + part;
+  }
+  return r;
+}
+
+/** Whether the box overlaps tile (`tx`, `ty`), shrunk by `inset` on every side. */
+bool touches(f64 x, f64 y, f64 bw, f64 bh, i32 tx, i32 ty, f64 inset) {
+  f64 l = ((tx * TILE) as f64) + inset;
+  f64 t = ((ty * TILE) as f64) + inset;
+  f64 s = (TILE as f64) - 2.0 * inset;
+  return x < l + s && x + bw > l && y < t + s && y + bh > t;
+}
+
+void hurt(World w) {
+  if (w.hero.dying > 0 || w.won) { return; }
+  w.hero.dying = DYING;
+  w.hero.vy = 0.0 - 4.0;
+  w.hero.vx = 0.0;
+  w.deaths++;
+  w.cues.push(CUE_HURT);
+}
+
+/** Pip back at the last checkpoint, and the foes where they started. */
+void respawn(World w) {
+  w.hero = Hero(w.backX, w.backY, 0.0, 0.0, false, 99, 99, 0, 0, w.hero.facing, 0, 0);
+  for (i32 i = 0; i < w.foes.len(); i++) {
+    Foe f = w.foes.get(i);
+    f.x = f.startX;
+    f.y = f.startY;
+    f.vy = 0.0;
+    f.alive = true;
+  }
+  w.riding = 0 - 1;
+}
+
+void stepMovers(World w) {
+  for (i32 i = 0; i < w.movers.len(); i++) {
+    Mover m = w.movers.get(i);
+    f64 before = m.x;
+    m.x = m.x + 0.7 * m.dir;
+    if (m.x > m.x0 + 48.0) { m.x = m.x0 + 48.0; m.dir = 0.0 - 1.0; }
+    if (m.x < m.x0) { m.x = m.x0; m.dir = 1.0; }
+    // Pip rides the plank it stood on.
+    if (w.riding == i && w.hero.dying == 0) {
+      Moved r = slideBox(w, w.hero.x, w.hero.y, HERO_W, HERO_H, m.x - before, 0.0);
+      w.hero.x = r.x;
+    }
+  }
+}
+
+void stepCrumbles(World w) {
+  for (i32 i = 0; i < w.crumbling.len(); i++) {
+    if (w.crumbling[i] > 0) {
+      w.crumbling[i]--;
+      if (w.crumbling[i] == 0) {
+        w.tiles[i] = '.';
+        w.gone[i] = CRUMBLED;
+        w.cues.push(CUE_CRUMBLE);
+      }
+    } else if (w.gone[i] > 0) {
+      w.gone[i]--;
+      i32 tx = i % COLS;
+      i32 ty = i / COLS;
+      // Back once Pip is not where it would be.
+      if (w.gone[i] == 0) {
+        if (touches(w.hero.x, w.hero.y, HERO_W, HERO_H, tx, ty, 0.0)) { w.gone[i] = 1; } else { w.tiles[i] = 'X'; }
+      }
+    }
+  }
+}
+
+void stepHero(World w, Keys k) {
+  Hero h = w.hero;
+  if (h.dying > 0) {
+    h.dying--;
+    h.vy = h.vy + GRAVITY;
+    h.y = h.y + h.vy;
+    if (h.dying == 0) { respawn(w); }
+    return;
+  }
+  i32 want = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+  if (h.lock > 0) {
+    h.lock--;
+    want = h.vx > 0.0 ? 1 : (h.vx < 0.0 ? 0 - 1 : want);
+  }
+  if (want != 0) { h.facing = want; }
+  f64 accel = h.ground ? ACCEL : AIR_ACCEL;
+  if (want != 0) {
+    h.vx = h.vx + accel * (want as f64);
+    if (h.vx > RUN) { h.vx = RUN; }
+    if (h.vx < 0.0 - RUN) { h.vx = 0.0 - RUN; }
+  } else if (h.ground) {
+    if (h.vx > FRICTION) { h.vx = h.vx - FRICTION; } else if (h.vx < 0.0 - FRICTION) { h.vx = h.vx + FRICTION; } else { h.vx = 0.0; }
+  } else {
+    h.vx = h.vx * 0.96;
+  }
+  if (k.jumped) { h.asked = 0; } else if (h.asked < 99) { h.asked++; }
+  if (h.ground) { h.air = 0; } else if (h.air < 99) { h.air++; }
+
+  // A jump: from the ground, or just after leaving it; or off a wall.
+  if (h.asked < BUFFER && h.air < COYOTE) {
+    h.vy = 0.0 - JUMP;
+    h.ground = false;
+    h.air = COYOTE;
+    h.asked = 99;
+    w.riding = 0 - 1;
+    w.cues.push(CUE_JUMP);
+  } else if (h.asked < BUFFER && h.wall != 0 && !h.ground) {
+    h.vy = 0.0 - WALL_JUMP_Y;
+    h.vx = WALL_JUMP_X * ((0 - h.wall) as f64);
+    h.facing = 0 - h.wall;
+    h.lock = WALL_LOCK;
+    h.asked = 99;
+    w.cues.push(CUE_WALL_JUMP);
+  }
+  if (!k.jump && h.vy < 0.0 - CUT) { h.vy = 0.0 - CUT; }
+
+  h.vy = h.vy + GRAVITY;
+  f64 fall = h.wall != 0 && want == h.wall && h.vy > 0.0 ? WALL_SLIDE : MAX_FALL;
+  if (h.vy > fall) { h.vy = fall; }
+
+  bool wasGround = h.ground;
+  f64 fellAt = h.vy;
+  Moved r = slideBox(w, h.x, h.y, HERO_W, HERO_H, h.vx, h.vy);
+  h.x = r.x;
+  h.y = r.y;
+  if (r.hitX) { h.vx = 0.0; }
+  if (r.ceiling) { h.vy = 0.0; }
+  h.ground = r.ground;
+  if (r.ground) {
+    h.vy = 0.0;
+    if (!wasGround && fellAt > 3.0) { w.cues.push(CUE_LAND); }
+  }
+  // Still on the ground when standing still: the step down found it or not.
+  if (!h.ground && h.vy >= 0.0) {
+    Moved probe = slideBox(w, h.x, h.y, HERO_W, HERO_H, 0.0, 0.5);
+    if (probe.ground) {
+      h.ground = true;
+      h.y = probe.y;
+      r.mover = probe.mover;
+    }
+  }
+  w.riding = h.ground ? r.mover : 0 - 1;
+  // Against a wall in the air, for a slide and a wall jump.
+  h.wall = 0;
+  if (!h.ground) {
+    if (hits(w, h.x - 1.0, h.y + 2.0, HERO_W, HERO_H - 4.0)) { h.wall = 0 - 1; }
+    if (hits(w, h.x + 1.0, h.y + 2.0, HERO_W, HERO_H - 4.0)) { h.wall = 1; }
+  }
+  h.stride = h.ground && h.vx != 0.0 ? h.stride + 1 : 0;
+
+  // What Pip stands on crumbles.
+  if (h.ground) {
+    i32 ty = tileOf(h.y + HERO_H + 1.0);
+    for (i32 tx = tileOf(h.x); tx <= tileOf(h.x + HERO_W - 0.01); tx++) {
+      if (tileAt(w, tx, ty) == 'X' && w.crumbling[ty * COLS + tx] == 0) { w.crumbling[ty * COLS + tx] = CRUMBLE; }
+    }
+  }
+}
+
+/** What Pip touches: spikes, lanterns, a checkpoint, the door, a pit's bottom. */
+void touch(World w) {
+  Hero h = w.hero;
+  if (h.dying > 0) { return; }
+  if (h.y > ((ROWS * TILE) as f64)) {
+    hurt(w);
+    return;
+  }
+  for (i32 ty = tileOf(h.y); ty <= tileOf(h.y + HERO_H - 0.01); ty++) {
+    for (i32 tx = tileOf(h.x); tx <= tileOf(h.x + HERO_W - 0.01); tx++) {
+      u8 c = tileAt(w, tx, ty);
+      if (c == '^' && touches(h.x, h.y, HERO_W, HERO_H, tx, ty, 4.0)) {
+        hurt(w);
+        return;
+      }
+      if (c == 'L') {
+        w.tiles[ty * COLS + tx] = 'l';
+        w.lit++;
+        w.cues.push(w.lit == w.lanterns ? CUE_OPEN : CUE_LANTERN);
+      }
+      if (c == 'C') {
+        w.tiles[ty * COLS + tx] = 'c';
+        w.backX = ((tx * TILE) as f64) + 3.0;
+        w.backY = (((ty + 1) * TILE) as f64) - HERO_H;
+        w.cues.push(CUE_CHECKPOINT);
+      }
+      if (c == 'E' && w.lit == w.lanterns && !w.won) {
+        w.won = true;
+        w.cues.push(CUE_WIN);
+      }
+    }
+  }
+}
+
+void stepFoes(World w) {
+  Hero h = w.hero;
+  for (i32 i = 0; i < w.foes.len(); i++) {
+    Foe f = w.foes.get(i);
+    if (!f.alive) { continue; }
+    if (f.hops) {
+      f.timer--;
+      if (f.ground && f.timer <= 0) {
+        f.vy = 0.0 - 4.6;
+        f.vx = h.x < f.x ? 0.0 - 1.1 : 1.1;
+        f.timer = 75;
+      }
+      if (f.ground && f.timer > 0) { f.vx = 0.0; }
+    } else {
+      // A beetle turns at a wall, and at the edge of what it walks on.
+      f64 ahead = f.vx > 0.0 ? f.x + 12.0 + 1.0 : f.x - 1.0;
+      bool wall = hits(w, f.vx > 0.0 ? f.x + 1.0 : f.x - 1.0, f.y, 12.0, 12.0);
+      u8 below = tileAt(w, tileOf(ahead), tileOf(f.y + 12.0 + 1.0));
+      bool edge = f.ground && !solid(below) && below != '=';
+      if (wall || edge) { f.vx = 0.0 - f.vx; }
+    }
+    f.vy = f.vy + GRAVITY;
+    if (f.vy > MAX_FALL) { f.vy = MAX_FALL; }
+    Moved r = slideBox(w, f.x, f.y, 12.0, 12.0, f.vx, f.vy);
+    f.x = r.x;
+    f.y = r.y;
+    f.ground = r.ground;
+    if (r.ground) { f.vy = 0.0; }
+    if (f.y > ((ROWS * TILE) as f64)) { f.alive = false; }
+    // Met by Pip: from above, it is stomped; from anywhere else, Pip is hurt.
+    if (h.dying == 0 && h.x < f.x + 12.0 && h.x + HERO_W > f.x && h.y < f.y + 12.0 && h.y + HERO_H > f.y) {
+      if (h.vy > 0.0 && h.y + HERO_H - f.y < 8.0) {
+        f.alive = false;
+        h.vy = 0.0 - 4.2;
+        h.air = COYOTE;
+        w.cues.push(CUE_STOMP);
+      } else {
+        hurt(w);
+      }
+    }
+  }
+}
+
+/** One step: a sixtieth of a second. What it cued is in `w.cues`, cleared at its start. */
+export void step(World w, Keys k) {
+  w.cues.clear();
+  if (w.won) { return; }
+  w.steps++;
+  stepMovers(w);
+  stepCrumbles(w);
+  stepHero(w, k);
+  touch(w);
+  stepFoes(w);
+}

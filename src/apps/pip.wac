@@ -1,0 +1,415 @@
+// Pip and the Lost Lanterns: a little platformer in five levels, with a chip's sounds — and a measure, on screen, of
+// how long a key takes to show.
+//
+// **Light every lantern, then reach the door.** Pip runs, jumps — higher the longer the key is held — slides down
+// walls and jumps off them, stomps beetles and frogs, and comes back at the last flag touched. Each level's best time
+// is kept in the program's own folder.
+//
+// **Made to feel the latency by.** A key is stamped by the browser when it is pressed (`ElementEvent.at`), on the
+// same clock the program reads, wherever it runs — in a worker, or in a window of the desktop's, a process away. The
+// corner says, for the keys that moved Pip: how long the key took to reach the program; how long until the frame
+// showing it was drawn — to the frame after it was sent, which is when it is on screen at the latest; and how long
+// until the jump's sound was sent. `L` hides it.
+//
+// **A fixed step**: the rules run sixty times a second whatever the screen's rate (`pip/world.wac`); each frame runs
+// as many steps as time has passed, then draws. The sounds are made once, at the start (`pip/chip.wac`).
+
+import { Vec } from "core";
+import { Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html.b, html.button, html.canvas, html.div, html.h1,
+         html.p, html.span, html.style } from "web";
+import { css } from "../style.wac";
+import { pipCss } from "./pip/style.wac";
+import { Level, allLevels } from "./pip/levels.wac";
+import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "./pip/world.wac";
+import { SCREEN_H, SCREEN_W, Screen, drawWorld } from "./pip/art.wac";
+import { RATE, effects, tune } from "./pip/chip.wac";
+import { fixed } from "./maths.wac";
+
+static i32 TITLE = 0;
+static i32 PLAYING = 1;
+static i32 PAUSED = 2;
+static i32 CLEARED = 3;
+static i32 DONE = 4;
+static f64 STEP_MS = 16.666666666666668;
+static string KEPT = "best";
+
+/** A running measure: the last few values, to show their mean. */
+struct Meter {
+  Vec<f64> seen;
+  f64 last;
+
+  Meter create() { return Meter(Vec.create(), 0.0 - 1.0); }
+
+  void add(this, f64 v) {
+    this.last = v;
+    this.seen.push(v);
+    if (this.seen.len() > 30) { this.seen.remove(0); }
+  }
+
+  string shown(this) {
+    if (this.last < 0.0) { return "–"; }
+    f64 sum = 0.0;
+    for (i32 i = 0; i < this.seen.len(); i++) { sum = sum + this.seen.get(i); }
+    return "\{fixed(this.last, 0)} ms (mean \{fixed(sum / (this.seen.len() as f64), 0)})";
+  }
+}
+
+struct Pip {
+  Page page;
+  Level[] levels;
+  i32 index;
+  World world;
+  Screen screen;
+  i32 mode;
+  Keys keys;
+  /** Held keys by name, so a key's repeats are not new presses and its release lets go only of it. */
+  Vec<string> held;
+  /** When the earliest key not yet taken up by a step was pressed, and when the last one taken up was; -1 none. */
+  f64 pressedAt;
+  f64 takenAt;
+  /** The frame showing a key, sent: when that key was pressed. */
+  f64 showing;
+  Meter arrive;
+  Meter toScreen;
+  Meter toSound;
+  f64 fps;
+  bool latency;
+  bool muted;
+  /** The effects by cue, the tune, and the tune playing. */
+  Sound[] fx;
+  Sound? song;
+  Voice? music;
+  /** Each level's best, in steps; 0 none yet. And how far the player has got. */
+  i32[] best;
+  i32 reached;
+  bool newBest;
+  i32 frame;
+  Element? canvas;
+  Element? stage;
+  fn<void()> bump;
+}
+
+/** What `bump` is until the window is drawn. */
+void quiet() { }
+
+// ── Time kept ───────────────────────────────────────────────────────────────
+
+/** Steps as a time: `1:02.4`. */
+export string clock(i32 steps) {
+  i32 tenths = steps * 10 / 60;
+  i32 secs = tenths / 10;
+  return "\{secs / 60}:\{secs % 60 < 10 ? "0" : ""}\{secs % 60}.\{tenths % 10}";
+}
+
+void keepBest(Pip g) {
+  string text = "\{g.reached}";
+  for (i32 i = 0; i < g.best.len(); i++) { text = text + " \{g.best[i]}"; }
+  g.page.sys.files().writeFile(KEPT, (text + "\n").toBytes());
+}
+
+/** A whole number, or 0. */
+i32 wholeOf(string s) {
+  i32 v = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { v = v * 10 + ((b[i] - '0') as i32); } }
+  return v;
+}
+
+/** What `keepBest` wrote, onto `best` — the furthest level reached first. */
+export i32 restoreBest(string text, i32[] best) {
+  Vec<string> words = Vec.create();
+  i32 start = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    bool gap = i == text.len() || text.slice(i, i + 1) == " " || text.slice(i, i + 1) == "\n";
+    if (gap) {
+      if (i > start) { words.push(text.slice(start, i)); }
+      start = i + 1;
+    }
+  }
+  if (words.len() == 0) { return 0; }
+  for (i32 i = 0; i < best.len() && i + 1 < words.len(); i++) { best[i] = wholeOf(words.get(i + 1)); }
+  i32 r = wholeOf(words.get(0));
+  return r < best.len() ? r : best.len() - 1;
+}
+
+// ── Play ────────────────────────────────────────────────────────────────────
+
+void begin(Pip g, i32 index) {
+  g.index = index;
+  g.world = load(g.levels[index]);
+  g.mode = PLAYING;
+  g.newBest = false;
+  g.screen.camX = 0;
+  g.keys = Keys.none();
+  g.held.clear();
+  startMusic(g);
+  g.bump();
+}
+
+void startMusic(Pip g) {
+  if (g.muted || g.music is not null || g.song is null) { return; }
+  g.music = g.song!.loop(0.45);
+}
+
+/** Whether a key is one of `names`, a list split by spaces. */
+bool isKey(string k, string names) { return k != "" && k != " " && (" " + names + " ").indexOf(" " + k + " ") >= 0; }
+
+bool isLeft(string k) { return isKey(k, "ArrowLeft a A"); }
+bool isRight(string k) { return isKey(k, "ArrowRight d D"); }
+bool isJump(string k) { return isKey(k, "ArrowUp w W z Z k K x X"); }
+
+bool holding(Pip g, string k) {
+  for (i32 i = 0; i < g.held.len(); i++) { if (g.held.get(i) == k) { return true; } }
+  return false;
+}
+
+/** Which way and whether to jump, from the keys held now. */
+void readKeys(Pip g) {
+  bool l = false;
+  bool r = false;
+  bool j = false;
+  for (i32 i = 0; i < g.held.len(); i++) {
+    string k = g.held.get(i);
+    if (isLeft(k)) { l = true; }
+    if (isRight(k)) { r = true; }
+    if (isJump(k) || k == " ") { j = true; }
+  }
+  g.keys.left = l;
+  g.keys.right = r;
+  g.keys.jump = j;
+}
+
+void down(Pip g, ElementEvent e) {
+  string k = e.value;
+  g.arrive.add(g.page.now() - e.at);
+  if (g.mode == TITLE || g.mode == CLEARED || g.mode == DONE) {
+    if (k == "Enter" || k == " ") {
+      if (g.mode == TITLE) { begin(g, g.reached); }
+      else if (g.mode == CLEARED) { begin(g, g.index + 1); }
+      else { g.mode = TITLE; g.bump(); }
+    } else if (g.mode == TITLE && isKey(k, "1 2 3 4 5")) {
+      i32 n = wholeOf(k) - 1;
+      if (n <= g.reached) { begin(g, n); }
+    }
+    return;
+  }
+  if (k == "p" || k == "P" || k == "Escape") {
+    g.mode = g.mode == PAUSED ? PLAYING : PAUSED;
+    g.held.clear();
+    readKeys(g);
+    g.bump();
+    return;
+  }
+  if (g.mode == PAUSED && (k == "Enter" || k == " ")) {
+    g.mode = PLAYING;
+    g.bump();
+    return;
+  }
+  if (k == "m" || k == "M") {
+    g.muted = !g.muted;
+    if (g.muted && g.music is not null) {
+      g.music!.stop();
+      g.music = null;
+    }
+    if (!g.muted) { startMusic(g); }
+    g.bump();
+    return;
+  }
+  if (k == "l" || k == "L") {
+    g.latency = !g.latency;
+    g.bump();
+    return;
+  }
+  if (k == "r" || k == "R") {
+    begin(g, g.index);
+    return;
+  }
+  if (holding(g, k)) { return; }
+  g.held.push(k);
+  if (isJump(k) || k == " ") { g.keys.jumped = true; }
+  if (g.pressedAt < 0.0) { g.pressedAt = e.at; }
+  readKeys(g);
+}
+
+void up(Pip g, ElementEvent e) {
+  for (i32 i = 0; i < g.held.len(); i++) {
+    if (g.held.get(i) == e.value) {
+      g.held.remove(i);
+      break;
+    }
+  }
+  // A shifted letter lets go as its other case.
+  if (e.value.len() == 1) {
+    for (i32 i = 0; i < g.held.len(); i++) {
+      string h = g.held.get(i);
+      if (h.len() == 1 && h != e.value && (h.toBytes()[0] | (32 as u8)) == (e.value.toBytes()[0] | (32 as u8))) {
+        g.held.remove(i);
+        break;
+      }
+    }
+  }
+  readKeys(g);
+}
+
+/** Steps for the time that has passed, then the picture: one frame. */
+void frame(Pip g, f64 dt, f64 now) {
+  g.frame++;
+  if (g.mode == PLAYING) {
+    World w = g.world;
+    f64 owed = dt > 250.0 ? STEP_MS : dt;
+    i32 steps = 0;
+    while (owed >= STEP_MS * 0.5 && steps < 5) {
+      owed = owed - STEP_MS;
+      steps++;
+      f64 key = g.pressedAt;
+      g.pressedAt = 0.0 - 1.0;
+      step(w, g.keys);
+      g.keys.jumped = false;
+      if (key >= 0.0) { g.takenAt = key; }
+      for (i32 i = 0; i < w.cues.len(); i++) {
+        i32 c = w.cues.get(i);
+        if (!g.muted && c < g.fx.len()) { g.fx[c].play(c == CUE_WIN || c == CUE_OPEN ? 0.9 : 0.75); }
+        if ((c == CUE_JUMP || c == CUE_WALL_JUMP) && key >= 0.0) { g.toSound.add(g.page.now() - key); }
+      }
+      if (w.won) {
+        g.mode = CLEARED;
+        i32 prev = g.best[g.index];
+        if (prev == 0 || w.steps < prev) {
+          g.best[g.index] = w.steps;
+          g.newBest = true;
+        }
+        if (g.index + 1 >= g.levels.len()) { g.mode = DONE; }
+        else if (g.reached < g.index + 1) { g.reached = g.index + 1; }
+        keepBest(g);
+        g.bump();
+        break;
+      }
+    }
+  }
+  drawWorld(g.screen, g.world, g.frame);
+  if (g.canvas is not null) { g.canvas!.pixels(SCREEN_W, SCREEN_H, g.screen.px); }
+  if (g.takenAt >= 0.0) {
+    g.showing = g.takenAt;
+    g.takenAt = 0.0 - 1.0;
+  }
+  if (g.frame % 6 == 0) { g.bump(); }
+}
+
+async void playLoop(Pip g) {
+  f64 last = g.page.now();
+  while (true) {
+    f64 now = await g.page.nextFrame();
+    // The frame after the one that showed a key: it was on the screen by now.
+    if (g.showing >= 0.0) {
+      g.toScreen.add(now - g.showing);
+      g.showing = 0.0 - 1.0;
+    }
+    f64 dt = now - last;
+    last = now;
+    if (dt > 0.0) { g.fps = g.fps * 0.9 + (1000.0 / dt) * 0.1; }
+    frame(g, dt, now);
+  }
+}
+
+// ── The window ──────────────────────────────────────────────────────────────
+
+Node Help(Ui ui) {
+  return <div class="pkeys">
+    <span>Run</span><span><b>←</b> <b>→</b> or <b>A</b> <b>D</b></span>
+    <span>Jump</span><span><b>Space</b>, <b>↑</b>, <b>Z</b> or <b>W</b> — hold for higher; against a wall, jump off it</span>
+    <span>Pause</span><span><b>P</b> or <b>Esc</b> · <b>R</b> starts the level again</span>
+    <span>Sound</span><span><b>M</b> · <b>L</b> shows or hides the latency</span>
+  </div>;
+}
+
+/**
+ * What is over the game, by its mode: a function of the game rather than a component, since a component handed the
+ * same game would be skipped when only the game's insides changed.
+ */
+Node overlay(Pip g) {
+  if (g.mode == TITLE) {
+    Vec<Node> levels = Vec.create();
+    for (i32 i = 0; i < g.levels.len(); i++) {
+      string best = g.best[i] > 0 ? clock(g.best[i]) : (i <= g.reached ? "–" : "locked");
+      levels.push(<div class={i <= g.reached ? "plevel" : "plevel locked"}><b>{"\{i + 1}"}</b> {g.levels[i].name}<span>{best}</span></div>);
+    }
+    return <div class="pover"><div class="pcard">
+      <h1>Pip and the Lost Lanterns</h1>
+      <p>The lanterns of the valley have gone out. Light every one, then find the door.</p>
+      <Help/>
+      <div class="plevels">{levels.toArray()}</div>
+      <p class="pgo">Press <b>Enter</b> to play{g.reached > 0 ? " on from level \{g.reached + 1}" : ""}, or a level's number</p>
+    </div></div>;
+  }
+  if (g.mode == PAUSED) {
+    return <div class="pover"><div class="pcard"><h1>Paused</h1><Help/><p class="pgo">Press <b>Enter</b> or <b>P</b> to go on</p></div></div>;
+  }
+  if (g.mode == CLEARED || g.mode == DONE) {
+    World w = g.world;
+    string line = "\{g.levels[g.index].name} in \{clock(w.steps)}" + (w.deaths > 0 ? ", \{w.deaths} \{w.deaths == 1 ? "fall" : "falls"}" : "");
+    return <div class="pover"><div class="pcard">
+      <h1>{g.mode == DONE ? "Every lantern is lit" : "The way is lit"}</h1>
+      <p>{line}</p>
+      <p class={g.newBest ? "pbest" : "pfaint"}>{g.newBest ? "A best time!" : "Best: \{clock(g.best[g.index])}"}</p>
+      <p class="pgo">Press <b>Enter</b> {g.mode == DONE ? "for the title" : "for level \{g.index + 2}"}</p>
+    </div></div>;
+  }
+  return <span/>;
+}
+
+Node Game(Ui ui, Pip g) {
+  auto tick = ui.state(0);
+  g.bump = () => { tick.set(tick.get() + 1); };
+  Ref stage = ui.ref();
+  Ref cv = ui.ref();
+  ui.effect("", () => {
+    g.canvas = cv.element();
+    g.stage = stage.element();
+    if (g.stage is not null) { g.stage!.focus(); }
+    return () => { };
+  });
+  World w = g.world;
+  string hud = g.mode == TITLE ? "" : "\{g.levels[g.index].name} · Lanterns \{w.lit}/\{w.lanterns} · \{clock(w.steps)}" + (w.deaths > 0 ? " · Falls \{w.deaths}" : "") + (g.muted ? " · Muted" : "");
+  return <div class="pip" tabindex="0" ref={stage}
+              prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape a d w s z x k p m l r 1 2 3 4 5"
+              onkeydown={(ElementEvent e) => { down(g, e); }}
+              onkeyup={(ElementEvent e) => { up(g, e); }}
+              onblur={(ElementEvent e) => {
+                g.held.clear();
+                readKeys(g);
+                if (g.mode == PLAYING) { g.mode = PAUSED; g.bump(); }
+              }}
+              onpointerdown={(ElementEvent e) => { if (g.stage is not null) { g.stage!.focus(); } }}>
+    <canvas class="pscreen" ref={cv} width="320" height="180"/>
+    <div class="phud">{hud}</div>
+    {g.latency
+      ? <div class="plat">
+          <div><span>key → program</span><b>{g.arrive.shown()}</b></div>
+          <div><span>key → on screen, by</span><b>{g.toScreen.shown()}</b></div>
+          <div><span>key → jump sound sent</span><b>{g.toSound.shown()}</b></div>
+          <div><span>frames</span><b>{"\{fixed(g.fps, 0)} a second"}</b></div>
+        </div>
+      : <span/>}
+    {overlay(g)}
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Pip and the Lost Lanterns");
+  Level[] levels = allLevels();
+  i32[] best = i32[].filled(levels.len(), 0);
+  i32 reached = 0;
+  auto kept = await page.sys.files().readFile(KEPT);
+  if (kept.isOk()) { reached = restoreBest(string.fromBytes(kept.ok()!), best); }
+  // The sounds, made once and sent; played by number from here on.
+  f64[][] made = effects();
+  Sound[] fx = Sound[].filled(made.len(), page.sound(made[0], RATE));
+  for (i32 i = 1; i < made.len(); i++) { fx[i] = page.sound(made[i], RATE); }
+  Sound song = page.sound(tune(), RATE);
+  Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
+              0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, true, false, fx, song, null, best,
+              reached, false, 0, null, null, quiet);
+  page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
+  playLoop(g);
+  return 0;
+}
