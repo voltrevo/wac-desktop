@@ -42,6 +42,8 @@ export string stackfallCss() {
     .sf button.sf-primary { color:#21172e; background:#c3a6ef; border-color:#c3a6ef; min-width:72px; }
     .sf button:disabled { opacity:.4; cursor:default; }
     .sf-save { margin-left:auto; font-size:10px; color:#888397; }
+    .sf-audio { display:flex; gap:8px; }
+    .sf-audio button { padding:5px 10px; font-size:10px; color:#b9aecb; background:transparent; }
     .sf-help { display:flex; gap:5px 15px; flex-wrap:wrap; color:#a6a2b8; font-size:10px; padding-top:10px; border-top:1px solid #302b3e; }
     @media(max-width:480px) { .sf { padding:14px; gap:12px; } .sf-main { gap:14px; } }
   """;

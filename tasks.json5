@@ -9,6 +9,7 @@
   // `Sys` runs only under some grant. Reading is the least of them, and nothing here reads a file.
   test: "wac test --allow-read test",
   // In Chromium, against dist/ — build first; both need Playwright. The desktop, used as a person uses it:
+  "test:stackfall-audio": "node tools/stackfall_audio_test.js",
   "test:stackfall": "node tools/stackfall_test.js",
   "test:mandelbrot": "node tools/mandelbrot_test.js",
   "test:pip": "node tools/pip_test.js",

@@ -1,0 +1,174 @@
+// Stackfall's original soundtrack: rounded electric-piano notes and a quiet pulse, under short, tactile effects.
+// Samples are made once and sent through the same Page.sound capability Pip uses; play only sends their numbers.
+import { Vec } from "core";
+import { Page, Sound, Voice } from "web";
+import { json.parse } from "wac";
+
+export static i32 RATE = 22050;
+export static i32 MOVE = 1;
+export static i32 TURN = 2;
+export static i32 HOLD = 3;
+export static i32 DROP = 4;
+export static i32 LOCK = 5;
+export static i32 CLEAR = 6;
+export static i32 LEVEL = 10;
+export static i32 OVER = 11;
+export static i32 START = 12;
+
+i32 frames(f64 seconds) { return (seconds * (RATE as f64)) as~ i32; }
+f64 abs(f64 x) { return x < 0.0 ? 0.0 - x : x; }
+
+/** A smooth periodic sine approximation, without a dependency on a maths library. */
+f64 wave(f64 phase) {
+  f64 x = 2.0 * (phase - phase.floor()) - 1.0;
+  f64 y = 4.0 * x * (1.0 - abs(x));
+  return y + 0.225 * (y * abs(y) - y);
+}
+f64 hz(i32 semis) {
+  f64 f = 440.0;
+  for (i32 i = 0; i < semis; i++) { f = f * 1.0594630943592953; }
+  for (i32 i = 0; i > semis; i--) { f = f / 1.0594630943592953; }
+  return f;
+}
+f64[] silence(f64 seconds) { return f64[].filled(frames(seconds), 0.0); }
+
+/** A gently struck note. Attack and release reach silence, so overlapping cues and loop joins do not click. */
+void tone(f64[] out, f64 at, f64 duration, f64 from, f64 to, f64 volume) {
+  i32 start = frames(at);
+  i32 n = frames(duration);
+  if (n > out.len() - start) { n = out.len() - start; }
+  if (n < 2) { return; }
+  f64 phase = 0.0;
+  for (i32 i = 0; i < n && start + i < out.len(); i++) {
+    f64 t = (i as f64) / ((n - 1) as f64);
+    phase += (from + (to - from) * t) / (RATE as f64);
+    f64 attack = i < 100 ? (i as f64) / 100.0 : 1.0;
+    f64 env = attack * (1.0 - t) * (1.0 - t);
+    out[start + i] += (wave(phase) + 0.12 * wave(phase * 2.0)) * env * volume;
+  }
+}
+void note(f64[] out, f64 at, f64 duration, i32 pitch, f64 volume) { tone(out, at, duration, hz(pitch), hz(pitch), volume); }
+
+/** Filtered noise gives the drop some weight without a sharp burst of hiss. */
+void brush(f64[] out, f64 duration, f64 volume) {
+  i64 seed = 19;
+  f64 filtered = 0.0;
+  i32 n = frames(duration);
+  for (i32 i = 0; i < n; i++) {
+    seed = (seed * 16807) % 2147483647;
+    filtered = filtered * 0.7 + ((seed % 1000) as~ f64 / 500.0 - 1.0) * 0.3;
+    f64 t = (i as f64) / ((n - 1) as f64);
+    f64 attack = i < 40 ? (i as f64) / 40.0 : 1.0;
+    out[i] += filtered * volume * attack * (1.0 - t) * (1.0 - t);
+  }
+}
+
+export f64[][] effects() {
+  f64[][] fx = f64[][].filled(13, f64[]());
+  fx[0] = silence(0.01);
+  fx[MOVE] = silence(0.025); tone(fx[MOVE], 0.0, 0.025, 420.0, 300.0, 0.12);
+  fx[TURN] = silence(0.065); tone(fx[TURN], 0.0, 0.065, 620.0, 900.0, 0.17);
+  fx[HOLD] = silence(0.15); note(fx[HOLD], 0.0, 0.09, 0, 0.22); note(fx[HOLD], 0.055, 0.095, 7, 0.2);
+  fx[DROP] = silence(0.16); tone(fx[DROP], 0.0, 0.16, 155.0, 48.0, 0.48); brush(fx[DROP], 0.065, 0.2);
+  fx[LOCK] = silence(0.065); tone(fx[LOCK], 0.0, 0.065, 200.0, 95.0, 0.24);
+  i32[] chord = [5, 9, 12, 17, 21];
+  for (i32 rows = 1; rows <= 4; rows++) {
+    fx[CLEAR + rows - 1] = silence(0.25 + (rows as f64) * 0.085);
+    for (i32 i = 0; i <= rows; i++) { note(fx[CLEAR + rows - 1], (i as f64) * 0.065, 0.25, chord[i], 0.27); }
+  }
+  fx[LEVEL] = silence(0.72);
+  i32[] rise = [5, 9, 12, 17, 21, 24];
+  for (i32 i = 0; i < rise.len(); i++) { note(fx[LEVEL], (i as f64) * 0.07, 0.35, rise[i], 0.24); }
+  fx[OVER] = silence(0.9); note(fx[OVER], 0.0, 0.45, 0, 0.25); note(fx[OVER], 0.18, 0.5, -4, 0.25); note(fx[OVER], 0.38, 0.52, -7, 0.27);
+  fx[START] = silence(0.22); note(fx[START], 0.0, 0.14, -7, 0.23); note(fx[START], 0.07, 0.15, 0, 0.23);
+  return fx;
+}
+
+/** Eight original bars at 104 BPM, in D minor. Sparse melody leaves room for the player's rhythm. */
+export f64[] tune() {
+  f64 beat = 60.0 / 104.0;
+  f64[] out = silence(beat * 32.0);
+  i32[] bass = [-31, -35, -27, -29, -31, -35, -27, -29];
+  i32[] thirds = [-16, -19, -12, -17, -16, -19, -12, -17];
+  i32[] fifths = [-12, -12, -8, -10, -12, -12, -8, -10];
+  i32[] melody = [-7, 0, 5, -100, 3, -100, 0, -100, -4, 3, 5, -100, 0, -100, -4, -100,
+                  -4, 0, 3, -100, 8, -100, 3, -100, -5, 0, 3, -100, -2, -100, -5, -100,
+                  -7, 0, 8, -100, 5, -100, 3, 0, -4, 3, 5, -100, 10, -100, 5, -100,
+                  -4, 0, 8, -100, 3, -100, 0, -100, -5, 3, 0, -100, -7, -100, -100, -100];
+  for (i32 bar = 0; bar < 8; bar++) {
+    f64 at = (bar as f64) * beat * 4.0;
+    note(out, at, beat * 3.6, bass[bar], 0.2);
+    note(out, at + beat * 2.0, beat * 1.7, bass[bar] + 12, 0.09);
+    note(out, at + beat * 0.5, beat * 3.0, thirds[bar], 0.07);
+    note(out, at + beat * 0.6, beat * 3.0, fifths[bar], 0.06);
+    for (i32 step = 0; step < 8; step++) {
+      i32 pitch = melody[bar * 8 + step];
+      if (pitch != -100) { note(out, at + (step as f64) * beat * 0.5, beat * 0.85, pitch, 0.14); }
+    }
+  }
+  return out;
+}
+
+/** Pick one celebration, rather than layering several competing jingles over the same lock. */
+export i32 lockCue(i32 rows, bool levelUp, bool over) {
+  if (over) { return OVER; }
+  if (levelUp) { return LEVEL; }
+  if (rows > 0) { return CLEAR + (rows > 4 ? 4 : rows) - 1; }
+  return LOCK;
+}
+
+export struct Audio {
+  Sound[] fx;
+  Sound song;
+  Voice? music;
+  Vec<Voice> voices;
+  bool enabled;
+  bool musical;
+  string wanted;
+  string written;
+  bool writing;
+
+  Audio create(Page page) {
+    f64[][] made = effects();
+    Sound[] sounds = Sound[].filled(made.len(), page.sound(made[0], RATE));
+    for (i32 i = 1; i < made.len(); i++) { sounds[i] = page.sound(made[i], RATE); }
+    return Audio(sounds, page.sound(tune(), RATE), null, Vec.create(), true, true, "", "", false);
+  }
+
+  void cue(this, i32 index) {
+    if (!this.enabled || index <= 0 || index >= this.fx.len()) { return; }
+    // Keep only a few handles: completed one-shots need no bookkeeping for the rest of the session.
+    if (this.voices.len() == 8) { this.voices.remove(0).stop(); }
+    this.voices.push(this.fx[index].play(0.65));
+  }
+  void stop(this) {
+    if (this.music is not null) { this.music!.stop(); this.music = null; }
+    for (i32 i = 0; i < this.voices.len(); i++) { this.voices.get(i).stop(); }
+    this.voices.clear();
+  }
+  void background(this, bool playing) {
+    if (!playing || !this.enabled) { this.stop(); return; }
+    if (!this.musical && this.music is not null) { this.music!.stop(); this.music = null; }
+    if (this.musical && this.music is null) { this.music = this.song.loop(0.3); }
+  }
+  string settings(this) { return "{\"sound\":\{this.enabled ? "true" : "false"},\"music\":\{this.musical ? "true" : "false"}}"; }
+  void restore(this, string text) {
+    auto parsed = parse(text.toBytes());
+    if (parsed.isErr()) { return; }
+    auto doc = parsed.ok()!;
+    this.enabled = doc.member("sound")?.boolean() ?? true;
+    this.musical = doc.member("music")?.boolean() ?? true;
+  }
+  async void keep(this, Page page) {
+    this.wanted = this.settings();
+    if (this.writing || this.wanted == this.written) { return; }
+    this.writing = true;
+    while (this.wanted != this.written) {
+      string text = this.wanted;
+      auto result = await page.sys.files().writeFile("audio.json", text.toBytes());
+      if (result.isErr()) { break; }
+      this.written = text;
+    }
+    this.writing = false;
+  }
+}
