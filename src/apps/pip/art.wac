@@ -5,7 +5,7 @@
 // slower than the ground, which is all it takes to look far away. A lit lantern throws a warm glow, added to what is
 // under it, and so does Pip.
 
-import { Foe, HERO_H, HERO_W, Mover, ROWS, TILE, World, tileAt } from "./world.wac";
+import { Foe, HERO_H, HERO_W, Mover, TILE, World, tileAt } from "./world.wac";
 
 export static i32 SCREEN_W = 320;
 export static i32 SCREEN_H = 180;
@@ -15,8 +15,9 @@ export struct Screen {
   u8[] px;
   i32 camX;
   i32 camY;
-  /** The camera's place to the fraction of a pixel, and how far ahead of Pip it looks (`follow`). */
+  /** The camera's place to the fraction of a pixel, across and down, and how far ahead of Pip it looks (`follow`). */
   f64 camF;
+  f64 camYF;
   f64 lead;
   /** The sky, a colour a row; and the stars, x and y in turns. */
   i32[] sky;
@@ -33,7 +34,7 @@ export struct Screen {
       seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
       stars[i * 2 + 1] = seed % 110;
     }
-    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, ROWS * TILE - SCREEN_H, 0.0, 0.0, sky, stars);
+    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, 0, 0.0, 0.0, 0.0, sky, stars);
   }
 }
 
@@ -256,7 +257,7 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
 }
 
 /** The sky, its stars, and two ranges of hills, each moving slower than the ground. */
-void drawSky(Screen s, i32 frame) {
+void drawSky(Screen s, i32 frame, i32 up) {
   for (i32 y = 0; y < SCREEN_H; y++) {
     i32 c = s.sky[y];
     for (i32 x = 0; x < SCREEN_W; x++) { dot(s, x, y, c); }
@@ -269,8 +270,8 @@ void drawSky(Screen s, i32 frame) {
   }
   rect(s, 262 - s.camX / 16 % 400, 22, 12, 12, 0xF4EED8);
   rect(s, 266 - s.camX / 16 % 400, 22, 8, 8, 0xD8D0B4);
-  hills(s, s.camX / 4, 118, 0x1A1F3E, 40);
-  hills(s, s.camX / 2, 140, 0x232A4E, 26);
+  hills(s, s.camX / 4, 118 + up / 6, 0x1A1F3E, 40);
+  hills(s, s.camX / 2, 140 + up / 3, 0x232A4E, 26);
 }
 
 void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
@@ -290,6 +291,14 @@ void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
 static f64 LEAD = 40.0;
 static f64 SLACK = 20.0;
 
+/** How far Pip moves up or down before the camera follows. */
+static f64 SLACK_Y = 24.0;
+
+f64 clampCamY(World w, f64 y) {
+  f64 most = ((w.rows * TILE - SCREEN_H) as f64);
+  return y > most ? most : (y < 0.0 ? 0.0 : y);
+}
+
 f64 clampCam(World w, f64 x) {
   f64 most = ((w.cols * TILE - SCREEN_W) as f64);
   return x < 0.0 ? 0.0 : (x > most ? most : x);
@@ -303,6 +312,13 @@ f64 clampCam(World w, f64 x) {
  * only leaving it moves the camera, which eases there rather than jumping. It stops at the level's ends.
  */
 export void follow(Screen s, World w) {
+  // Up and down the same way, without a lead: Pip a little below the middle, so more of a climb shows above.
+  f64 high = w.hero.y + 7.0 - (SCREEN_H as f64) * 0.55;
+  f64 aim = s.camYF;
+  if (high > s.camYF + SLACK_Y) { aim = high - SLACK_Y; }
+  if (high < s.camYF - SLACK_Y) { aim = high + SLACK_Y; }
+  s.camYF = clampCamY(w, s.camYF + (aim - s.camYF) * 0.15);
+  s.camY = s.camYF.round() as~ i32;
   f64 run = w.hero.vx / 2.3;
   f64 want = (run > 1.0 ? 1.0 : (run < 0.0 - 1.0 ? 0.0 - 1.0 : run)) * LEAD;
   s.lead = s.lead + (want - s.lead) * 0.03;
@@ -317,15 +333,20 @@ export void follow(Screen s, World w) {
 /** The camera straight to Pip: at a level's start, or when Pip comes back to a flag. */
 export void snap(Screen s, World w) {
   s.lead = 0.0;
+  s.camYF = clampCamY(w, w.hero.y + 7.0 - (SCREEN_H as f64) * 0.55);
+  s.camY = s.camYF.round() as~ i32;
   s.camF = clampCam(w, w.hero.x + 5.0 - ((SCREEN_W / 2) as f64));
   s.camX = s.camF.round() as~ i32;
 }
 
 /** The whole picture: the sky, the level, what moves, Pip, and the light. */
 export void drawWorld(Screen s, World w, i32 frame) {
-  drawSky(s, frame);
+  // How far the view is above the level's floor: the hills sink as Pip climbs, the far ones slower.
+  drawSky(s, frame, w.rows * TILE - SCREEN_H - s.camY);
   i32 x0 = s.camX / TILE;
-  for (i32 ty = 0; ty < ROWS; ty++) {
+  i32 y0 = s.camY / TILE;
+  i32 y1 = (s.camY + SCREEN_H) / TILE + 1;
+  for (i32 ty = y0; ty <= y1 && ty < w.rows; ty++) {
     for (i32 tx = x0; tx <= x0 + SCREEN_W / TILE + 1 && tx < w.cols; tx++) {
       drawTile(s, w, tx, ty, tx * TILE - s.camX, ty * TILE - s.camY, frame);
     }
@@ -354,7 +375,7 @@ export void drawWorld(Screen s, World w, i32 frame) {
   bool blink = w.hero.dying > 0 && (frame / 3) % 2 == 0;
   if (!blink) { sprite(s, pip(legs), hx, hy, w.hero.facing < 0); }
   // The light: each lit lantern, the open door, and a little around Pip.
-  for (i32 ty = 0; ty < ROWS; ty++) {
+  for (i32 ty = y0 - 2 < 0 ? 0 : y0 - 2; ty <= y1 + 2 && ty < w.rows; ty++) {
     for (i32 tx = x0 - 2; tx <= x0 + SCREEN_W / TILE + 3 && tx < w.cols; tx++) {
       u8 c = tileAt(w, tx, ty);
       i32 sx = tx * TILE - s.camX + 8;

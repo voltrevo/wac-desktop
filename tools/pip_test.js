@@ -44,8 +44,8 @@ const WATCH = `
     const card = p.locator('.pcard h1');
     await card.waitFor({ timeout: 60000 });
     assert.equal(await card.textContent(), 'Pip and the Lost Lanterns');
-    assert.equal(await p.locator('.plevel').count(), 12, 'twelve levels on the title');
-    ok('found by "platformer"; its title lists twelve levels');
+    assert.equal(await p.locator('.plevel').count(), 15, 'fifteen levels on the title');
+    ok('found by "platformer"; its title lists fifteen levels');
     if (shots) await p.screenshot({ path: path.join(shots, 'pip-1.png') });
 
     await p.keyboard.press('Enter');

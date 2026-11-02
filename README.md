@@ -101,9 +101,10 @@ shares, so their pages can see each other's files.
   from the middle out a block at a time. A drag or the wheel moves the picture at once by the canvas's transform and
   draws it once still; what was worked out is kept, so a drag works out only what came into view and new colours work
   out nothing. The view is kept in its folder, and *Save picture* writes a PNG to the desktop.
-- **Pip and the Lost Lanterns** is a little platformer in twelve levels — five short, then seven of 150 to 210 tiles,
-  built by `tools/pip_levels.py` — with springs as well as planks, crumbling blocks and sliding planks: light every
-  lantern, then reach the door.
+- **Pip and the Lost Lanterns** is a little platformer in fifteen levels — five short, seven of 150 to 210 tiles, and
+  three towers 45 to 73 tiles high, climbed by wall-jumping up chimneys, all built by `tools/pip_levels.py` — with
+  springs, planks, crumbling blocks and sliding planks: light every lantern, then reach the door. The camera follows
+  across and up and down.
   Pip runs, jumps higher the longer the key is held, slides down walls and jumps off them, and stomps beetles and
   frogs, with coyote time and a buffered jump; the rules run sixty steps a second whatever the screen's rate. Its
   sounds and tune are a chip's, made by the program and played through wac-web's `Page.sound`. **It is made to feel

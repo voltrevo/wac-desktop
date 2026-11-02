@@ -147,7 +147,7 @@ void begin(Pip g, i32 index) {
 }
 
 /**
- * On the title, level `i` chosen — any reached so far — and shown behind the title, as it starts. The list is two
+ * On the title, level `i` chosen — any reached so far — and shown behind the title, as it starts. The list is three
  * columns filled a row at a time: ← and → step by one, ↑ and ↓ by a row.
  */
 void choose(Pip g, i32 i) {
@@ -201,9 +201,9 @@ void down(Pip g, ElementEvent e) {
       else if (g.mode == CLEARED) { begin(g, g.index + 1); }
       else { g.mode = TITLE; g.bump(); }
     } else if (g.mode == TITLE && (k == "ArrowUp" || k == "ArrowLeft")) {
-      choose(g, g.index - (k == "ArrowUp" ? 2 : 1));
+      choose(g, g.index - (k == "ArrowUp" ? 3 : 1));
     } else if (g.mode == TITLE && (k == "ArrowDown" || k == "ArrowRight")) {
-      choose(g, g.index + (k == "ArrowDown" ? 2 : 1));
+      choose(g, g.index + (k == "ArrowDown" ? 3 : 1));
     } else if (g.mode == TITLE && isKey(k, "1 2 3 4 5 6 7 8 9")) {
       i32 n = wholeOf(k) - 1;
       if (n <= g.reached) { begin(g, n); }

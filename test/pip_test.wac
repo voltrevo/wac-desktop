@@ -139,15 +139,16 @@ export string test_landing_on_a_beetle_stomps_it_and_walking_into_one_hurts() {
 
 export string test_every_level_has_a_start_a_door_and_lanterns() {
   Level[] ls = allLevels();
-  if (ls.len() != 12) { return "\{ls.len()} levels"; }
+  if (ls.len() != 15) { return "\{ls.len()} levels"; }
   for (i32 i = 0; i < ls.len(); i++) {
     World w = load(ls[i]);
-    if (ls[i].rows.len() != 12) { return "\{ls[i].name}: \{ls[i].rows.len()} rows"; }
-    for (i32 y = 0; y < 12; y++) {
+    if (ls[i].rows.len() < 12) { return "\{ls[i].name}: \{ls[i].rows.len()} rows"; }
+    for (i32 y = 0; y < w.rows; y++) {
       if (ls[i].rows[y].len() != w.cols) { return "\{ls[i].name}, row \{y}: \{ls[i].rows[y].len()} wide, not \{w.cols}"; }
     }
-    // The first five are short; the rest at least twice as long.
-    if (i >= 5 && w.cols < 128) { return "\{ls[i].name}: \{w.cols} wide"; }
+    // The first five are short; the next seven at least twice as long, and the last three towers.
+    if (i >= 5 && i < 12 && w.cols < 128) { return "\{ls[i].name}: \{w.cols} wide"; }
+    if (i >= 12 && w.rows < 40) { return "\{ls[i].name}: \{w.rows} high"; }
     if (w.lanterns < 3) { return "\{ls[i].name}: \{w.lanterns} lanterns"; }
     if (w.hero.x <= 0.0) { return "\{ls[i].name}: no start"; }
     bool door = false;
@@ -223,7 +224,7 @@ export string test_a_spring_throws_pip_seven_tiles_up() {
   return "";
 }
 
-/** The level's tile at (`x`, `y`), bedrock outside it. */
+/** The level's tile at (`x`, `y`): air above it, bedrock beside and below. */
 u8 at(Level l, i32 x, i32 y) {
   if (y < 0) { return '.'; }
   if (y >= l.rows.len() || x < 0 || x >= l.rows[y].len()) { return '#'; }
@@ -232,78 +233,143 @@ u8 at(Level l, i32 x, i32 y) {
 
 bool firm(u8 c) { return c == '#' || c == 'X' || c == 'S'; }
 
+/** One place Pip can be: standing, or against a wall in the air — `side` -1 a wall on the left, 1 on the right. */
+struct Spot {
+  i32 x;
+  i32 y;
+  bool stands;
+  i32 side;
+}
+
+/** Whether a jump from standing at (`x`, `y`) reaches (`u`, `v`): the envelope, smaller than Pip's own leaps. */
+bool leap(i32 x, i32 y, i32 u, i32 v, bool sprung) {
+  i32 dx = u > x ? u - x : x - u;
+  i32 up = y - v;
+  return (up == 3 && dx <= 2) || (up == 2 && dx <= 4) || (up >= 0 && up <= 1 && dx <= 5) || (up < 0 && dx <= 6 + (0 - up) / 2)
+      || (sprung && up >= 0 && up <= 7 && dx <= 3);
+}
+
+/** Whether a wall jump from `a` reaches `b`: to the facing wall up to three across and two up, or to ground likewise. */
+bool offTheWall(Spot a, Spot b) {
+  i32 away = 0 - a.side;
+  i32 across = (b.x - a.x) * away;
+  i32 up = a.y - b.y;
+  if (b.side == 0 - a.side && across >= 0 && across <= 3 && up >= 0 && up <= 2) { return true; }
+  if (b.stands && across >= 0 && across <= 4 && up >= 0 && up <= 2) { return true; }
+  // Or slid, or fallen, down.
+  i32 dx = b.x > a.x ? b.x - a.x : a.x - b.x;
+  return up < 0 && dx <= 5;
+}
+
 /**
- * **Every lantern, flag and door can be reached** from the start by runs, jumps, drops and springs — under an envelope
- * smaller than Pip's own (a held jump clears three tiles; this allows three only a tile or two across), ignoring the
- * foes, the time a block takes to crumble, and where a sliding plank is: what the levels were designed to.
+ * **Every lantern, flag and door can be reached** from the start by runs, jumps, drops, springs and wall jumps — under
+ * an envelope smaller than Pip's own (`test_the_leaps_the_reachability_check_assumes_are_real`,
+ * `test_pip_climbs_a_chimney_and_steps_out_at_the_top`), ignoring the foes, the time a block takes to crumble, and
+ * where a sliding plank is: what the levels were designed to.
  */
 export string test_every_lantern_flag_and_door_can_be_reached() {
   Level[] ls = allLevels();
   for (i32 n = 0; n < ls.len(); n++) {
     Level l = ls[n];
     i32 cols = l.rows[0].len();
+    i32 rows = l.rows.len();
     // Where a sliding plank can be: three tiles from its left end, and the two of its width beyond.
-    bool[] slides = bool[].filled(cols * 12, false);
-    for (i32 y = 0; y < 12; y++) {
+    bool[] slides = bool[].filled(cols * (rows + 1), false);
+    for (i32 y = 0; y < rows; y++) {
       for (i32 x = 0; x < cols; x++) {
         if (at(l, x, y) == 'M') { for (i32 d = 0; d < 6 && x + d < cols; d++) { slides[y * cols + x + d] = true; } }
       }
     }
-    // Where Pip can stand: two tiles of room, on ground, a block, a spring, a plank or a sliding plank's way.
-    Vec<i32> stands = Vec.create();
+    // Where Pip can be: two tiles of room, standing on something or against a wall two tiles high.
+    Vec<Spot> spots = Vec.create();
     i32 start = 0 - 1;
-    for (i32 y = 1; y < 11; y++) {
+    for (i32 y = 1; y < rows - 1; y++) {
       for (i32 x = 0; x < cols; x++) {
         u8 c = at(l, x, y);
         u8 above = at(l, x, y - 1);
         u8 below = at(l, x, y + 1);
         bool room = !firm(c) && c != '^' && !slides[y * cols + x] && !firm(above) && above != '^';
+        if (!room) { continue; }
         bool held = firm(below) || below == '=' || slides[(y + 1) * cols + x];
-        if (room && held) {
-          if (c == 'P') { start = stands.len(); }
-          stands.push(y * cols + x);
+        if (held) {
+          if (c == 'P') { start = spots.len(); }
+          spots.push(Spot(x, y, true, 0));
+          continue;
+        }
+        for (i32 side = 0 - 1; side <= 1; side = side + 2) {
+          if (firm(at(l, x + side, y)) && firm(at(l, x + side, y - 1))) { spots.push(Spot(x, y, false, side)); }
         }
       }
     }
     if (start < 0) { return "\{l.name}: Pip does not start on anything"; }
-    bool[] seen = bool[].filled(stands.len(), false);
+    bool[] seen = bool[].filled(spots.len(), false);
     seen[start] = true;
     Vec<i32> todo = Vec.create();
     todo.push(start);
     while (todo.len() > 0) {
-      i32 from = stands.get(todo.get(todo.len() - 1));
+      Spot a = spots.get(todo.get(todo.len() - 1));
       todo.remove(todo.len() - 1);
-      i32 fx = from % cols;
-      i32 fy = from / cols;
-      bool sprung = at(l, fx, fy + 1) == 'S';
-      for (i32 k = 0; k < stands.len(); k++) {
+      bool sprung = a.stands && at(l, a.x, a.y + 1) == 'S';
+      for (i32 k = 0; k < spots.len(); k++) {
         if (seen[k]) { continue; }
-        i32 dx = stands.get(k) % cols - fx;
-        if (dx < 0) { dx = 0 - dx; }
-        i32 up = fy - stands.get(k) / cols;
-        bool ok = (up == 3 && dx <= 2) || (up == 2 && dx <= 4) || (up >= 0 && up <= 1 && dx <= 5)
-               || (up < 0 && dx <= 6 + (0 - up) / 2) || (sprung && up >= 0 && up <= 7 && dx <= 3);
-        if (ok) {
+        Spot b = spots.get(k);
+        if ((a.stands && leap(a.x, a.y, b.x, b.y, sprung)) || (!a.stands && offTheWall(a, b))) {
           seen[k] = true;
           todo.push(k);
         }
       }
     }
-    // A lantern, flag or door is touched from where Pip stands up to two below it, a tile either side.
-    for (i32 y = 0; y < 12; y++) {
+    // A lantern, flag or door is touched from where Pip is, up to two below it and a tile either side.
+    for (i32 y = 0; y < rows; y++) {
       for (i32 x = 0; x < cols; x++) {
         u8 c = at(l, x, y);
         if (c != 'L' && c != 'C' && c != 'E') { continue; }
         bool reached = false;
-        for (i32 k = 0; k < stands.len() && !reached; k++) {
-          i32 dx = stands.get(k) % cols - x;
-          i32 below = stands.get(k) / cols - y;
-          if (seen[k] && dx >= 0 - 1 && dx <= 1 && below >= 0 && below <= 2) { reached = true; }
+        for (i32 k = 0; k < spots.len() && !reached; k++) {
+          Spot b = spots.get(k);
+          if (seen[k] && b.x - x >= 0 - 1 && b.x - x <= 1 && b.y - y >= 0 && b.y - y <= 2) { reached = true; }
         }
         if (!reached) { return "\{l.name}: the \{string.fromBytes([c])} at \{x}, \{y} cannot be reached"; }
       }
     }
   }
+  return "";
+}
+
+/**
+ * **Pip climbs a chimney and steps out at the top**, on real physics: in under the shaft's inner wall, then off each
+ * wall in turn — `gap` tiles apart, seven high, as the towers have them — and onto the floor above, beside the shaft.
+ */
+bool chimney(i32 gap) {
+  // A floor at row 17, the next at row 10; the shaft against the right wall, its inner wall from 10 down to 14.
+  i32 cols = 16;
+  i32 inner = cols - 2 - gap;
+  string[] rows = string[].filled(19, "");
+  for (i32 y = 0; y < 19; y++) {
+    string r = "";
+    for (i32 x = 0; x < cols; x++) {
+      bool wall = x == 0 || x == cols - 1 || y >= 17 || (y == 10 && x < inner) || (x == inner && y >= 10 && y <= 14);
+      r = r + (wall ? "#" : (x == 2 && y == 16 ? "P" : "."));
+    }
+    rows[y] = r;
+  }
+  World w = load(Level("chimney", rows));
+  i32 dir = 1;
+  for (i32 i = 0; i < 900; i++) {
+    // Standing on the floor above: out. The last jump off the outer wall is the one that carries Pip over the inner.
+    if (w.hero.ground && w.hero.y < 160.0) { return true; }
+    bool inside = w.hero.x > ((inner * 16) as f64);
+    bool press = (inside && w.hero.ground) || (w.hero.wall != 0 && w.hero.lock == 0);
+    if (w.hero.wall != 0 && !w.hero.ground) { dir = 0 - w.hero.wall; }
+    step(w, pressing(dir < 0, dir > 0, true, press));
+  }
+  return false;
+}
+
+export string test_pip_climbs_a_chimney_and_steps_out_at_the_top() {
+  for (i32 gap = 1; gap <= 4; gap++) { if (!chimney(gap)) { return "a chimney \{gap} wide was not climbed"; } }
+  // And one too wide is not: off each wall, Pip falls further than the jump rises.
+  if (chimney(6)) { return "a chimney six wide should be too wide"; }
   return "";
 }
 
@@ -339,5 +405,27 @@ export string test_the_leaps_the_reachability_check_assumes_are_real() {
   // And it can tell: what is out of reach is not reached.
   if (leaps(9, 0)) { return "nine across should be too far"; }
   if (leaps(1, 5)) { return "five up should be too high"; }
+  return "";
+}
+
+/** **The camera follows Pip up a tower**: from the bottom floor's view to a floor high above, smoothly. */
+export string test_the_camera_follows_pip_up_and_down() {
+  World w = load(allLevels()[12]);
+  Screen s = Screen.create();
+  snap(s, w);
+  i32 bottom = s.camY;
+  if (bottom != w.rows * 16 - 180) { return "at the start the view is not at the bottom: \{bottom}"; }
+  // Pip, set three floors up.
+  w.hero.y = w.hero.y - 21.0 * 16.0;
+  f64 worst = 0.0;
+  for (i32 i = 0; i < 120; i++) {
+    f64 before = s.camYF;
+    follow(s, w);
+    f64 moved = before - s.camYF;
+    if (moved > worst) { worst = moved; }
+  }
+  f64 shown = w.hero.y - s.camYF;
+  if (shown < 40.0 || shown > 140.0) { return "Pip is \{shown} px down the view, not near its middle"; }
+  if (worst > 60.0) { return "the view jumped \{worst} px in a step"; }
   return "";
 }
