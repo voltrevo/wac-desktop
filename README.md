@@ -43,7 +43,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test:pip       # Pip played, heard, measured, paused, another level chosen, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
-    wac task test:paint  # Paint drawn in, filled, undone, saved, opened again, dropped on and picked, in Chromium
+    wac task test:paint  # Paint drawn in, filled, undone, saved, reopened, dropped on, coloured, selected, pasted and typed in
     wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
     wac task test:stackfall # Stackfall controls, focus, saves and restart in Chromium (needs Playwright)
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
@@ -101,9 +101,16 @@ shares, so their pages can see each other's files.
   a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3. It
   keeps the sum in its own folder, so started again it is still there.
 - **Paint** draws, and opens, changes and saves PNGs. Its tools are a pencil with hard edges, a soft brush, an eraser
-  (to transparent), lines, rectangles and ellipses — Shift keeps a line to 45° and a shape square — and a fill with a
-  tolerance, and a picker that takes a colour from the picture; lines, ellipses and the eraser can be smooth or hard.
-  Alt draws with the second colour. A stroke can leave the picture and come back. Undo and redo (Ctrl+Z, Ctrl+Y) go
+  (to transparent), lines, rectangles and ellipses — Shift keeps a line to 45° and a shape square — a fill with a
+  tolerance, text, a selection, and a picker that takes a colour from the picture; lines, ellipses and the eraser can
+  be smooth or hard. Alt draws with the second colour. **The colour picker** — a click on either colour — has a square
+  of saturation and value, hue and opacity strips, the colour as hex (`#rrggbbaa` with opacity), the colour before,
+  and the colours lately chosen; every colour can be part transparent. **A selection** is dragged out, moved by
+  dragging inside it (with Alt, a copy), nudged with the arrows, and put down with Enter, as one step to undo; Ctrl+C,
+  Ctrl+X and Ctrl+V copy, cut and paste, through `clipboard.png` in Paint's folder, so every Paint window pastes what
+  another copied; Delete clears to transparent, and Crop keeps only what is selected. **Text** is typed where the
+  picture is clicked, drawn as it is typed in unscii-16, wac's bitmap font, 16 to 128 pixels high, bold or not,
+  and can be dragged before Enter puts it down. A stroke can leave the picture and come back. Undo and redo (Ctrl+Z, Ctrl+Y) go
   back through strokes and through flips, quarter turns, new canvas sizes and scaling, up to 100 steps or 100 MB.
   Zoom from 6% to 3200%, with the pixels square from 200%; transparency shows as a checkerboard. It reads every kind of
   PNG — palettes, greyscale, sixteen bits, interlaced — and writes eight-bit RGBA. **Edit** on a PNG, in Files or the
@@ -227,7 +234,7 @@ shares, so their pages can see each other's files.
 | `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
 | `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/mdedit.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Markdown editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
 | `src/desk/prefs.wac`, `src/desk/settings.wac` | what Settings keeps — the look as classes and their rules, the volume, what opens what — and its window |
-| `src/apps/paint.wac`, `src/apps/paint/` | Paint: its page; the picture, strokes, shapes, fills and history (`image.wac`); its stylesheet |
+| `src/apps/paint.wac`, `src/apps/paint/` | Paint: its page; the picture, strokes, shapes, fills, selections, text and history (`image.wac`); colours, and hue, saturation and value (`colour.wac`); the font (`font16.wac`, copied from wac — `docs/wac-proposal.md` item 11); its stylesheet |
 | `src/png.wac` | PNG written (Mandelbrot and Paint) and read, every kind |
 | `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, on core's `math`; and decimals read and written as people write them |
 | `src/apps/pip.wac`, `src/apps/pip/` | Pip: its page, its rules (`world.wac`), levels, pictures (`art.wac`), sounds (`chip.wac`) and stylesheet |
@@ -276,7 +283,7 @@ shares, so their pages can see each other's files.
   would any program, handed the shell's files, which is why it works on the desktop's disk.
 - **Size.** The desktop is about 0.9 MB of module at wac `6f3ee4093` — 2.6 MB while it carried the Terminal and
   `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
-  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, Paint 0.25 MB, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
+  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, Paint 0.4 MB (a quarter of it the font), the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
   when it is first started. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.

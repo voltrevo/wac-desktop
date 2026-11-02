@@ -68,6 +68,9 @@ string icons() {
     ".i-flipv { --i: " + svg("<path d='M3 12h18M7 9 17 4v5zM7 15l10 5v-5z'/>") + "; }" +
     ".i-turn { --i: " + svg("<path d='M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9'/><path d='M4.5 4.5V9H9'/>") + "; }" +
     ".i-scale { --i: " + svg("<rect x='3.5' y='10.5' width='10' height='10' rx='1'/><path d='M13 4h7v7M20 4l-8 8'/>") + "; }" +
+    ".i-select { --i: " + svg("<path d='M4 7V5a1 1 0 0 1 1-1h2M11 4h2M17 4h2a1 1 0 0 1 1 1v2M20 11v2M20 17v2a1 1 0 0 1-1 1h-2M13 20h-2M7 20H5a1 1 0 0 1-1-1v-2M4 13v-2'/>") + "; }" +
+    ".i-type { --i: " + svg("<path d='M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6'/>") + "; }" +
+    ".i-crop { --i: " + svg("<path d='M6 2.5V18h15.5M2.5 6H18v15.5'/>") + "; }" +
     ".i-resize { --i: " + svg("<rect x='4' y='4' width='10' height='10' rx='1'/><path d='M14 9h6v11H9v-6M16 16h2v2'/>") + "; }" +
     ".i-swap { --i: " + svg("<path d='M7 4 4 7l3 3M4 7h11a4 4 0 0 1 4 4v1M17 20l3-3-3-3M20 17H9a4 4 0 0 1-4-4v-1'/>") + "; }";
 }

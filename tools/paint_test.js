@@ -2,7 +2,8 @@
 // Paint as a desktop program, in Chromium against dist/: found in the launcher, a stroke drawn with the pointer — off
 // the picture and back — a rectangle and a fill in a colour from the palette, undone and redone, saved to the desktop
 // as a PNG under the name typed, opened again from the Viewer's Edit with its tool kept between runs, and a PNG
-// dropped on its window, and one chosen in the desktop's picker, opened.
+// dropped on its window, and one chosen in the desktop's picker, opened; then a colour chosen in the colour picker,
+// a selection copied, pasted, moved and deleted, and text typed.
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -172,6 +173,91 @@ const solidPng = (w, h, [r, g, b]) => {
     await until('the picked picture opens', async () => JSON.stringify(await size(p)) === '[800,600]');
     assert.deepEqual(await pixel(p, 450, 340), green, 'the picture chosen');
     ok('Open asks the desktop\'s picker, and opens what is chosen');
+
+    const drag = async (from, to, steps = 8) => {
+      const [ax, ay] = await at(...from);
+      const [bx, by] = await at(...to);
+      await p.mouse.move(ax, ay);
+      await p.mouse.down();
+      await p.mouse.move(bx, by, { steps });
+      await p.mouse.up();
+    };
+    const same = async (x, y, want) => JSON.stringify(await pixel(p, x, y)) === JSON.stringify(want);
+    const white = [255, 255, 255, 255];
+    // The picker closed, and the keys the window's again once it has drawn without it.
+    const closed = async () => { await p.locator('.ppicker').waitFor({ state: 'detached' }); await settle(); };
+
+    // The colour picker: a colour typed as hex, and one at half opacity, each drawn with at once.
+    await p.locator('.pcolor.pfg').click();
+    await p.locator('.phex').fill('#336699');
+    await p.keyboard.press('Enter');
+    await closed();
+    await p.keyboard.press('p');
+    await drag([100, 550], [300, 550]);
+    await until('drawn in the colour typed', () => same(200, 550, [0x33, 0x66, 0x99, 255]));
+    await p.locator('.pcolor.pfg').click();
+    await until('the picker opens on the colour', async () => (await p.locator('.phex').inputValue()) === '#336699');
+    await p.locator('.phex').fill('#ff000080');
+    await p.keyboard.press('Enter');
+    await closed();
+    await drag([100, 580], [300, 580]);
+    await until('drawn at half opacity', () => same(200, 580, [255, 127, 127, 255]));
+    assert.equal(await p.locator('.precent .pswatch').count(), 0, 'the picker is closed');
+    await p.locator('.pcolor.pfg').click();
+    await until('the picker offers the two colours chosen, next time', async () => (await p.locator('.precent .pswatch').count()) === 2);
+    await p.locator('.precent .pswatch').nth(1).click();
+    await until('a recent colour, chosen again', async () => (await p.locator('.phex').inputValue()) === '#336699');
+    await p.keyboard.press('Escape');
+    await closed();
+    ok('the colour picker: hex typed, half opacity, and the colours lately chosen');
+
+    // Selecting, copying and pasting: the rectangle copied, pasted, dragged to its place and put down.
+    await p.keyboard.press('s');
+    await drag([400, 300], [500, 380]);
+    await p.keyboard.press('Control+c');
+    await p.keyboard.press('Escape');
+    await p.keyboard.press('Control+v');
+    await until('pasted at the corner', () => same(50, 40, green));
+    await drag([10, 10], [610, 110]);
+    await p.keyboard.press('Enter');
+    await until('put down where it was dragged', () => same(650, 140, green));
+    assert.deepEqual(await pixel(p, 50, 40), white, 'leaving nothing where it was pasted');
+    assert.deepEqual(await pixel(p, 450, 340), green, 'and the original where it was');
+    // Still selected where it landed: Delete takes it away, to transparent, and undo brings it back.
+    await p.keyboard.press('Delete');
+    await until('deleted', async () => (await pixel(p, 650, 140))[3] === 0);
+    await p.keyboard.press('Control+z');
+    await until('the delete undone', () => same(650, 140, green));
+    // Dragged out of the picture: a transparent hole where it was.
+    await drag([380, 280], [520, 400]);
+    await drag([450, 340], [450, 480]);
+    await p.keyboard.press('Enter');
+    await until('moved down', () => same(450, 480, green));
+    assert.equal((await pixel(p, 450, 300))[3], 0, 'a hole where it was lifted from');
+    await p.keyboard.press('Control+z');
+    await until('the move undone in one step', () => same(450, 340, green));
+    assert.deepEqual(await pixel(p, 450, 480), white, 'nothing left where it was moved to');
+    ok('a selection copied, pasted, moved, deleted and lifted, each undone in one step');
+    if (shots) await p.screenshot({ path: path.join(shots, 'paint-3.png') });
+
+    // Text: typed where the picture was clicked, in the colour drawn with, and undone in one step.
+    const inkIn = (x0, y0, x1, y1) => p.evaluate(`(() => { ${FIND} const c = find(document);
+      const d = c.getContext('2d').getImageData(${x0}, ${y0}, ${x1 - x0}, ${y1 - y0}).data; let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 40 && d[i + 1] < 40 && d[i + 2] < 40 && d[i + 3] === 255) n++; return n; })()`);
+    await p.keyboard.press('t');
+    await p.locator('.pswatch[title^="#000000"]').click();
+    const [tx, ty] = await at(100, 420);
+    await p.mouse.click(tx, ty);
+    await p.locator('.ptextin').waitFor();
+    await p.keyboard.type('Hi');
+    await until('the text is drawn as it is typed', async () => (await inkIn(100, 420, 140, 460)) > 30);
+    await p.keyboard.press('Enter');
+    await until('the field goes once the text is put down', async () => (await p.locator('.ptextin').count()) === 0);
+    const inked = await inkIn(100, 420, 140, 460);
+    assert.equal(await inkIn(100, 380, 300, 419), 0, 'nothing above where it was clicked');
+    await p.keyboard.press('Control+z');
+    await until('the text undone', async () => (await inkIn(100, 420, 140, 460)) === 0);
+    ok(`text typed where the picture was clicked (${inked} pixels of ink), undone in one step`);
 
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');
