@@ -3,7 +3,8 @@
 // checkpoints, and a stomp. Then the levels themselves, the tune's notes, and the times kept.
 
 import { Level, allLevels } from "../src/apps/pip/levels.wac";
-import { CUE_HURT, CUE_JUMP, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
+import { Vec } from "core";
+import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, follow, snap } from "../src/apps/pip/art.wac";
 import { clock, restoreBest } from "../src/apps/pip.wac";
@@ -138,11 +139,15 @@ export string test_landing_on_a_beetle_stomps_it_and_walking_into_one_hurts() {
 
 export string test_every_level_has_a_start_a_door_and_lanterns() {
   Level[] ls = allLevels();
-  if (ls.len() != 5) { return "\{ls.len()} levels"; }
+  if (ls.len() != 12) { return "\{ls.len()} levels"; }
   for (i32 i = 0; i < ls.len(); i++) {
     World w = load(ls[i]);
     if (ls[i].rows.len() != 12) { return "\{ls[i].name}: \{ls[i].rows.len()} rows"; }
-    for (i32 y = 0; y < 12; y++) { if (ls[i].rows[y].len() != 64) { return "\{ls[i].name}, row \{y}: \{ls[i].rows[y].len()} wide"; } }
+    for (i32 y = 0; y < 12; y++) {
+      if (ls[i].rows[y].len() != w.cols) { return "\{ls[i].name}, row \{y}: \{ls[i].rows[y].len()} wide, not \{w.cols}"; }
+    }
+    // The first five are short; the rest at least twice as long.
+    if (i >= 5 && w.cols < 128) { return "\{ls[i].name}: \{w.cols} wide"; }
     if (w.lanterns < 3) { return "\{ls[i].name}: \{w.lanterns} lanterns"; }
     if (w.hero.x <= 0.0) { return "\{ls[i].name}: no start"; }
     bool door = false;
@@ -192,5 +197,147 @@ export string test_the_camera_follows_smoothly_when_pip_turns() {
     follow(t, still);
   }
   if (t.camF != at) { return "a hop on the spot moved the camera from \{at} to \{t.camF}"; }
+  return "";
+}
+
+
+export string test_a_spring_throws_pip_seven_tiles_up() {
+  World w = made([".", ".", ".", ".", ".", ".", ".", ".", "..P", "##S#"]);
+  f64 floor = 0.0;
+  bool sprung = false;
+  f64 top = 999.0;
+  for (i32 i = 0; i < 120; i++) {
+    step(w, pressing(false, false, false, false));
+    // From the first throw to the top of it.
+    for (i32 j = 0; j < w.cues.len(); j++) {
+      if (w.cues.get(j) == CUE_SPRING && !sprung) {
+        sprung = true;
+        floor = w.hero.y;
+      }
+    }
+    if (sprung && w.hero.y < top) { top = w.hero.y; }
+  }
+  if (!sprung) { return "standing on the spring did not throw Pip"; }
+  f64 rose = floor - top;
+  if (rose < 7.0 * 16.0 || rose > 9.0 * 16.0) { return "the spring threw Pip \{rose} px"; }
+  return "";
+}
+
+/** The level's tile at (`x`, `y`), bedrock outside it. */
+u8 at(Level l, i32 x, i32 y) {
+  if (y < 0) { return '.'; }
+  if (y >= l.rows.len() || x < 0 || x >= l.rows[y].len()) { return '#'; }
+  return l.rows[y].toBytes()[x];
+}
+
+bool firm(u8 c) { return c == '#' || c == 'X' || c == 'S'; }
+
+/**
+ * **Every lantern, flag and door can be reached** from the start by runs, jumps, drops and springs — under an envelope
+ * smaller than Pip's own (a held jump clears three tiles; this allows three only a tile or two across), ignoring the
+ * foes, the time a block takes to crumble, and where a sliding plank is: what the levels were designed to.
+ */
+export string test_every_lantern_flag_and_door_can_be_reached() {
+  Level[] ls = allLevels();
+  for (i32 n = 0; n < ls.len(); n++) {
+    Level l = ls[n];
+    i32 cols = l.rows[0].len();
+    // Where a sliding plank can be: three tiles from its left end, and the two of its width beyond.
+    bool[] slides = bool[].filled(cols * 12, false);
+    for (i32 y = 0; y < 12; y++) {
+      for (i32 x = 0; x < cols; x++) {
+        if (at(l, x, y) == 'M') { for (i32 d = 0; d < 6 && x + d < cols; d++) { slides[y * cols + x + d] = true; } }
+      }
+    }
+    // Where Pip can stand: two tiles of room, on ground, a block, a spring, a plank or a sliding plank's way.
+    Vec<i32> stands = Vec.create();
+    i32 start = 0 - 1;
+    for (i32 y = 1; y < 11; y++) {
+      for (i32 x = 0; x < cols; x++) {
+        u8 c = at(l, x, y);
+        u8 above = at(l, x, y - 1);
+        u8 below = at(l, x, y + 1);
+        bool room = !firm(c) && c != '^' && !slides[y * cols + x] && !firm(above) && above != '^';
+        bool held = firm(below) || below == '=' || slides[(y + 1) * cols + x];
+        if (room && held) {
+          if (c == 'P') { start = stands.len(); }
+          stands.push(y * cols + x);
+        }
+      }
+    }
+    if (start < 0) { return "\{l.name}: Pip does not start on anything"; }
+    bool[] seen = bool[].filled(stands.len(), false);
+    seen[start] = true;
+    Vec<i32> todo = Vec.create();
+    todo.push(start);
+    while (todo.len() > 0) {
+      i32 from = stands.get(todo.get(todo.len() - 1));
+      todo.remove(todo.len() - 1);
+      i32 fx = from % cols;
+      i32 fy = from / cols;
+      bool sprung = at(l, fx, fy + 1) == 'S';
+      for (i32 k = 0; k < stands.len(); k++) {
+        if (seen[k]) { continue; }
+        i32 dx = stands.get(k) % cols - fx;
+        if (dx < 0) { dx = 0 - dx; }
+        i32 up = fy - stands.get(k) / cols;
+        bool ok = (up == 3 && dx <= 2) || (up == 2 && dx <= 4) || (up >= 0 && up <= 1 && dx <= 5)
+               || (up < 0 && dx <= 6 + (0 - up) / 2) || (sprung && up >= 0 && up <= 7 && dx <= 3);
+        if (ok) {
+          seen[k] = true;
+          todo.push(k);
+        }
+      }
+    }
+    // A lantern, flag or door is touched from where Pip stands up to two below it, a tile either side.
+    for (i32 y = 0; y < 12; y++) {
+      for (i32 x = 0; x < cols; x++) {
+        u8 c = at(l, x, y);
+        if (c != 'L' && c != 'C' && c != 'E') { continue; }
+        bool reached = false;
+        for (i32 k = 0; k < stands.len() && !reached; k++) {
+          i32 dx = stands.get(k) % cols - x;
+          i32 below = stands.get(k) / cols - y;
+          if (seen[k] && dx >= 0 - 1 && dx <= 1 && below >= 0 && below <= 2) { reached = true; }
+        }
+        if (!reached) { return "\{l.name}: the \{string.fromBytes([c])} at \{x}, \{y} cannot be reached"; }
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Whether Pip, running from the left and jumping at the last moment, lands `across` tiles on (counting from the last
+ * tile of ground) and `up` tiles higher — on real physics, the leaps the reachability check above takes for granted.
+ */
+bool leaps(i32 across, i32 up) {
+  string[] rows = string[].filled(12, "");
+  for (i32 y = 0; y < 12; y++) {
+    string r = "";
+    for (i32 x = 0; x < 64; x++) {
+      bool ground = (x <= 9 && y >= 9) || (x >= 9 + across && y >= 9 - up) || y == 11;
+      r = r + (ground ? "#" : (x == 2 && y == 8 ? "P" : "."));
+    }
+    rows[y] = r;
+  }
+  World w = load(Level("leap", rows));
+  bool jumped = false;
+  for (i32 i = 0; i < 240; i++) {
+    bool now = !jumped && w.hero.x + 10.0 >= 158.0;
+    if (now) { jumped = true; }
+    step(w, pressing(false, true, jumped, now));
+  }
+  return w.hero.ground && w.hero.x >= (((9 + across) * 16) as f64) - 6.0 && w.hero.y < (((9 - up) * 16) as f64);
+}
+
+export string test_the_leaps_the_reachability_check_assumes_are_real() {
+  if (!leaps(2, 3)) { return "two across and three up"; }
+  if (!leaps(4, 2)) { return "four across and two up"; }
+  if (!leaps(5, 1)) { return "five across and one up"; }
+  if (!leaps(5, 0)) { return "five across"; }
+  // And it can tell: what is out of reach is not reached.
+  if (leaps(9, 0)) { return "nine across should be too far"; }
+  if (leaps(1, 5)) { return "five up should be too high"; }
   return "";
 }

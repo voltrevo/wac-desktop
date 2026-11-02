@@ -5,7 +5,7 @@
 // slower than the ground, which is all it takes to look far away. A lit lantern throws a warm glow, added to what is
 // under it, and so does Pip.
 
-import { COLS, Foe, HERO_H, HERO_W, Mover, ROWS, TILE, World, tileAt } from "./world.wac";
+import { Foe, HERO_H, HERO_W, Mover, ROWS, TILE, World, tileAt } from "./world.wac";
 
 export static i32 SCREEN_W = 320;
 export static i32 SCREEN_H = 180;
@@ -161,6 +161,13 @@ string[] frog(bool up) {
           "oggwwwwwwggo", "oGggggggggGo", "oGGggggggGGo", "oGGoooooGGGo", "oo.......ooo", "............"];
 }
 
+/** Whether Pip is in tile (`tx`, `ty`). */
+bool touchesTile(World w, i32 tx, i32 ty) {
+  f64 l = (tx * TILE) as f64;
+  f64 t = (ty * TILE) as f64;
+  return w.hero.x < l + (TILE as f64) && w.hero.x + HERO_W > l && w.hero.y < t + (TILE as f64) && w.hero.y + HERO_H > t;
+}
+
 i32 hash(i32 x, i32 y) {
   i32 h = x * 374761393 + y * 668265263;
   h = (h ^ (h >> 13)) * 1274126177;
@@ -173,7 +180,7 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
   if (c == '#') {
     // Grass grows where there is air above, not under spikes or a block.
     u8 above = tileAt(w, tx, ty - 1);
-    bool top = ty > 0 && above != '#' && above != '^' && above != 'X';
+    bool top = ty > 0 && above != '#' && above != '^' && above != 'X' && above != 'S';
     rect(s, sx, sy, TILE, TILE, 0x4A3226);
     for (i32 k = 0; k < 5; k++) {
       i32 h = hash(tx * 7 + k, ty);
@@ -186,13 +193,22 @@ void drawTile(Screen s, World w, i32 tx, i32 ty, i32 sx, i32 sy, i32 frame) {
       for (i32 k = 0; k < 16; k = k + 3) { if (hash(tx * 16 + k, ty) % 3 == 0) { dot(s, sx + k, sy - 1, 0x3E9A4A); } }
     }
   } else if (c == 'X') {
-    i32 shake = w.crumbling[ty * COLS + tx] > 0 ? (frame / 2 % 2 == 0 ? 1 : 0 - 1) : 0;
+    i32 shake = w.crumbling[ty * w.cols + tx] > 0 ? (frame / 2 % 2 == 0 ? 1 : 0 - 1) : 0;
     rect(s, sx + shake, sy, TILE, TILE, 0x7E6E60);
     rect(s, sx + shake, sy, TILE, 1, 0x9C8B7A);
     rect(s, sx + shake + 1, sy + 8, 14, 1, 0x5E5046);
     rect(s, sx + shake + 7, sy + 1, 1, 7, 0x5E5046);
     rect(s, sx + shake + 4, sy + 9, 1, 6, 0x5E5046);
     rect(s, sx + shake + 11, sy + 9, 1, 6, 0x5E5046);
+  } else if (c == 'S') {
+    // A spring set into the ground: its red plate flush with the grass, pressed down while Pip is on it.
+    bool pressed = w.hero.ground && touchesTile(w, tx, ty - 1);
+    i32 top = pressed ? 5 : 0;
+    rect(s, sx, sy, TILE, TILE, 0x4A3226);
+    rect(s, sx + 2, sy, 12, TILE, 0x2A1E1A);
+    for (i32 y = sy + top + 4; y < sy + 15; y = y + 2) { rect(s, sx + 4, y, 8, 1, 0xB8B8C8); }
+    rect(s, sx + 1, sy + top, 14, 3, 0xD84A3A);
+    rect(s, sx + 1, sy + top, 14, 1, 0xF07A5A);
   } else if (c == '=') {
     rect(s, sx, sy, TILE, 5, 0xA0703C);
     rect(s, sx, sy, TILE, 1, 0xC28A4C);
@@ -274,8 +290,8 @@ void hills(Screen s, i32 shift, i32 base, i32 c, i32 height) {
 static f64 LEAD = 40.0;
 static f64 SLACK = 20.0;
 
-f64 clampCam(f64 x) {
-  f64 most = ((COLS * TILE - SCREEN_W) as f64);
+f64 clampCam(World w, f64 x) {
+  f64 most = ((w.cols * TILE - SCREEN_W) as f64);
   return x < 0.0 ? 0.0 : (x > most ? most : x);
 }
 
@@ -294,14 +310,14 @@ export void follow(Screen s, World w) {
   f64 target = s.camF;
   if (focus > s.camF + SLACK) { target = focus - SLACK; }
   if (focus < s.camF - SLACK) { target = focus + SLACK; }
-  s.camF = clampCam(s.camF + (target - s.camF) * 0.18);
+  s.camF = clampCam(w, s.camF + (target - s.camF) * 0.18);
   s.camX = s.camF.round() as~ i32;
 }
 
 /** The camera straight to Pip: at a level's start, or when Pip comes back to a flag. */
 export void snap(Screen s, World w) {
   s.lead = 0.0;
-  s.camF = clampCam(w.hero.x + 5.0 - ((SCREEN_W / 2) as f64));
+  s.camF = clampCam(w, w.hero.x + 5.0 - ((SCREEN_W / 2) as f64));
   s.camX = s.camF.round() as~ i32;
 }
 
@@ -310,7 +326,7 @@ export void drawWorld(Screen s, World w, i32 frame) {
   drawSky(s, frame);
   i32 x0 = s.camX / TILE;
   for (i32 ty = 0; ty < ROWS; ty++) {
-    for (i32 tx = x0; tx <= x0 + SCREEN_W / TILE + 1 && tx < COLS; tx++) {
+    for (i32 tx = x0; tx <= x0 + SCREEN_W / TILE + 1 && tx < w.cols; tx++) {
       drawTile(s, w, tx, ty, tx * TILE - s.camX, ty * TILE - s.camY, frame);
     }
   }
@@ -339,7 +355,7 @@ export void drawWorld(Screen s, World w, i32 frame) {
   if (!blink) { sprite(s, pip(legs), hx, hy, w.hero.facing < 0); }
   // The light: each lit lantern, the open door, and a little around Pip.
   for (i32 ty = 0; ty < ROWS; ty++) {
-    for (i32 tx = x0 - 2; tx <= x0 + SCREEN_W / TILE + 3 && tx < COLS; tx++) {
+    for (i32 tx = x0 - 2; tx <= x0 + SCREEN_W / TILE + 3 && tx < w.cols; tx++) {
       u8 c = tileAt(w, tx, ty);
       i32 sx = tx * TILE - s.camX + 8;
       i32 sy = ty * TILE - s.camY + 8;

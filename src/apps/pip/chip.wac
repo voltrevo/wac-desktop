@@ -100,8 +100,11 @@ export f64[][] effects() {
   noise(crumble, 0, 0.12, 30, 0.25);
   f64[] land = silence(0.06);
   noise(land, 0, 0.06, 40, 0.12);
+  f64[] spring = silence(0.3);
+  square(spring, 0, 0.3, 180.0, 1100.0, 0.25, 0.3);
+  square(spring, len(0.02), 0.2, 360.0, 1600.0, 0.5, 0.12);
   // Index 0 is nothing; the rest are CUE_JUMP onwards, in order.
-  return [silence(0.01), jump, wall, lantern, stomp, hurt, checkpoint, open, win, crumble, land];
+  return [silence(0.01), jump, wall, lantern, stomp, hurt, checkpoint, open, win, crumble, land, spring];
 }
 
 /** A note name — `E5`, `C#4` — as semitones from A4; `.` for a rest and `-` for a held note are -1000. */

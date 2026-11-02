@@ -17,7 +17,7 @@ import { Vec } from "core";
 import { Level } from "./levels.wac";
 
 export static i32 TILE = 16;
-export static i32 COLS = 64;
+/** Every level is this high; how wide it is, is its own (`World.cols`). */
 export static i32 ROWS = 12;
 /** Pip's box, inside its sprite. */
 export static f64 HERO_W = 10.0;
@@ -42,6 +42,8 @@ static i32 WALL_LOCK = 9;
 static i32 DYING = 45;
 static i32 CRUMBLE = 26;
 static i32 CRUMBLED = 150;
+/** What a spring throws Pip up at: about seven tiles high. */
+static f64 SPRING = 9.4;
 
 /** What a step can cue: each has a sound. */
 export static i32 CUE_JUMP = 1;
@@ -54,6 +56,7 @@ export static i32 CUE_OPEN = 7;
 export static i32 CUE_WIN = 8;
 export static i32 CUE_CRUMBLE = 9;
 export static i32 CUE_LAND = 10;
+export static i32 CUE_SPRING = 11;
 
 /** The keys, as the page saw them: held, and whether jump was pressed since the last step. */
 export struct Keys {
@@ -82,6 +85,8 @@ export struct Hero {
   i32 dying;
   /** Steps run, for the sprite's stride. */
   i32 stride;
+  /** Rising from a jump of Pip's own, which letting go cuts short — not from a spring, which it does not. */
+  bool jumping;
 }
 
 /** A beetle that patrols (`hops` false), or a frog that hops toward Pip. */
@@ -110,6 +115,8 @@ export struct World {
   Level level;
   /** The tiles, one byte each, row by row; a crumbled block reads as air until it comes back. */
   u8[] tiles;
+  /** How wide the level is, in tiles: its longest row. */
+  i32 cols;
   /** For each crumbling block, by tile: steps until it falls (counting down), or steps until it is back. */
   i32[] crumbling;
   i32[] gone;
@@ -131,7 +138,9 @@ export struct World {
 
 /** The level `l`, from its start. */
 export World load(Level l) {
-  u8[] t = u8[].filled(COLS * ROWS, '.');
+  i32 cols = 1;
+  for (i32 y = 0; y < l.rows.len(); y++) { if (l.rows[y].len() > cols) { cols = l.rows[y].len(); } }
+  u8[] t = u8[].filled(cols * ROWS, '.');
   Vec<Foe> foes = Vec.create();
   Vec<Mover> movers = Vec.create();
   f64 sx = 0.0;
@@ -139,7 +148,7 @@ export World load(Level l) {
   i32 lanterns = 0;
   for (i32 y = 0; y < ROWS && y < l.rows.len(); y++) {
     u8[] row = l.rows[y].toBytes();
-    for (i32 x = 0; x < COLS && x < row.len(); x++) {
+    for (i32 x = 0; x < cols && x < row.len(); x++) {
       u8 c = row[x];
       f64 px = (x * TILE) as f64;
       f64 py = (y * TILE) as f64;
@@ -156,22 +165,22 @@ export World load(Level l) {
       } else if (c == 'L') {
         lanterns++;
       }
-      t[y * COLS + x] = c;
+      t[y * cols + x] = c;
     }
   }
-  Hero h = Hero(sx, sy, 0.0, 0.0, false, 99, 99, 0, 0, 1, 0, 0);
-  return World(l, t, i32[].filled(COLS * ROWS, 0), i32[].filled(COLS * ROWS, 0), h, foes, movers, sx, sy, lanterns, 0,
+  Hero h = Hero(sx, sy, 0.0, 0.0, false, 99, 99, 0, 0, 1, 0, 0, false);
+  return World(l, t, cols, i32[].filled(cols * ROWS, 0), i32[].filled(cols * ROWS, 0), h, foes, movers, sx, sy, lanterns, 0,
                0, 0, false, Vec.create(), 0 - 1);
 }
 
 /** The tile at column `x`, row `y`: bedrock beyond the sides and below, air above. */
 export u8 tileAt(World w, i32 x, i32 y) {
-  if (x < 0 || x >= COLS || y >= ROWS) { return '#'; }
+  if (x < 0 || x >= w.cols || y >= ROWS) { return '#'; }
   if (y < 0) { return '.'; }
-  return w.tiles[y * COLS + x];
+  return w.tiles[y * w.cols + x];
 }
 
-bool solid(u8 c) { return c == '#' || c == 'X'; }
+bool solid(u8 c) { return c == '#' || c == 'X' || c == 'S'; }
 
 i32 tileOf(f64 v) { return (v / (TILE as f64)).floor() as~ i32; }
 
@@ -286,7 +295,7 @@ void hurt(World w) {
 
 /** Pip back at the last checkpoint, and the foes where they started. */
 void respawn(World w) {
-  w.hero = Hero(w.backX, w.backY, 0.0, 0.0, false, 99, 99, 0, 0, w.hero.facing, 0, 0);
+  w.hero = Hero(w.backX, w.backY, 0.0, 0.0, false, 99, 99, 0, 0, w.hero.facing, 0, 0, false);
   for (i32 i = 0; i < w.foes.len(); i++) {
     Foe f = w.foes.get(i);
     f.x = f.startX;
@@ -323,8 +332,8 @@ void stepCrumbles(World w) {
       }
     } else if (w.gone[i] > 0) {
       w.gone[i]--;
-      i32 tx = i % COLS;
-      i32 ty = i / COLS;
+      i32 tx = i % w.cols;
+      i32 ty = i / w.cols;
       // Back once Pip is not where it would be.
       if (w.gone[i] == 0) {
         if (touches(w.hero.x, w.hero.y, HERO_W, HERO_H, tx, ty, 0.0)) { w.gone[i] = 1; } else { w.tiles[i] = 'X'; }
@@ -367,6 +376,7 @@ void stepHero(World w, Keys k) {
     h.ground = false;
     h.air = COYOTE;
     h.asked = 99;
+    h.jumping = true;
     w.riding = 0 - 1;
     w.cues.push(CUE_JUMP);
   } else if (h.asked < BUFFER && h.wall != 0 && !h.ground) {
@@ -375,9 +385,11 @@ void stepHero(World w, Keys k) {
     h.facing = 0 - h.wall;
     h.lock = WALL_LOCK;
     h.asked = 99;
+    h.jumping = true;
     w.cues.push(CUE_WALL_JUMP);
   }
-  if (!k.jump && h.vy < 0.0 - CUT) { h.vy = 0.0 - CUT; }
+  if (h.jumping && !k.jump && h.vy < 0.0 - CUT) { h.vy = 0.0 - CUT; }
+  if (h.vy >= 0.0) { h.jumping = false; }
 
   h.vy = h.vy + GRAVITY;
   f64 fall = h.wall != 0 && want == h.wall && h.vy > 0.0 ? WALL_SLIDE : MAX_FALL;
@@ -413,11 +425,26 @@ void stepHero(World w, Keys k) {
   }
   h.stride = h.ground && h.vx != 0.0 ? h.stride + 1 : 0;
 
+  // A spring under Pip throws Pip up — higher than any jump, and the jump key makes no difference.
+  if (h.ground) {
+    i32 under = tileOf(h.y + HERO_H + 1.0);
+    for (i32 tx = tileOf(h.x); tx <= tileOf(h.x + HERO_W - 0.01); tx++) {
+      if (tileAt(w, tx, under) == 'S') {
+        h.vy = 0.0 - SPRING;
+        h.jumping = false;
+        h.ground = false;
+        h.air = COYOTE;
+        w.riding = 0 - 1;
+        w.cues.push(CUE_SPRING);
+        break;
+      }
+    }
+  }
   // What Pip stands on crumbles.
   if (h.ground) {
     i32 ty = tileOf(h.y + HERO_H + 1.0);
     for (i32 tx = tileOf(h.x); tx <= tileOf(h.x + HERO_W - 0.01); tx++) {
-      if (tileAt(w, tx, ty) == 'X' && w.crumbling[ty * COLS + tx] == 0) { w.crumbling[ty * COLS + tx] = CRUMBLE; }
+      if (tileAt(w, tx, ty) == 'X' && w.crumbling[ty * w.cols + tx] == 0) { w.crumbling[ty * w.cols + tx] = CRUMBLE; }
     }
   }
 }
@@ -438,12 +465,12 @@ void touch(World w) {
         return;
       }
       if (c == 'L') {
-        w.tiles[ty * COLS + tx] = 'l';
+        w.tiles[ty * w.cols + tx] = 'l';
         w.lit++;
         w.cues.push(w.lit == w.lanterns ? CUE_OPEN : CUE_LANTERN);
       }
       if (c == 'C') {
-        w.tiles[ty * COLS + tx] = 'c';
+        w.tiles[ty * w.cols + tx] = 'c';
         w.backX = ((tx * TILE) as f64) + 3.0;
         w.backY = (((ty + 1) * TILE) as f64) - HERO_H;
         w.cues.push(CUE_CHECKPOINT);
@@ -490,6 +517,8 @@ void stepFoes(World w) {
       if (h.vy > 0.0 && h.y + HERO_H - f.y < 8.0) {
         f.alive = false;
         h.vy = 0.0 - 4.2;
+        // Bounced off a foe, Pip goes higher holding jump, as from a jump.
+        h.jumping = true;
         h.air = COYOTE;
         w.cues.push(CUE_STOMP);
       } else {
