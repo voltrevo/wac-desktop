@@ -1,0 +1,97 @@
+// Mandelbrot's arithmetic, without a page: the set's values and the palette against the original's (numbers taken
+// from github.com/voltrevo/mandelbrot's own functions, run in Node), the functions of a real number the app builds
+// itself, the transform that shows a move before it is drawn, what is kept between runs, and the PNG it saves.
+
+import { gzip.inflate } from "wac";
+import { Colours, Palette, Viewport, iterate, png, previewCss, rand, restore } from "../src/apps/mandelbrot.wac";
+import { commas, exp, fixed, ln, magnitude, parseNumber, pow, sqrt } from "../src/apps/maths.wac";
+
+bool near(f64 a, f64 b, f64 tolerance) { return a - b < tolerance && b - a < tolerance; }
+
+export string test_maths_matches_the_browsers_to_fourteen_digits() {
+  if (!near(ln(10.0), 2.302585092994046, 0.00000000000001)) { return "ln 10 = \{ln(10.0)}"; }
+  if (!near(exp(2.5), 12.182493960703473, 0.0000000000001)) { return "exp 2.5 = \{exp(2.5)}"; }
+  if (!near(pow(7.3, 1.3), 13.253168456005625, 0.0000000000001)) { return "7.3^1.3 = \{pow(7.3, 1.3)}"; }
+  if (!near(sqrt(2.0), 1.4142135623730951, 0.000000000000001)) { return "√2 = \{sqrt(2.0)}"; }
+  if (!near(ln(exp(0.0 - 300.0)), 0.0 - 300.0, 0.0000000001)) { return "ln e^-300 = \{ln(exp(0.0 - 300.0))}"; }
+  if (!near(exp(ln(0.000123)), 0.000123, 0.0000000000000001)) { return "e^ln 0.000123 = \{exp(ln(0.000123))}"; }
+  return "";
+}
+
+export string test_numbers_are_read_and_written_as_people_write_them() {
+  if (parseNumber("-0.25", 9.0) != 0.0 - 0.25) { return "-0.25"; }
+  if (!near(parseNumber("1.5e-7", 9.0), 0.00000015, 0.0000000000001)) { return "1.5e-7"; }
+  if (parseNumber("abc", 9.0) != 9.0 || parseNumber("", 9.0) != 9.0 || parseNumber("1x", 9.0) != 9.0) { return "not numbers"; }
+  if (commas(1234567 as i64) != "1,234,567" || commas(500 as i64) != "500") { return "commas: \{commas(1234567 as i64)}"; }
+  if (fixed(3.14159, 2) != "3.14" || fixed(0.0 - 0.004, 2) != "0.00" || fixed(2.6, 0) != "3") { return "fixed: \{fixed(3.14159, 2)}"; }
+  if (magnitude(12400.0) != "12,400" || magnitude(32000000.0) != "3.2 × 10^7") { return "magnitude: \{magnitude(32000000.0)}"; }
+  return "";
+}
+
+export string test_the_sets_values_are_the_originals() {
+  if (iterate(0.3, 0.5, 500) != 0.0 - 1.0) { return "0.3+0.5i is in the set at depth 500"; }
+  if (!near(iterate(0.0 - 0.75, 0.1, 500), 32.31170443767925, 0.000000001)) { return "-0.75+0.1i: \{iterate(0.0 - 0.75, 0.1, 500)}"; }
+  if (iterate(2.0, 2.0, 500) != 0.5) { return "2+2i: \{iterate(2.0, 2.0, 500)}"; }
+  if (iterate(0.0 - 0.75, 0.1, 30) != 0.0 - 1.0) { return "at depth 30, -0.75+0.1i has not escaped"; }
+  if (iterate(0.0, 0.0, 1000000) != 0.0 - 1.0 || iterate(0.0 - 1.0, 0.0, 1000000) != 0.0 - 1.0) { return "the cardioid and the disc are inside"; }
+  return "";
+}
+
+export string test_the_palette_is_the_originals() {
+  if (rand(1367415538.0) != 0.27875328063964844 || rand(12.5) != 0.42363923613447696) { return "rand: \{rand(1367415538.0)}"; }
+  Palette p = Palette.of(1367415538.0);
+  f64[] want = [0.22489137561013234, 0.26168328866846213, 0.2901729313179941];
+  for (i32 k = 0; k < 3; k++) { if (!near(p.at(3.7, k), want[k], 0.000000000001)) { return "at 3.7, channel \{k}: \{p.at(3.7, k)}"; } }
+  Colours c = Colours.create();
+  c.change(1.0);
+  f64[] next = [0.45916325758885224, 0.28637466890864705, 0.3186291035966706];
+  for (i32 k = 0; k < 3; k++) { if (!near(c.palette.at(5.5, k), next[k], 0.000000000001)) { return "the next palette, at 5.5: \{c.palette.at(5.5, k)}"; } }
+  return "";
+}
+
+export string test_a_move_is_shown_by_the_canvass_transform_until_it_is_drawn() {
+  Viewport drawn = Viewport(0.0, 0.0, 4.0, 500, 400, 300);
+  if (previewCss(drawn, drawn.copy(), 2.0) != "") { return "the view drawn needs no transform"; }
+  Viewport moved = drawn.copy();
+  moved.cx = 0.0 - 10.0 * moved.ps();
+  string css = previewCss(drawn, moved, 2.0);
+  if (css.indexOf("translate(5.00px, 0.00px) scale(1.000000)") < 0) { return "dragged ten pixels right, at two to a CSS pixel: \{css}"; }
+  Viewport zoomed = drawn.copy();
+  zoomed.zoom(0.5, 0.0, 0.0);
+  css = previewCss(drawn, zoomed, 1.0);
+  if (css.indexOf("translate(0.00px, 0.00px) scale(2.000000)") < 0) { return "zoomed in about the corner: \{css}"; }
+  return "";
+}
+
+export string test_the_view_and_colours_are_kept_and_brought_back() {
+  Viewport v = Viewport(0.0 - 0.75, 0.0, 8.0, 500, 10, 10);
+  Colours c = Colours.create();
+  if (!restore("-1.25 0.03125 0.5 1200 2 1.5 0.25 3\n", v, c)) { return "it was not read"; }
+  if (v.cx != 0.0 - 1.25 || v.cy != 0.03125 || v.width != 0.5 || v.depth != 1200) { return "the view: \{v.cx} \{v.cy} \{v.width} \{v.depth}"; }
+  if (c.seed != 2.0 || c.rate != 1.5 || c.shift != 0.25 || c.reference != 3.0) { return "the colours"; }
+  Viewport w = Viewport(1.0, 1.0, 1.0, 1, 1, 1);
+  if (restore("1 2 nope", w, c) || w.cx != 1.0) { return "what is not a kept view changes nothing"; }
+  return "";
+}
+
+export string test_a_picture_is_saved_as_a_png_that_inflates_back_to_its_rows() {
+  u8[] rgba = u8[].filled(3 * 2 * 4, 0 as u8);
+  for (i32 i = 0; i < rgba.len(); i++) { rgba[i] = (i * 37 % 256) as@ u8; }
+  u8[] out = png(3, 2, rgba);
+  if (out[0] != 0x89 as u8 || out[1] != 'P' || out[12] != 'I' || out[15] != 'R') { return "the signature and IHDR"; }
+  // IDAT's length is at 33, its zlib stream at 41 after the two-byte header, its Adler-32 last.
+  i32 len = ((out[33] as i32) << 24) | ((out[34] as i32) << 16) | ((out[35] as i32) << 8) | (out[36] as i32);
+  u8[] deflated = u8[].filled(len - 6, 0 as u8);
+  deflated.copyFrom(out, 43, 0, len - 6);
+  u8[] rows = inflate(deflated);
+  if (rows.len() != 2 * 13) { return "\{rows.len()} bytes of rows"; }
+  // Each row is filtered by its left neighbour: undone, it is the picture.
+  for (i32 y = 0; y < 2; y++) {
+    if (rows[y * 13] != 1 as u8) { return "row \{y}'s filter"; }
+    for (i32 i = 0; i < 12; i++) {
+      i32 left = i >= 4 ? rgba[y * 12 + i - 4] as i32 : 0;
+      if ((((rows[y * 13 + 1 + i] as i32) + left) & 255) != (rgba[y * 12 + i] as i32)) { return "row \{y}, byte \{i}"; }
+    }
+  }
+  return "";
+}

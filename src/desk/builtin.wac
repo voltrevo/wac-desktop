@@ -39,6 +39,10 @@ export Start builtin(string app, string arg) {
     w = 340;
     h = 540;
     ic = "calc";
+  } else if (app == "mandelbrot") {
+    w = 900;
+    h = 620;
+    ic = "fractal";
   } else if (app == "stackfall") {
     w = 460;
     h = 760;

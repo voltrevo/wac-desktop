@@ -1,0 +1,169 @@
+// The few functions of a real number the desktop's apps need — logarithms, powers, a decimal read and written — which
+// wac's core leaves out: it has a float's rounding and its bits, and these are built from them.
+//
+// **Accurate to about fifteen digits**, which is what an `f64` holds: each is reduced to a small range by powers of
+// two, where a short series converges, and scaled back. Nothing here traps; a logarithm of zero or less is negative
+// infinity, as IEEE 754 has it.
+
+static f64 LN2 = 0.6931471805599453;
+
+/** `2^k`, for `k` a float's exponent can hold: made from its bits. */
+f64 twoTo(i32 k) {
+  if (k > 1023) { return 1.0 / 0.0; }
+  if (k < 0 - 1022) { return 0.0; }
+  return f64.fromBits((((k + 1023) as i64) as@ u64) << 52);
+}
+
+/** The natural logarithm of `x`. */
+export f64 ln(f64 x) {
+  if (x != x) { return x; }
+  if (x <= 0.0) { return x == 0.0 ? 0.0 - 1.0 / 0.0 : 0.0 / 0.0; }
+  if (x == 1.0 / 0.0) { return x; }
+  // x = m × 2^e with m in [1, 2), from its bits; a subnormal is scaled up first.
+  f64 scaled = x;
+  i32 extra = 0;
+  if (x < 2.2250738585072014e-308) {
+    scaled = x * 18014398509481984.0;
+    extra = 0 - 54;
+  }
+  u64 bits = f64.toBits(scaled);
+  i32 e = (((bits >> 52) & (2047 as u64)) as@ i32) - 1023 + extra;
+  f64 m = f64.fromBits((bits & (4503599627370495 as u64)) | (4607182418800017408 as u64));
+  // m near 1 converges fastest: [0.707, 1.414).
+  if (m > 1.4142135623730951) {
+    m = m / 2.0;
+    e++;
+  }
+  // ln m = 2 atanh s, s = (m - 1) / (m + 1), |s| < 0.172: each term a thirtieth of the last.
+  f64 s = (m - 1.0) / (m + 1.0);
+  f64 s2 = s * s;
+  f64 term = s;
+  f64 sum = 0.0;
+  for (i32 k = 1; k < 40; k = k + 2) {
+    sum = sum + term / (k as f64);
+    term = term * s2;
+  }
+  return 2.0 * sum + (e as f64) * LN2;
+}
+
+/** `e^x`. */
+export f64 exp(f64 x) {
+  if (x != x) { return x; }
+  if (x > 709.8) { return 1.0 / 0.0; }
+  if (x < 0.0 - 745.2) { return 0.0; }
+  // x = k ln 2 + r, |r| ≤ ln 2 / 2; e^r by its series, e^x = 2^k e^r.
+  f64 kf = (x / LN2).round();
+  f64 r = x - kf * LN2;
+  f64 term = 1.0;
+  f64 sum = 1.0;
+  for (i32 n = 1; n < 20; n++) {
+    term = term * r / (n as f64);
+    sum = sum + term;
+  }
+  i32 k = kf as~ i32;
+  // Two steps, so a result near the smallest float is not lost to a 2^k that alone is too small.
+  return sum * twoTo(k / 2) * twoTo(k - k / 2);
+}
+
+/** `x^y`, for `x` > 0; `0^y` is 0 for `y` > 0. */
+export f64 pow(f64 x, f64 y) {
+  if (x == 0.0) { return y > 0.0 ? 0.0 : 1.0 / 0.0; }
+  return exp(y * ln(x));
+}
+
+/** The square root of `x` ≥ 0, by Newton's method from a guess halfway in exponent. */
+export f64 sqrt(f64 x) {
+  if (x <= 0.0 || x != x || x == 1.0 / 0.0) { return x == 0.0 || x == 1.0 / 0.0 ? x : 0.0 / 0.0; }
+  f64 g = exp(ln(x) / 2.0);
+  for (i32 k = 0; k < 3; k++) { g = (g + x / g) / 2.0; }
+  return g;
+}
+
+/** A decimal as a person or a browser writes one — `-0.25`, `3`, `1.5e-7` — or `fallback` when `s` is not one. */
+export f64 parseNumber(string s, f64 fallback) {
+  u8[] b = s.toBytes();
+  i32 i = 0;
+  bool neg = false;
+  if (i < b.len() && (b[i] == '-' || b[i] == '+')) {
+    neg = b[i] == '-';
+    i++;
+  }
+  f64 v = 0.0;
+  i32 digits = 0;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+    v = v * 10.0 + ((b[i] - '0') as f64);
+    digits++;
+    i++;
+  }
+  if (i < b.len() && b[i] == '.') {
+    i++;
+    f64 place = 0.1;
+    while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+      v = v + ((b[i] - '0') as f64) * place;
+      place = place / 10.0;
+      digits++;
+      i++;
+    }
+  }
+  if (digits == 0) { return fallback; }
+  if (i < b.len() && (b[i] == 'e' || b[i] == 'E')) {
+    i++;
+    bool eneg = false;
+    if (i < b.len() && (b[i] == '-' || b[i] == '+')) {
+      eneg = b[i] == '-';
+      i++;
+    }
+    i32 e = 0;
+    while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+      e = e * 10 + ((b[i] - '0') as i32);
+      i++;
+    }
+    for (i32 k = 0; k < e && k < 400; k++) { v = eneg ? v / 10.0 : v * 10.0; }
+  }
+  if (i != b.len()) { return fallback; }
+  return neg ? 0.0 - v : v;
+}
+
+/** A whole number with its thousands marked: `1,234,567`. */
+export string commas(i64 n) {
+  if (n < 0 as i64) { return "-" + commas((0 as i64) - n); }
+  string digits = "\{n}";
+  string out = "";
+  for (i32 i = 0; i < digits.len(); i++) {
+    if (i > 0 && (digits.len() - i) % 3 == 0) { out = out + ","; }
+    out = out + digits.slice(i, i + 1);
+  }
+  return out;
+}
+
+/** `x` to `places` decimal places: `fixed(3.14159, 2)` is `3.14`. */
+export string fixed(f64 x, i32 places) {
+  if (x != x) { return "NaN"; }
+  if (x < 0.0) {
+    string rest = fixed(0.0 - x, places);
+    bool zero = true;
+    u8[] rb = rest.toBytes();
+    for (i32 i = 0; i < rb.len(); i++) { if (rb[i] >= '1' && rb[i] <= '9') { zero = false; } }
+    return zero ? rest : "-" + rest;
+  }
+  f64 scale = 1.0;
+  for (i32 k = 0; k < places; k++) { scale = scale * 10.0; }
+  i64 n = (x * scale).round() as~ i64;
+  if (places == 0) { return "\{n}"; }
+  i64 unit = scale as~ i64;
+  string frac = "\{n % unit}";
+  while (frac.len() < places) { frac = "0" + frac; }
+  return "\{n / unit}.\{frac}";
+}
+
+/** A magnitude as a person reads it: `850`, `12,400`, then `3.2 × 10^7` once it is long. */
+export string magnitude(f64 x) {
+  if (x < 1000000.0) { return x < 10.0 ? fixed(x, 1) : commas(x.round() as~ i64); }
+  i32 e = 0;
+  f64 m = x;
+  while (m >= 10.0) {
+    m = m / 10.0;
+    e++;
+  }
+  return "\{fixed(m, 1)} × 10^\{e}";
+}

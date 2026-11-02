@@ -3,7 +3,7 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Stackfall**, and the **wac IDE** —
+**Editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Stackfall**, and the **wac IDE** —
 each a program of its own on the site the desktop is served from, started in windows it opens itself. Deleting moves things to a
 **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
@@ -40,6 +40,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
                          # dist/apps/explorer.wasm, then dist/index.json (site.wac)
     wac task serve       # http://localhost:8080 — over http the desktop gets its storage
     wac task test        # formats, previews, the disk and the window manager, without a browser
+    wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:stackfall # Stackfall controls, focus, saves and restart in Chromium (needs Playwright)
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
@@ -94,6 +95,10 @@ shares, so their pages can see each other's files.
   calculators do them (`200 + 10%` is 220). The answer shows as you type; finished sums stay above, and
   a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3. It
   keeps the sum in its own folder, so started again it is still there.
+- **Mandelbrot** is a rewrite in wac of github.com/voltrevo/mandelbrot: the same values and the same palette, drawn
+  from the middle out a block at a time. A drag or the wheel moves the picture at once by the canvas's transform and
+  draws it once still; what was worked out is kept, so a drag works out only what came into view and new colours work
+  out nothing. The view is kept in its folder, and *Save picture* writes a PNG to the desktop.
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;
   ←/→ move, ↑/X rotate clockwise, Z anticlockwise, ↓ soft-drops, Space hard-drops, and C/Shift holds once per
@@ -171,6 +176,7 @@ shares, so their pages can see each other's files.
 | `src/desk/files.wac` | Files |
 | `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
 | `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
+| `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, and the logarithms, powers and decimals it needs, which wac's core leaves out |
 | `src/apps/stackfall.wac`, `src/apps/stackfall/` | Stackfall: its page, independent game rules, versioned saves and stylesheet |
 | `src/apps/ide.wac` | the wac IDE, from the pinned `ide` package, with its checker as `--spawn checker` |
 | `src/desk/program.wac` | a program from the disk: started with no window, each window it opens a slice of `wac.page` answered by `web`'s `PageServer` |

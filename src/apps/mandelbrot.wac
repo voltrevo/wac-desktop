@@ -1,0 +1,854 @@
+// Mandelbrot: the set drawn, dragged and zoomed into — a rewrite in wac of github.com/voltrevo/mandelbrot.
+//
+// **The same picture as the original.** Each pixel is a point c of the complex plane, and its value is how many
+// steps of z → z² + c it took z to leave the circle of radius 2, smoothed between steps by how far past the circle
+// it got (`iterate`); a point still inside after `depth` steps is taken to be in the set and drawn black. A value is
+// coloured by its logarithm, raised to the power 1.3, through a palette made from a seeded random sequence and
+// blended between its colours (`Palette`) — the original's seed, its arithmetic and so its colours, exactly.
+//
+// **Drawn a block at a time, from the middle out**, a frame's worth of blocks between frames, so the picture comes
+// in where the eye is and a drag or a key is answered while it does. What has been worked out is kept, a value per
+// pixel: a drag moves the picture by whole pixels, and only what came into view is worked out; a deeper search
+// works out again only the points that had not escaped; new colours are only the old values coloured again.
+//
+// **Moving is shown at once, worked out after.** While a drag or the wheel moves the view, the picture already drawn
+// is moved and scaled to match by the canvas's transform (`previewCss`) — no pixel is sent — and once it has been
+// still for a moment, the view is drawn properly.
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`): built into `dist/apps/mandelbrot.wasm` and started from
+// the site. The view and the colours are kept in its own folder, so it opens where it was left; a picture is saved
+// as a PNG on the desktop, or downloaded when it runs as a page on its own.
+
+import { Ticket, Vec } from "core";
+import { Desktop, Element, ElementEvent, Listen, MOD_SHIFT, Node, Page, Ref, Ui, when, html.b, html.button, html.canvas,
+         html.div, html.h2, html.input, html.p, html.span, html.style } from "web";
+import { gzip.crc32, gzip.deflateDynamic } from "wac";
+import { css } from "../style.wac";
+import { mandelCss } from "./style.wac";
+import { commas, exp, fixed, ln, magnitude, parseNumber } from "./maths.wac";
+
+/** The side of a block, worked out and sent together. */
+static i32 BLOCK = 64;
+/** A pixel's value not worked out yet, and one taken to be in the set. */
+static f64 UNKNOWN = 0.0 - 2.0;
+static f64 INSIDE = 0.0 - 1.0;
+/** The most pixels drawn: a larger window is drawn at fewer pixels than the screen has, and scaled up. */
+static f64 MOST_PIXELS = 4000000.0;
+/** Where the view and the colours are kept, in the program's own folder. */
+static string KEPT = "view";
+/** The original's palette seed: ⌊966908800 √2⌋. */
+static f64 MAGIC = 1367415538.0;
+
+// ── The set ─────────────────────────────────────────────────────────────────
+
+/**
+ * How quickly `c = re + i·im` leaves: the steps z → z² + c took to pass |z| = 2, and the fraction of the last step
+ * it took to get there; `INSIDE` when it had not after `depth`. The main cardioid and the disc to its left are in
+ * the set and known to be, so they are answered without a step.
+ */
+export f64 iterate(f64 re, f64 im, i32 depth) {
+  f64 x = re - 0.25;
+  f64 q = x * x + im * im;
+  if (q * (q + x) <= 0.25 * im * im) { return INSIDE; }
+  if ((re + 1.0) * (re + 1.0) + im * im <= 0.0625) { return INSIDE; }
+  f64 a = re;
+  f64 b = im;
+  i32 n = 0;
+  f64 r = 0.0;
+  f64 last = 0.0;
+  while (true) {
+    r = a * a + b * b;
+    if (r >= 4.0 || n >= depth) { break; }
+    last = r;
+    f64 a2 = a * a - b * b + re;
+    b = 2.0 * a * b + im;
+    a = a2;
+    n++;
+  }
+  if (n >= depth) { return INSIDE; }
+  return (n as f64) + (4.0 - last) / (r - last);
+}
+
+/** The step a value escaped on: `INSIDE` at any depth that does not reach it. */
+i32 escapedOn(f64 v) { return (v.ceil() as~ i32) - 1; }
+
+// ── Colours ─────────────────────────────────────────────────────────────────
+
+/** The original's random sequence: Newton's method for √-1, which never settles, from `seed`. */
+export f64 rand(f64 seed) {
+  f64 s = seed;
+  for (i32 i = 0; i < 10; i++) { s = s - (s * s + 1.0) / (2.0 * s); }
+  s = s * 10000.0;
+  return s - s.floor();
+}
+
+/** A palette: a random colour at each whole number, blended between them, from a seed. */
+export struct Palette {
+  f64 randOffset;
+  f64 offset;
+  /** Each colour worked out so far, three channels apiece, from `base`; -1 where not yet. */
+  f64[] cache;
+  i32 base;
+
+  Palette of(f64 seed) { return Palette(rand(seed), rand(rand(seed)), f64[].filled(3 * 8192, 0.0 - 1.0), 0 - 4096); }
+
+  f64 node(this, i32 r, i32 k) {
+    i32 at = (r - this.base) * 3 + k;
+    if (at >= 0 && at < this.cache.len() && this.cache[at] >= 0.0) { return this.cache[at]; }
+    f64 shift = k == 0 ? 0.0 : (k == 1 ? 0.333 : 0.667);
+    f64 v = rand((r as f64) + this.randOffset + shift);
+    if (at >= 0 && at < this.cache.len()) { this.cache[at] = v; }
+    return v;
+  }
+
+  /** Channel `k` of the colour at `x`, from 0 to 1. */
+  f64 at(this, f64 x, i32 k) {
+    f64 y = x + this.offset;
+    f64 f = y.floor();
+    i32 r = f as~ i32;
+    f64 t = y - f;
+    f64 a = this.node(r, k);
+    return a + (this.node(r + 1, k) - a) * t;
+  }
+}
+
+/** The original's scaling of a value before it is coloured: 0.5 × ln(1 + v)^1.3, as 101 straight pieces to 25. */
+export struct Scaling {
+  f64[] nodes;
+
+  Scaling create() {
+    f64[] n = f64[].filled(101, 0.0);
+    for (i32 i = 1; i < 101; i++) { n[i] = 0.5 * exp(1.3 * ln((i as f64) * 0.25)); }
+    return Scaling(n);
+  }
+
+  f64 of(this, f64 v) {
+    f64 x = ln(1.0 + v) * 4.0;
+    if (x >= 100.0) { return 0.5 * exp(1.3 * ln(x / 4.0)); }
+    i32 i = x.floor() as~ i32;
+    f64 t = x - (i as f64);
+    return this.nodes[i] + (this.nodes[i + 1] - this.nodes[i]) * t;
+  }
+}
+
+/** How values are coloured: the palette's seed, and how fast and from where the palette is run through. */
+export struct Colours {
+  f64 seed;
+  f64 rate;
+  f64 shift;
+  /** A value typical of the picture — its ninetieth percentile — which a change of rate keeps the colour of. */
+  f64 reference;
+  Palette palette;
+  Scaling scaling;
+
+  Colours create() { return Colours(0.0, 1.0, 0.0, 0.0, Palette.of(MAGIC), Scaling.create()); }
+
+  /** Another palette, `by` along the seeds. */
+  void change(this, f64 by) {
+    this.seed = this.seed + by;
+    this.palette = Palette.of(MAGIC + this.seed);
+  }
+
+  /** Run through the palette `k` times as fast, the reference value keeping its colour. */
+  void faster(this, f64 k) {
+    this.shift = this.shift + (1.0 - k) * this.rate * this.reference;
+    this.rate = this.rate * k;
+  }
+
+  /** Write the colour of value `v` at `rgba[at]`. */
+  void paint(this, f64 v, u8[] rgba, i32 at) {
+    if (v == INSIDE) {
+      rgba[at] = 0 as u8;
+      rgba[at + 1] = 0 as u8;
+      rgba[at + 2] = 0 as u8;
+    } else {
+      f64 x = this.rate * this.scaling.of(v) + this.shift;
+      for (i32 k = 0; k < 3; k++) {
+        i32 c = (255.0 * this.palette.at(x, k)) as~ i32;
+        rgba[at + k] = (c < 0 ? 0 : (c > 255 ? 255 : c)) as@ u8;
+      }
+    }
+    rgba[at + 3] = 255 as u8;
+  }
+}
+
+// ── The view ────────────────────────────────────────────────────────────────
+
+/** A view of the plane: its centre, how wide it is, how deep it looks, and the pixels it is drawn in. */
+export struct Viewport {
+  f64 cx;
+  f64 cy;
+  f64 width;
+  i32 depth;
+  i32 w;
+  i32 h;
+
+  /** How much of the plane a pixel is. */
+  f64 ps(this) { return this.width / (this.w as f64); }
+  f64 left(this) { return this.cx - this.width / 2.0; }
+  f64 top(this) { return this.cy - this.ps() * (this.h as f64) / 2.0; }
+  Viewport copy(this) { return Viewport(this.cx, this.cy, this.width, this.depth, this.w, this.h); }
+
+  /** Zoomed by `f` — below 1 is in — about the point under pixel (`x`, `y`), which stays where it is. */
+  void zoom(this, f64 f, f64 x, f64 y) {
+    f64 px = this.left() + x * this.ps();
+    f64 py = this.top() + y * this.ps();
+    this.cx = f * this.cx + (1.0 - f) * px;
+    this.cy = f * this.cy + (1.0 - f) * py;
+    this.width = this.width * f;
+  }
+}
+
+/** Where the original starts: the whole set, with room around it. */
+export Viewport home(i32 w, i32 h) { return Viewport(0.0 - 0.75, 0.0, 8.0, 500, w, h); }
+
+/** The depth for a position of the depth control: 500 at rest, half as deep or twice as deep about 35 apart. */
+i32 depthAt(f64 spring) {
+  i32 d = (500.0 * exp(0.02 * spring)).floor() as~ i32;
+  return d < 1 ? 1 : (d > 10000000 ? 10000000 : d);
+}
+
+f64 springFor(i32 depth) { return ln((depth as f64) / 500.0) / 0.02; }
+
+// ── The picture ─────────────────────────────────────────────────────────────
+
+struct Mandel {
+  Page page;
+  /** The view asked for, and the view the values and the canvas hold. */
+  Viewport view;
+  Viewport drawn;
+  f64[] vals;
+  u8[] rgba;
+  Colours colours;
+  /** The canvas's pixels to a CSS pixel. */
+  f64 scale;
+  /** Each drawing's number: one started since stops the one before. */
+  i32 gen;
+  bool busy;
+  f64 began;
+  f64 took;
+  i32 blocksLeft;
+  i32 blocks;
+  /** A drag: where it started, in the canvas's pixels, and the view then. */
+  bool down;
+  bool moved;
+  f64 downX;
+  f64 downY;
+  Viewport atDown;
+  /** Where the pointer last was, in the canvas's pixels — where `a` and `z` zoom about. */
+  f64 mouseX;
+  f64 mouseY;
+  /** How many times the view has moved: a drawing waits until it has not for a moment. */
+  i32 moves;
+  /** The depth control, held: how far it is pushed, and where that has taken the depth. */
+  bool sliding;
+  f64 push;
+  f64 spring;
+  bool panel;
+  bool about;
+  string note;
+  Element? canvas;
+  Element? stage;
+  Desktop? desk;
+  fn<void()> bump;
+}
+
+/** What `bump` is until the window is drawn: nothing to render yet. */
+void unseen() { }
+
+Mandel create(Page page, Viewport view, Colours colours) {
+  return Mandel(page, view, view.copy(), f64[](), u8[](), colours, 1.0, 0, false, 0.0, 0.0, 0, 0, false, false, 0.0,
+                0.0, view.copy(), 0.0, 0.0, 0, false, 0.0, springFor(view.depth), false, false, "", null, null, null,
+                unseen);
+}
+
+/** The pixel at (`x`, `y`) of the drawn view, worked out. */
+void work(Mandel m, i32 x, i32 y) {
+  Viewport d = m.drawn;
+  f64 ps = d.ps();
+  m.vals[y * d.w + x] = iterate(d.left() + ((x as f64) + 0.5) * ps, d.top() + ((y as f64) + 0.5) * ps, d.depth);
+}
+
+/** The block at (`x0`, `y0`), `bw` by `bh`, worked out where it is not and coloured; its pixels, to send. */
+u8[] block(Mandel m, i32 x0, i32 y0, i32 bw, i32 bh) {
+  i32 w = m.drawn.w;
+  u8[] out = u8[].filled(bw * bh * 4, 0 as u8);
+  for (i32 y = 0; y < bh; y++) {
+    for (i32 x = 0; x < bw; x++) {
+      i32 at = (y0 + y) * w + x0 + x;
+      if (m.vals[at] == UNKNOWN) { work(m, x0 + x, y0 + y); }
+      m.colours.paint(m.vals[at], m.rgba, at * 4);
+      out.copyFrom(m.rgba, at * 4, (y * bw + x) * 4, 4);
+    }
+  }
+  return out;
+}
+
+/**
+ * **The drawn view becomes the view asked for**, keeping what can be kept: after a move by whole pixels at the same
+ * scale, the values the two share; after only a change of depth, the values it does not change; after a zoom, none,
+ * though the picture is scaled to fill in until they are. The canvas is sent the result, untransformed.
+ */
+void adopt(Mandel m) {
+  Viewport d = m.drawn;
+  Viewport v = m.view.copy();
+  i32 n = v.w * v.h;
+  f64[] vals = f64[].filled(n, UNKNOWN);
+  u8[] rgba = u8[].filled(n * 4, 0 as u8);
+  bool had = m.vals.len() == d.w * d.h && d.w > 0;
+  f64 ratio = had ? v.ps() / d.ps() : 0.0;
+  bool sameScale = had && ratio > 0.999999 && ratio < 1.000001;
+  f64 sx = had ? (v.left() - d.left()) / d.ps() : 0.0;
+  f64 sy = had ? (v.top() - d.top()) / d.ps() : 0.0;
+  i32 ox = sx.round() as~ i32;
+  i32 oy = sy.round() as~ i32;
+  bool aligned = sameScale && (sx - (ox as f64)) < 0.001 && ((ox as f64) - sx) < 0.001 && (sy - (oy as f64)) < 0.001
+                 && ((oy as f64) - sy) < 0.001;
+  for (i32 y = 0; y < v.h; y++) {
+    for (i32 x = 0; x < v.w; x++) {
+      i32 at = y * v.w + x;
+      if (!had) {
+        rgba[at * 4 + 3] = 255 as u8;
+        continue;
+      }
+      // Where this pixel was in the drawn picture.
+      i32 fx = aligned ? x + ox : ((sx + ((x as f64) + 0.5) * ratio).floor() as~ i32);
+      i32 fy = aligned ? y + oy : ((sy + ((y as f64) + 0.5) * ratio).floor() as~ i32);
+      if (fx < 0 || fy < 0 || fx >= d.w || fy >= d.h) {
+        rgba[at * 4] = 24 as u8;
+        rgba[at * 4 + 1] = 24 as u8;
+        rgba[at * 4 + 2] = 28 as u8;
+        rgba[at * 4 + 3] = 255 as u8;
+        continue;
+      }
+      i32 from = fy * d.w + fx;
+      rgba.copyFrom(m.rgba, from * 4, at * 4, 4);
+      if (!aligned) { continue; }
+      f64 old = m.vals[from];
+      if (old == UNKNOWN || v.depth == d.depth) {
+        vals[at] = old;
+      } else if (old == INSIDE) {
+        // In the set at the old depth: deeper, it may yet escape; shallower, it is still in.
+        vals[at] = v.depth > d.depth ? UNKNOWN : INSIDE;
+      } else {
+        vals[at] = escapedOn(old) >= v.depth ? INSIDE : old;
+      }
+    }
+  }
+  m.vals = vals;
+  m.rgba = rgba;
+  m.drawn = v;
+  if (m.canvas is not null) { m.canvas!.pixels(v.w, v.h, rgba); }
+}
+
+/** The ninetieth percentile of the values at each block's corner: what a change of colour rate keeps. */
+void reference(Mandel m) {
+  Vec<f64> seen = Vec.create();
+  for (i32 y = 0; y < m.drawn.h; y = y + BLOCK) {
+    for (i32 x = 0; x < m.drawn.w; x = x + BLOCK) {
+      f64 v = m.vals[y * m.drawn.w + x];
+      if (v >= 0.0) { seen.push(m.colours.scaling.of(v)); }
+    }
+  }
+  if (seen.len() == 0) { return; }
+  f64[] s = seen.toArray();
+  // A few dozen values: sorted by insertion.
+  for (i32 i = 1; i < s.len(); i++) {
+    f64 x = s[i];
+    i32 j = i - 1;
+    while (j >= 0 && s[j] > x) {
+      s[j + 1] = s[j];
+      j--;
+    }
+    s[j + 1] = x;
+  }
+  m.colours.reference = s[((0.9 * (s.len() as f64)).floor() as~ i32)];
+}
+
+/** Everything coloured again from its values, and sent: for new colours, which need no value worked out. */
+void recolour(Mandel m) {
+  for (i32 at = 0; at < m.vals.len(); at++) {
+    if (m.vals[at] != UNKNOWN) { m.colours.paint(m.vals[at], m.rgba, at * 4); }
+  }
+  if (m.canvas is not null) { m.canvas!.pixels(m.drawn.w, m.drawn.h, m.rgba); }
+  keep(m);
+  m.bump();
+}
+
+/** The blocks of the drawn view, nearest the middle first. */
+i32[] order(Viewport v) {
+  Vec<i32> xs = Vec.create();
+  Vec<f64> far = Vec.create();
+  f64 mx = (v.w as f64) / 2.0;
+  f64 my = (v.h as f64) / 2.0;
+  for (i32 y = 0; y < v.h; y = y + BLOCK) {
+    for (i32 x = 0; x < v.w; x = x + BLOCK) {
+      f64 dx = (x as f64) + (BLOCK as f64) / 2.0 - mx;
+      f64 dy = (y as f64) + (BLOCK as f64) / 2.0 - my;
+      f64 dist = dx * dx + dy * dy;
+      i32 k = far.len();
+      while (k > 0 && far.get(k - 1) > dist) { k--; }
+      far.insert(k, dist);
+      xs.insert(k, y * v.w + x);
+    }
+  }
+  return xs.toArray();
+}
+
+/**
+ * **Draw the view asked for**: adopt it, then work out and send a block at a time, from the middle out, giving the
+ * page each frame — so a move answered in the meantime starts another drawing, and this one stops.
+ */
+async void draw(Mandel m) {
+  m.gen++;
+  i32 gen = m.gen;
+  if (m.view.w <= 0 || m.view.h <= 0) { return; }
+  adopt(m);
+  m.busy = true;
+  m.began = m.page.now();
+  i32[] todo = order(m.drawn);
+  m.blocks = todo.len();
+  m.blocksLeft = todo.len();
+  m.bump();
+  f64 slice = m.page.now();
+  for (i32 i = 0; i < todo.len(); i++) {
+    if (gen != m.gen) { return; }
+    Viewport d = m.drawn;
+    i32 x0 = todo[i] % d.w;
+    i32 y0 = todo[i] / d.w;
+    i32 bw = x0 + BLOCK > d.w ? d.w - x0 : BLOCK;
+    i32 bh = y0 + BLOCK > d.h ? d.h - y0 : BLOCK;
+    u8[] px = block(m, x0, y0, bw, bh);
+    if (m.canvas is not null) { m.canvas!.pixelsIn(x0, y0, bw, bh, px); }
+    m.blocksLeft = todo.len() - i - 1;
+    if (m.page.now() - slice > 12.0) {
+      m.bump();
+      await m.page.nextFrame();
+      slice = m.page.now();
+    }
+  }
+  if (gen != m.gen) { return; }
+  m.busy = false;
+  m.took = m.page.now() - m.began;
+  if (m.colours.reference == 0.0) {
+    reference(m);
+  }
+  keep(m);
+  m.bump();
+}
+
+/** The view moved: shown moved at once, and drawn once it has been still for `ms`. */
+void moved(Mandel m, i32 ms) {
+  m.moves++;
+  i32 mine = m.moves;
+  m.bump();
+  Ticket<f64> t = m.page.sleep(ms);
+  when(t, () => { if (m.moves == mine && !m.down) { draw(m); } });
+}
+
+/**
+ * **The canvas moved and scaled to show the view asked for**, from the picture of the view drawn: a pixel of the
+ * drawn view at p is shown at s·p + t, in the canvas's pixels, which the transform says in CSS pixels.
+ */
+export string previewCss(Viewport drawn, Viewport view, f64 scale) {
+  if (drawn.w <= 0) { return ""; }
+  f64 s = drawn.ps() / view.ps();
+  f64 tx = (drawn.left() - view.left()) / view.ps() / scale;
+  f64 ty = (drawn.top() - view.top()) / view.ps() / scale;
+  if (s > 0.999999 && s < 1.000001 && tx * tx + ty * ty < 0.000001) { return ""; }
+  // The canvas is as wide as the stage: scaled by s, its pixels are s of the view's.
+  return ".mcanvas { transform: translate(\{fixed(tx, 2)}px, \{fixed(ty, 2)}px) scale(\{fixed(s, 6)}); }";
+}
+
+// ── Keeping, and saving ─────────────────────────────────────────────────────
+
+/** The view and the colours, written to the program's folder; nothing when it has none, as a page on its own. */
+void keep(Mandel m) {
+  Viewport v = m.view;
+  Colours c = m.colours;
+  string text = "\{v.cx} \{v.cy} \{v.width} \{v.depth} \{c.seed} \{c.rate} \{c.shift} \{c.reference}\n";
+  m.page.sys.files().writeFile(KEPT, text.toBytes());
+}
+
+/** The words of `s`, split at spaces and line ends. */
+string[] fields(string s) {
+  Vec<string> out = Vec.create();
+  i32 start = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    bool gap = i == s.len() || s.slice(i, i + 1) == " " || s.slice(i, i + 1) == "\n";
+    if (gap) {
+      if (i > start) { out.push(s.slice(start, i)); }
+      start = i + 1;
+    }
+  }
+  return out.toArray();
+}
+
+/** A view and colours as `keep` wrote them, onto `v` and `c`; false, changing nothing, when they are not. */
+export bool restore(string text, Viewport v, Colours c) {
+  string[] f = fields(text);
+  if (f.len() < 8) { return false; }
+  f64[] n = f64[].filled(8, 0.0);
+  for (i32 i = 0; i < 8; i++) {
+    f64 bad = 0.0 / 0.0;
+    n[i] = parseNumber(f[i], bad);
+    if (n[i] != n[i]) { return false; }
+  }
+  if (n[2] <= 0.0 || n[3] < 1.0) { return false; }
+  v.cx = n[0];
+  v.cy = n[1];
+  v.width = n[2];
+  v.depth = n[3] as~ i32;
+  c.change(n[4]);
+  c.rate = n[5];
+  c.shift = n[6];
+  c.reference = n[7];
+  return true;
+}
+
+void putU32(Vec<u8> out, u32 v) {
+  out.push((v >> 24) as@ u8);
+  out.push((v >> 16) as@ u8);
+  out.push((v >> 8) as@ u8);
+  out.push(v as@ u8);
+}
+
+void chunk(Vec<u8> out, string kind, u8[] data) {
+  putU32(out, data.len() as@ u32);
+  u8[] typed = u8[].filled(4 + data.len(), 0 as u8);
+  typed.copyFrom(kind.toBytes(), 0, 0, 4);
+  typed.copyFrom(data, 0, 4, data.len());
+  for (i32 i = 0; i < typed.len(); i++) { out.push(typed[i]); }
+  putU32(out, crc32(typed));
+}
+
+/**
+ * `rgba`, `w` by `h`, as a PNG: each row filtered by its left neighbour, which a smooth picture compresses well
+ * after, and deflated as zlib wants it, with its Adler-32 after.
+ */
+export u8[] png(i32 w, i32 h, u8[] rgba) {
+  i32 row = w * 4 + 1;
+  u8[] raw = u8[].filled(row * h, 0 as u8);
+  for (i32 y = 0; y < h; y++) {
+    raw[y * row] = 1 as u8;
+    for (i32 i = 0; i < w * 4; i++) {
+      i32 cur = rgba[y * w * 4 + i] as i32;
+      i32 left = i >= 4 ? rgba[y * w * 4 + i - 4] as i32 : 0;
+      raw[y * row + 1 + i] = ((cur - left) & 255) as@ u8;
+    }
+  }
+  u32 a = 1 as u32;
+  u32 b = 0 as u32;
+  for (i32 i = 0; i < raw.len(); i++) {
+    a = (a + (raw[i] as u32)) % (65521 as u32);
+    b = (b + a) % (65521 as u32);
+  }
+  u8[] deflated = deflateDynamic(raw);
+  u8[] z = u8[].filled(deflated.len() + 6, 0 as u8);
+  z[0] = 0x78 as u8;
+  z[1] = 0x01 as u8;
+  z.copyFrom(deflated, 0, 2, deflated.len());
+  u32 adler = (b << 16) | a;
+  for (i32 k = 0; k < 4; k++) { z[deflated.len() + 2 + k] = (adler >> ((24 - 8 * k) as@ u32)) as@ u8; }
+  Vec<u8> out = Vec.create();
+  u8[] sig = [0x89 as u8, 'P', 'N', 'G', 0x0D as u8, 0x0A as u8, 0x1A as u8, 0x0A as u8];
+  for (i32 i = 0; i < sig.len(); i++) { out.push(sig[i]); }
+  Vec<u8> head = Vec.create();
+  putU32(head, w as@ u32);
+  putU32(head, h as@ u32);
+  head.push(8 as u8);
+  head.push(6 as u8);
+  head.push(0 as u8);
+  head.push(0 as u8);
+  head.push(0 as u8);
+  chunk(out, "IHDR", head.toArray());
+  chunk(out, "IDAT", z);
+  chunk(out, "IEND", u8[]());
+  return out.toArray();
+}
+
+async void save(Mandel m) {
+  if (m.busy) {
+    m.note = "Still drawing — save once it is done";
+    m.bump();
+    return;
+  }
+  m.note = "Saving…";
+  m.bump();
+  await m.page.painted();
+  u8[] bytes = png(m.drawn.w, m.drawn.h, m.rgba);
+  if (m.desk is null) {
+    m.page.download("Mandelbrot.png", bytes);
+    m.note = "Downloaded";
+    m.bump();
+    return;
+  }
+  match (await m.desk!.newFile("Mandelbrot.png")) {
+    Ok(path): {
+      match (await m.page.sys.files().writeFile(path, bytes)) {
+        Ok(v): {
+          m.note = "Saved \{path.slice(1, path.len())}";
+          m.desk!.note("Saved \{path.slice(1, path.len())}");
+        }
+        Err(why): { m.note = "Not saved: \{why}"; }
+      }
+    }
+    Err(why): { m.note = "Not saved: \{why}"; }
+  }
+  m.bump();
+}
+
+// ── Controls ────────────────────────────────────────────────────────────────
+
+/** Zoom by 1.5 per step — `steps` below 0 is in — about pixel (`x`, `y`), and draw once still. */
+void zoomBy(Mandel m, f64 steps, f64 x, f64 y) {
+  m.view.zoom(exp(steps * ln(1.5)), x, y);
+  moved(m, 160);
+}
+
+void changeColours(Mandel m, f64 by) {
+  m.colours.change(by);
+  recolour(m);
+}
+
+void colourRate(Mandel m, f64 dir) {
+  if (m.colours.reference == 0.0) { reference(m); }
+  m.colours.faster(exp(0.05 * dir));
+  recolour(m);
+}
+
+void slideColours(Mandel m, f64 dir) {
+  m.colours.shift = m.colours.shift + 0.05 * dir;
+  recolour(m);
+}
+
+/** The depth the control is at, now: worked out once it is let go. */
+void setDepth(Mandel m, f64 spring) {
+  m.spring = spring;
+  m.view.depth = depthAt(spring);
+  m.bump();
+}
+
+/**
+ * **The depth control springs back**, as the original's does: pushed one way or the other it moves the depth faster
+ * the further it is pushed — the cube of how far, every 17 ms — and let go, it returns to the middle and the new
+ * depth is drawn.
+ */
+async void holdDepth(Mandel m, Ref range) {
+  if (m.sliding) { return; }
+  m.sliding = true;
+  m.gen++;
+  m.busy = false;
+  while (m.sliding) {
+    setDepth(m, m.spring + m.push * m.push * m.push);
+    await m.page.sleep(17);
+  }
+  f64 back = m.push;
+  while (back > 0.01 || back < 0.0 - 0.01) {
+    back = back * 0.85;
+    if (range.element() is not null) { range.element()!.prop("value", fixed(back, 4)); }
+    await m.page.sleep(17);
+    if (m.sliding) { return; }
+  }
+  if (range.element() is not null) { range.element()!.prop("value", "0"); }
+  m.push = 0.0;
+  draw(m);
+}
+
+/** What a key does; false for a key that does nothing here. */
+bool key(Mandel m, string k, i32 mods) {
+  f64 pan = (m.view.w as f64) / 8.0;
+  if (k == "a" || k == "A") { zoomBy(m, 0.0 - 1.0, m.mouseX, m.mouseY); }
+  else if (k == "z" || k == "Z") { zoomBy(m, 1.0, m.mouseX, m.mouseY); }
+  else if (k == "c") { changeColours(m, 1.0); }
+  else if (k == "C") { changeColours(m, 0.0 - 1.0); }
+  else if (k == "=") { colourRate(m, 1.0); }
+  else if (k == "-") { colourRate(m, 0.0 - 1.0); }
+  else if (k == "+") { slideColours(m, 1.0); }
+  else if (k == "_") { slideColours(m, 0.0 - 1.0); }
+  else if (k == "d" || k == "D") {
+    setDepth(m, m.spring + ((mods & MOD_SHIFT) != 0 ? 0.0 - 11.157 : 11.157));
+    moved(m, 400);
+  }
+  else if (k == "ArrowLeft" || k == "ArrowRight" || k == "ArrowUp" || k == "ArrowDown") {
+    f64 dx = k == "ArrowLeft" ? 0.0 - pan : (k == "ArrowRight" ? pan : 0.0);
+    f64 dy = k == "ArrowUp" ? 0.0 - pan : (k == "ArrowDown" ? pan : 0.0);
+    m.view.cx = m.view.cx + dx.round() * m.view.ps();
+    m.view.cy = m.view.cy + dy.round() * m.view.ps();
+    moved(m, 120);
+  }
+  else if (k == "0") {
+    Viewport h = home(m.view.w, m.view.h);
+    h.depth = m.view.depth;
+    m.view = h;
+    moved(m, 0);
+  }
+  else if (k == "?") {
+    m.about = !m.about;
+    m.bump();
+  }
+  else if (k == "Escape") {
+    m.about = false;
+    m.panel = false;
+    m.bump();
+  }
+  else { return false; }
+  return true;
+}
+
+/** The stage is a new size on screen: drawn at its pixels, or at fewer when it has a great many. */
+void resized(Mandel m, ElementEvent e) {
+  f64 dpr = parseNumber(e.value, 1.0);
+  f64 cssW = (e.x as f64) / dpr;
+  f64 cssH = (e.y as f64) / dpr;
+  if (cssW < 1.0 || cssH < 1.0) { return; }
+  f64 scale = dpr;
+  if (cssW * cssH * scale * scale > MOST_PIXELS) { scale = exp(ln(MOST_PIXELS / (cssW * cssH)) / 2.0); }
+  i32 w = (cssW * scale).round() as~ i32;
+  i32 h = (cssH * scale).round() as~ i32;
+  // **The plane's share of a CSS pixel is kept**, so a window made wider shows more of the plane to either side
+  // rather than the same stretched. The first size has nothing to keep: the view's width fills it.
+  if (m.view.w > 0) { m.view.width = m.view.width / ((m.view.w as f64) / m.scale) * cssW; }
+  m.scale = scale;
+  m.view.w = w;
+  m.view.h = h;
+  draw(m);
+}
+
+// ── The window ──────────────────────────────────────────────────────────────
+
+Node Control(Ui ui, string label, string what, fn<void(f64)> by, string less, string more) {
+  return <div class="mrow"><span class="mlabel">{label}</span>
+    <button class="mbtn" title={less} onclick={(ElementEvent e) => { by(0.0 - 1.0); }}>−</button>
+    <button class="mbtn" title={more} onclick={(ElementEvent e) => { by(1.0); }}>+</button>
+    <span class="mwhat">{what}</span></div>;
+}
+
+Node About(Ui ui, Mandel m) {
+  return <div class="mabout" onclick={(ElementEvent e) => { m.about = false; m.bump(); }}>
+    <div class="mcard">
+      <h2>Mandelbrot</h2>
+      <p>The Mandelbrot set is the set of numbers c for which z → z² + c stays bounded, starting from z = 0, where c
+         is any complex number. Somehow this simple definition makes staggering complexity.</p>
+      <p>Each pixel here is a value of c, its x and y the real and imaginary parts. Members of the set are black;
+         every other point is coloured by how quickly z passed 2 — past which, it can be shown, it passes any bound.
+         Points that take longer than the depth to escape are taken to be in the set: deeper shows more of the edge.</p>
+      <div class="mkeys">
+        <span>Move</span><span>drag, or the arrow keys</span>
+        <span>Zoom in, out</span><span>click and shift-click, the wheel, or <b>a</b> and <b>z</b></span>
+        <span>Depth</span><span>the depth control, or <b>d</b> and shift-<b>d</b></span>
+        <span>Colour speed</span><span><b>=</b> and <b>-</b></span>
+        <span>Slide colours</span><span><b>+</b> and <b>_</b></span>
+        <span>New colours</span><span><b>c</b> and shift-<b>c</b></span>
+        <span>Start again</span><span><b>0</b></span>
+      </div>
+      <p class="mfaint">A rewrite in wac of github.com/voltrevo/mandelbrot.</p>
+    </div>
+  </div>;
+}
+
+Node App(Ui ui, Mandel m) {
+  auto tick = ui.state(0);
+  m.bump = () => { tick.set(tick.get() + 1); };
+  Ref stage = ui.ref();
+  Ref cv = ui.ref();
+  Ref range = ui.ref();
+  ui.effect("", () => {
+    m.canvas = cv.element();
+    m.stage = stage.element();
+    if (m.stage is not null) {
+      m.stage!.on("resize", Listen.none(), (ElementEvent e) => { resized(m, e); });
+      m.stage!.focus();
+    }
+    return () => { };
+  });
+  fn<void()> refocus = () => { if (m.stage is not null) { m.stage!.focus(); } };
+  string status = m.busy ? "Drawing \{100 - m.blocksLeft * 100 / (m.blocks > 0 ? m.blocks : 1)}%"
+                         : (m.took > 0.0 ? "Drawn in \{fixed(m.took / 1000.0, 2)} s" : "");
+  if (m.note != "") { status = m.note; }
+  Viewport v = m.view;
+  Node panel = m.panel
+    ? <div class="mpanel" onpointerup={(ElementEvent e) => { refocus(); }}>
+        <Control label="Zoom" what={"×" + magnitude(8.0 / v.width)} by={(f64 d) => { zoomBy(m, 0.0 - d, (v.w as f64) / 2.0, (v.h as f64) / 2.0); }}
+                 less="Zoom out (z)" more="Zoom in (a)"/>
+        <Control label="Colours" what="" by={(f64 d) => { changeColours(m, d); }} less="The colours before (C)" more="New colours (c)"/>
+        <Control label="Colour speed" what={fixed(m.colours.rate, 2)} by={(f64 d) => { colourRate(m, d); }}
+                 less="Slower (-)" more="Faster (=)"/>
+        <Control label="Slide colours" what="" by={(f64 d) => { slideColours(m, d); }} less="Back (_)" more="On (+)"/>
+        <div class="mrow"><span class="mlabel">Depth</span>
+          <input class="mrange" type="range" min="-1" max="1" step="any" ref={range} title="Push to go deeper or shallower"
+                 oninput={(ElementEvent e) => {
+                   m.push = parseNumber(e.value, 0.0);
+                   holdDepth(m, range);
+                 }}
+                 onchange={(ElementEvent e) => { m.sliding = false; }}
+                 onpointerup={(ElementEvent e) => { m.sliding = false; }}/>
+          <span class="mwhat">{commas(v.depth as i64)}</span></div>
+        <div class="mrow mlast">
+          <button class="mwide" onclick={(ElementEvent e) => { save(m); }}>Save picture</button>
+          <button class="mwide" onclick={(ElementEvent e) => { m.about = true; m.bump(); }}>About</button>
+        </div>
+      </div>
+    : <span/>;
+  return <div class="mandel">
+    <style>{previewCss(m.drawn, m.view, m.scale)}</style>
+    <div class="mstage" tabindex="0" ref={stage}
+         prevent="a z c = - + _ d 0 ? ArrowUp ArrowDown ArrowLeft ArrowRight Escape"
+         onkeydown={(ElementEvent e) => { if (e.mods == 0 || e.mods == MOD_SHIFT) { key(m, e.value, e.mods); } }}
+         onpointerdown={(ElementEvent e) => {
+           m.down = true;
+           m.moved = false;
+           m.downX = (e.x as f64) * m.scale;
+           m.downY = (e.y as f64) * m.scale;
+           m.atDown = m.view.copy();
+           m.note = "";
+         }}
+         onpointermove={(ElementEvent e) => {
+           m.mouseX = (e.x as f64) * m.scale;
+           m.mouseY = (e.y as f64) * m.scale;
+           if (!m.down) { return; }
+           f64 dx = (m.mouseX - m.downX).round();
+           f64 dy = (m.mouseY - m.downY).round();
+           if (!m.moved && dx * dx + dy * dy < 16.0) { return; }
+           m.moved = true;
+           m.view.cx = m.atDown.cx - dx * m.atDown.ps();
+           m.view.cy = m.atDown.cy - dy * m.atDown.ps();
+           m.bump();
+         }}
+         onpointerup={(ElementEvent e) => {
+           if (!m.down) { return; }
+           m.down = false;
+           if (m.moved) {
+             draw(m);
+             return;
+           }
+           // A click zooms in where it is; with Shift, out.
+           zoomBy(m, (e.mods & MOD_SHIFT) != 0 ? 1.0 : 0.0 - 1.0, (e.x as f64) * m.scale, (e.y as f64) * m.scale);
+         }}>
+      <canvas class="mcanvas" ref={cv}/>
+      <div class="mwheel" prevent="*" onwheel={(ElementEvent e) => {
+        zoomBy(m, parseNumber(e.value, 0.0) / 100.0, m.mouseX, m.mouseY);
+      }}/>
+    </div>
+    <button class="mmenu" title="Controls" onclick={(ElementEvent e) => { m.panel = !m.panel; m.bump(); refocus(); }}>
+      {m.panel ? "×" : "☰"}</button>
+    {panel}
+    <div class="mstatus">{"Depth \{commas(v.depth as i64)} · ×\{magnitude(8.0 / v.width)}"}{status == "" ? "" : " · " + status}</div>
+    {m.about ? <About m={m}/> : <span/>}
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Mandelbrot");
+  Viewport v = home(0, 0);
+  Colours c = Colours.create();
+  auto kept = await page.sys.files().readFile(KEPT);
+  if (kept.isOk()) { restore(string.fromBytes(kept.ok()!), v, c); }
+  Mandel m = create(page, v, c);
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { m.desk = d; }
+    Err(why): { }
+  }
+  page.mount((Ui ui) => <div class="mandelpage"><style>{css() + mandelCss()}</style><App m={m}/></div>);
+  return 0;
+}

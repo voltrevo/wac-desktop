@@ -73,3 +73,39 @@ export string termCss() {
     .tcmd { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0; background: transparent; color: #f2f4fa; font-size: 13px; line-height: 1.5; caret-color: #8d88ff; }
   """;
 }
+
+/** Mandelbrot's: the picture fills the window, the controls float over its corner. */
+export string mandelCss() {
+  return """
+    .mandelpage, .mandel { height: 100%; }
+    .mandel { position: relative; overflow: hidden; background: #18181c; color: #f4f4f6; user-select: none; -webkit-user-select: none; }
+    .mstage { position: absolute; inset: 0; outline: 0; cursor: crosshair; overflow: hidden; touch-action: none; }
+    .mcanvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; image-rendering: auto; }
+    .mwheel { position: absolute; inset: 0; }
+    .mmenu { position: absolute; left: 10px; top: 10px; width: 34px; height: 34px; border-radius: 9px; border: 0; cursor: pointer;
+             background: rgba(20,20,26,.72); color: #fff; font: inherit; font-size: 17px; backdrop-filter: blur(8px); }
+    .mmenu:hover { background: rgba(40,40,52,.85); }
+    .mpanel { position: absolute; left: 10px; top: 52px; width: 270px; padding: 8px 10px; border-radius: 12px;
+              background: rgba(20,20,26,.78); backdrop-filter: blur(10px); display: flex; flex-direction: column; gap: 4px;
+              box-shadow: 0 10px 30px -12px rgba(0,0,0,.6); }
+    .mrow { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+    .mlabel { width: 96px; font-size: 13px; color: #c8c8d0; }
+    .mwhat { flex: 1; text-align: right; font-size: 12.5px; color: #9a9aa8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mbtn { width: 28px; height: 26px; border-radius: 7px; border: 0; background: rgba(255,255,255,.12); color: #fff; font: inherit;
+            font-size: 16px; cursor: pointer; }
+    .mbtn:hover, .mwide:hover { background: rgba(255,255,255,.22); }
+    .mrange { width: 100px; accent-color: #a78bfa; }
+    .mlast { gap: 8px; margin-top: 4px; }
+    .mwide { flex: 1; height: 30px; border-radius: 8px; border: 0; background: rgba(255,255,255,.12); color: #fff; font: inherit;
+             font-size: 13px; cursor: pointer; }
+    .mstatus { position: absolute; right: 10px; bottom: 10px; padding: 4px 9px; border-radius: 7px; font-size: 12px;
+               background: rgba(20,20,26,.62); color: #d8d8e0; pointer-events: none; font-variant-numeric: tabular-nums; }
+    .mabout { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); }
+    .mcard { max-width: 520px; max-height: calc(100% - 40px); overflow-y: auto; margin: 20px; padding: 18px 22px; border-radius: 14px;
+             background: var(--surface); color: var(--text); line-height: 1.5; font-size: 14px; }
+    .mcard h2 { margin: 0 0 8px; font-size: 20px; }
+    .mkeys { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; font-size: 13px; }
+    .mkeys > span:nth-child(odd) { color: var(--muted); }
+    .mfaint { color: var(--muted); font-size: 12.5px; }
+  """;
+}
