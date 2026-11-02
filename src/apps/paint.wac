@@ -1,0 +1,1002 @@
+// Paint: pictures drawn, and PNGs opened, changed and saved.
+//
+// **The picture is the program's, not the canvas's.** Every pixel is worked out here (`paint/image.wac`) and the
+// canvas is sent only the rectangle that changed, so what is saved is exactly what was drawn, and undo needs nothing
+// from the page. The canvas is shown at the zoom chosen by its size on screen alone, with its pixels kept square.
+//
+// **A press anywhere in the window keeps drawing.** Pointer events are heard by the frame around the canvas, in its
+// own pixels, so a stroke can leave the picture and come back; while one is under way a layer covering the window is
+// put in the frame, so the pointer is still over it wherever it goes. (A page cannot capture the pointer, and a
+// listener hears only what is over it.)
+//
+// **A program of the desktop's** (`src/desk/builtin.wac`): started from the site, handed the picture it was opened on
+// to change, and anything dropped on its window. Open asks the desktop's picker for another; a new picture is saved
+// on the Desktop under a free name like the one typed (`Desktop.newFile`). The tool, the sizes and the colours are
+// kept in its own folder. Opened as a page on its own, it opens what is dropped on it and saves by downloading.
+
+import { Vec } from "core";
+import { Desktop, Element, ElementEvent, Listen, MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Picked, Ref, Ui,
+         html.b, html.button, html.canvas, html.div, html.h2, html.input, html.p, html.span, html.style } from "web";
+import { icon } from "../preview.wac";
+import { css } from "../style.wac";
+import { MOST_PIXELS, Picture, decodePng, encodePng } from "../png.wac";
+import { Doc, ERASE, PAINT, Rect } from "./paint/image.wac";
+import { paintCss } from "./paint/style.wac";
+
+/** Where the tool, the sizes and the colours are kept, in the program's own folder. */
+static string KEPT = "settings";
+/** The zooms the buttons and keys step through. */
+static f64[] ZOOMS = [0.0625, 0.125, 0.25, 0.333, 0.5, 0.667, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0];
+/** The largest picture New, Canvas size and Scale make, each way. */
+static i32 MOST_SIDE = 8192;
+
+/** A tool: its name, its icon, its key, and what it is called. */
+struct Tool {
+  string name;
+  string key;
+  string title;
+}
+
+Tool[] tools() {
+  return [Tool("pencil", "p", "Pencil — hard edges, a pixel at a time"), Tool("brush", "b", "Brush — soft edges"),
+          Tool("eraser", "e", "Eraser — to transparent"), Tool("line", "l", "Line — Shift for every 45°"),
+          Tool("rect", "r", "Rectangle — Shift for a square"), Tool("ellipse", "o", "Ellipse — Shift for a circle"),
+          Tool("bucket", "f", "Fill — the area of one colour"), Tool("picker", "i", "Pick a colour from the picture")];
+}
+
+/** The colours offered, a palette of its own. */
+string[] palette() {
+  return ["#000000", "#464646", "#787878", "#b4b4b4", "#ffffff", "#7a1f1f", "#d63a3a", "#f08a3c", "#f5c84b", "#fff59d",
+          "#3e8e41", "#8bc34a", "#1e6fb8", "#6ec6ff", "#2b2d5c", "#5b55e6", "#8b5cf6", "#c084fc", "#ec4899", "#f9a8d4",
+          "#7c4a2d", "#c08457", "#e8c39e", "#0f766e", "#2dd4bf", "#94a3b8", "#334155", "#fde68a"];
+}
+
+export struct Painter {
+  Page page;
+  Desktop? desk;
+  Doc doc;
+  /** The file, from the disk's root, and its name; `""` for a picture not saved yet. */
+  string path;
+  string name;
+  string tool;
+  /** The tool before the colour picker, which picking goes back to. */
+  string before;
+  i32 size;
+  bool smooth;
+  bool filled;
+  /** How different a colour the fill spreads to, in percent. */
+  i32 tolerance;
+  /** The colour drawn with, and the second colour — drawn with when Alt is held, and new canvas around a picture. */
+  i32 fg;
+  i32 bg;
+  f64 zoom;
+  /** Whether to fit the picture to the window when the window's size is next known. */
+  bool fitting;
+  /** The size of the area the picture is shown in, in CSS pixels. */
+  f64 viewW;
+  f64 viewH;
+  /** A stroke: whether the pointer is down, when, where it started and was last, in the picture's pixels. */
+  bool down;
+  f64 downAt;
+  f64 startX;
+  f64 startY;
+  f64 lastX;
+  f64 lastY;
+  /** Where the pointer is over the picture, for the status; -1 when it is not. */
+  i32 overX;
+  i32 overY;
+  /** An open dialog — "new", "size", "scale", "save", "discard", "keys" — and its fields. */
+  string dialog;
+  string fieldW;
+  string fieldH;
+  string fieldName;
+  bool fieldClear;
+  /** What a "discard" dialog goes on to do once the person agrees. */
+  fn<void()> then;
+  string note;
+  bool saving;
+  /** The settings as last written, and as wanted: a write under way is followed by one more if they changed. */
+  string written;
+  string wanted;
+  bool writing;
+  Element? canvas;
+  /** The size the canvas was last sent, to know when it must be sent whole. */
+  i32 sentW;
+  i32 sentH;
+  string shownTitle;
+  fn<void()> bump;
+}
+
+void unseen() { }
+
+Painter create(Page page, Doc doc) {
+  return Painter(page, null, doc, "", "Untitled.png", "brush", "brush", 6, true, false, 12, 0x1e1e2e, 0xffffff, 1.0, true,
+                 0.0, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0 - 1, 0 - 1, "", "", "", "", false, unseen, "", false, "", "",
+                 false, null, 0 - 1, 0 - 1, "", unseen);
+}
+
+// ── Colours ─────────────────────────────────────────────────────────────────
+
+/** `#rrggbb` as a number, or `fallback` when it is not one. */
+export i32 parseHex(string s, i32 fallback) {
+  u8[] b = s.toBytes();
+  if (b.len() != 7 || b[0] != '#') { return fallback; }
+  i32 v = 0;
+  for (i32 i = 1; i < 7; i++) {
+    i32 c = b[i] as i32;
+    i32 d = c >= 48 && c <= 57 ? c - 48 : (c >= 97 && c <= 102 ? c - 87 : (c >= 65 && c <= 70 ? c - 55 : 0 - 1));
+    if (d < 0) { return fallback; }
+    v = v * 16 + d;
+  }
+  return v;
+}
+
+export string hex(i32 v) {
+  string digits = "0123456789abcdef";
+  string out = "#";
+  for (i32 k = 5; k >= 0; k--) {
+    i32 d = (v >> (k * 4)) & 15;
+    out = out + digits.slice(d, d + 1);
+  }
+  return out;
+}
+
+i32 red(i32 v) { return (v >> 16) & 255; }
+i32 green(i32 v) { return (v >> 8) & 255; }
+i32 blue(i32 v) { return v & 255; }
+
+// ── Showing the picture ─────────────────────────────────────────────────────
+
+/** What changed in the picture, sent to the canvas: all of it when its size changed. */
+void flush(Painter m) {
+  Rect r = m.doc.taken();
+  if (m.canvas is null) { return; }
+  Doc d = m.doc;
+  if (d.w != m.sentW || d.h != m.sentH) {
+    m.canvas!.pixels(d.w, d.h, d.rgba);
+    m.sentW = d.w;
+    m.sentH = d.h;
+    return;
+  }
+  if (r.empty()) { return; }
+  m.canvas!.pixelsIn(r.x0, r.y0, r.w(), r.h(), d.region(r));
+}
+
+/** The title: the picture's name, marked while it has changes not saved. */
+void retitle(Painter m) {
+  string t = m.name + (m.doc.modified() ? " •" : "");
+  if (t != m.shownTitle) {
+    m.shownTitle = t;
+    m.page.title(t);
+  }
+}
+
+void changed(Painter m) {
+  flush(m);
+  retitle(m);
+  m.bump();
+}
+
+/** The zoom at which the whole picture fits the area it is shown in, at most actual size. */
+f64 fitZoom(Painter m) {
+  if (m.viewW <= 0.0 || m.viewH <= 0.0) { return 1.0; }
+  f64 z = ((m.viewW - 40.0) / (m.doc.w as f64)).min((m.viewH - 40.0) / (m.doc.h as f64));
+  return z > 1.0 ? 1.0 : (z < ZOOMS[0] ? ZOOMS[0] : z);
+}
+
+/** One step of the zooms in or out from where it is. */
+void zoomStep(Painter m, i32 dir) {
+  f64 z = m.zoom;
+  if (dir > 0) {
+    for (i32 i = 0; i < ZOOMS.len(); i++) { if (ZOOMS[i] > z * 1.001) { m.zoom = ZOOMS[i]; m.fitting = false; m.bump(); return; } }
+  } else {
+    for (i32 i = ZOOMS.len() - 1; i >= 0; i--) { if (ZOOMS[i] < z * 0.999) { m.zoom = ZOOMS[i]; m.fitting = false; m.bump(); return; } }
+  }
+}
+
+void fit(Painter m) {
+  m.zoom = fitZoom(m);
+  m.fitting = true;
+  m.bump();
+}
+
+string percent(f64 z) {
+  f64 p = (z * 100.0).round();
+  return "\{p as~ i32}%";
+}
+
+// ── Strokes ─────────────────────────────────────────────────────────────────
+
+/** A point on a pixel's centre, or on a corner between pixels for an even size, so a hard edge is even all round. */
+f64 snap(f64 v, i32 size) { return size % 2 == 1 ? v.floor() + 0.5 : v.round(); }
+
+/** The end of a line from (`x0`, `y0`) to (`x1`, `y1`) kept to a multiple of 45°. */
+f64[] constrainLine(f64 x0, f64 y0, f64 x1, f64 y1) {
+  f64 dx = x1 - x0;
+  f64 dy = y1 - y0;
+  f64 ax = dx.abs();
+  f64 ay = dy.abs();
+  if (ax > 2.0 * ay) { return [x1, y0]; }
+  if (ay > 2.0 * ax) { return [x0, y1]; }
+  f64 d = ax.max(ay);
+  return [x0 + d.copySign(dx), y0 + d.copySign(dy)];
+}
+
+/** The corner of a rectangle from (`x0`, `y0`) made square. */
+i32[] constrainSquare(i32 x0, i32 y0, i32 x1, i32 y1) {
+  i32 dx = x1 - x0;
+  i32 dy = y1 - y0;
+  i32 ax = dx < 0 ? 0 - dx : dx;
+  i32 ay = dy < 0 ? 0 - dy : dy;
+  i32 d = ax > ay ? ax : ay;
+  return [x0 + (dx < 0 ? 0 - d : d), y0 + (dy < 0 ? 0 - d : d)];
+}
+
+/** A shape from where the stroke began to (`x`, `y`), drawn again in place of the last. */
+void shape(Painter m, f64 x, f64 y, bool shift) {
+  Doc d = m.doc;
+  d.clearStroke();
+  if (m.tool == "line") {
+    f64 x0 = snap(m.startX, m.size);
+    f64 y0 = snap(m.startY, m.size);
+    f64 x1 = snap(x, m.size);
+    f64 y1 = snap(y, m.size);
+    if (shift) {
+      f64[] c = constrainLine(x0, y0, x1, y1);
+      x1 = c[0];
+      y1 = c[1];
+    }
+    d.segment(x0, y0, x1, y1, m.size as f64, m.smooth);
+    return;
+  }
+  i32 x0 = m.startX.floor() as~ i32;
+  i32 y0 = m.startY.floor() as~ i32;
+  i32 x1 = x.floor() as~ i32;
+  i32 y1 = y.floor() as~ i32;
+  if (shift) {
+    i32[] c = constrainSquare(x0, y0, x1, y1);
+    x1 = c[0];
+    y1 = c[1];
+  }
+  if (m.tool == "rect") { d.rect(x0, y0, x1, y1, m.size, m.filled); }
+  else { d.ellipse(x0, y0, x1, y1, m.size, m.filled, m.smooth); }
+}
+
+/** A freehand stroke carried on from where it last was to (`x`, `y`). */
+void freehand(Painter m, f64 x, f64 y) {
+  f64 s = m.size as f64;
+  if (m.tool == "brush") {
+    m.doc.segment(m.lastX, m.lastY, x, y, s, true);
+  } else {
+    bool hard = m.tool == "pencil" || !m.smooth;
+    f64 ax = hard ? snap(m.lastX, m.size) : m.lastX;
+    f64 ay = hard ? snap(m.lastY, m.size) : m.lastY;
+    f64 bx = hard ? snap(x, m.size) : x;
+    f64 by = hard ? snap(y, m.size) : y;
+    m.doc.segment(ax, ay, bx, by, s, !hard);
+  }
+  m.lastX = x;
+  m.lastY = y;
+}
+
+void pressed(Painter m, f64 x, f64 y, i32 mods, f64 at) {
+  if (m.dialog != "") { return; }
+  m.note = "";
+  Doc d = m.doc;
+  if (d.active) { finish(m); }
+  i32 colour = (mods & MOD_ALT) != 0 ? m.bg : m.fg;
+  if (m.tool == "picker") {
+    i32[] c = d.at(x.floor() as~ i32, y.floor() as~ i32);
+    if (c[3] > 0) {
+      i32 v = (c[0] << 16) | (c[1] << 8) | c[2];
+      if ((mods & MOD_ALT) != 0) { m.bg = v; } else { m.fg = v; }
+      keepSettings(m);
+    }
+    m.tool = m.before;
+    m.bump();
+    return;
+  }
+  d.begin(m.tool == "eraser" ? ERASE : PAINT, red(colour), green(colour), blue(colour));
+  if (m.tool == "bucket") {
+    d.fill(x.floor() as~ i32, y.floor() as~ i32, m.tolerance * 255 / 100);
+    d.end();
+    changed(m);
+    return;
+  }
+  m.down = true;
+  m.downAt = at;
+  m.startX = x;
+  m.startY = y;
+  m.lastX = x;
+  m.lastY = y;
+  if (m.tool == "line" || m.tool == "rect" || m.tool == "ellipse") { shape(m, x, y, (mods & MOD_SHIFT) != 0); }
+  else { freehand(m, x, y); }
+  changed(m);
+}
+
+void dragged(Painter m, f64 x, f64 y, i32 mods) {
+  m.overX = x >= 0.0 && x < (m.doc.w as f64) && y >= 0.0 && y < (m.doc.h as f64) ? x.floor() as~ i32 : 0 - 1;
+  m.overY = m.overX >= 0 ? y.floor() as~ i32 : 0 - 1;
+  if (!m.down || !m.doc.active) {
+    m.bump();
+    return;
+  }
+  if (m.tool == "line" || m.tool == "rect" || m.tool == "ellipse") { shape(m, x, y, (mods & MOD_SHIFT) != 0); }
+  else { freehand(m, x, y); }
+  flush(m);
+  m.bump();
+}
+
+void finish(Painter m) {
+  m.down = false;
+  m.doc.end();
+  changed(m);
+}
+
+// ── Opening and saving ──────────────────────────────────────────────────────
+
+/** The last part of a path. */
+export string leafOf(string path) {
+  i32 k = path.len() - 1;
+  while (k >= 0 && path.slice(k, k + 1) != "/") { k--; }
+  return path.slice(k + 1, path.len());
+}
+
+/** A picture to paint on, in place of the one there, from `path` (`""` for none) named `name`. */
+void adopt(Painter m, Doc doc, string path, string name) {
+  m.doc = doc;
+  m.path = path;
+  m.name = name;
+  m.down = false;
+  m.overX = 0 - 1;
+  m.overY = 0 - 1;
+  m.sentW = 0 - 1;
+  m.fitting = true;
+  m.zoom = fitZoom(m);
+  changed(m);
+}
+
+/** The bytes of a PNG opened, or a note saying why not. */
+void openBytes(Painter m, string path, string name, u8[] bytes) {
+  match (decodePng(bytes)) {
+    Ok(p): {
+      adopt(m, Doc.of(p), path, name);
+      m.note = "";
+    }
+    Err(why): { m.note = "Could not open \{name}: \{why}"; }
+  }
+  m.bump();
+}
+
+async void openPath(Painter m, string path) {
+  match (await m.page.sys.files().readFile(path)) {
+    Ok(bytes): { openBytes(m, path, leafOf(path), bytes); }
+    Err(why): {
+      m.note = "Could not read \{leafOf(path)}: \{why}";
+      m.bump();
+    }
+  }
+}
+
+/** Do `then` now, or once the person has agreed to lose the changes not saved. */
+void unlessUnsaved(Painter m, fn<void()> then) {
+  if (!m.doc.modified()) {
+    then();
+    return;
+  }
+  m.then = then;
+  m.dialog = "discard";
+  m.bump();
+}
+
+async void pickAndOpen(Painter m) {
+  if (m.desk is null) {
+    m.note = "Drop a PNG on this window to open it";
+    m.bump();
+    return;
+  }
+  match (await m.desk!.pick("a PNG picture to open in Paint")) {
+    Ok(path): { openPath(m, path); }
+    Err(why): { }
+  }
+}
+
+void newPicture(Painter m, i32 w, i32 h, bool clear) {
+  Doc d = clear ? Doc.blank(w, h, 0, 0, 0, 0) : Doc.blank(w, h, red(m.bg), green(m.bg), blue(m.bg), 255);
+  adopt(m, d, "", "Untitled.png");
+}
+
+/** The name to save a new picture as: the one typed, made to end in `.png`. */
+export string pngName(string typed) {
+  string t = trimmed(typed);
+  if (t == "") { t = "Untitled"; }
+  string lower = cased(t, false);
+  if (lower.len() < 4 || lower.slice(lower.len() - 4, lower.len()) != ".png") { t = t + ".png"; }
+  return t;
+}
+
+/** Save to the picture's file — a new picture first asks for a name — or, on a page of its own, download it. */
+async void save(Painter m) {
+  if (m.doc.active || m.saving) { return; }
+  if (m.desk is null) {
+    m.page.download(m.name, encodePng(m.doc.w, m.doc.h, m.doc.rgba));
+    m.doc.saved();
+    m.note = "Downloaded \{m.name}";
+    changed(m);
+    return;
+  }
+  if (m.path == "") {
+    m.fieldName = m.name;
+    m.dialog = "save";
+    m.bump();
+    return;
+  }
+  writeTo(m, m.path);
+}
+
+async void saveAs(Painter m, string typed) {
+  string name = pngName(typed);
+  if (name.indexOf("/") >= 0) {
+    m.note = "A name cannot contain “/”";
+    m.bump();
+    return;
+  }
+  m.dialog = "";
+  match (await m.desk!.newFile(name)) {
+    Ok(path): { writeTo(m, path); }
+    Err(why): {
+      m.note = "Not saved: \{why}";
+      m.bump();
+    }
+  }
+}
+
+async void writeTo(Painter m, string path) {
+  m.saving = true;
+  m.note = "Saving…";
+  m.bump();
+  await m.page.painted();
+  // What is saved is the picture as it is now; a stroke made while it is written is a change after it.
+  i32 steps = m.doc.undos.len();
+  u8[] bytes = encodePng(m.doc.w, m.doc.h, m.doc.rgba);
+  match (await m.page.sys.files().writeFile(path, bytes)) {
+    Ok(v): {
+      if (m.doc.undos.len() == steps) { m.doc.saved(); }
+      m.path = path;
+      m.name = leafOf(path);
+      m.note = "Saved \{m.name}";
+      if (m.desk is not null) { m.desk!.note("Saved \{m.name}"); }
+    }
+    Err(why): { m.note = "Not saved: \{why}"; }
+  }
+  m.saving = false;
+  changed(m);
+}
+
+/** Pictures dropped on the window, or handed over, opened one at a time as they come. */
+async void receive(Painter m) {
+  while (true) {
+    Picked p = await m.page.nextFile();
+    if (!p.ok) { continue; }
+    u8[] bytes = p.bytes;
+    string name = leafOf(p.name);
+    unlessUnsaved(m, () => { openBytes(m, "", name, bytes); });
+  }
+}
+
+// ── Settings ────────────────────────────────────────────────────────────────
+
+string settingsText(Painter m) {
+  return "\{m.tool} \{m.size} \{m.smooth ? "1" : "0"} \{m.filled ? "1" : "0"} \{m.tolerance} \{hex(m.fg)} \{hex(m.bg)}\n";
+}
+
+/** Settings as `settingsText` wrote them, onto `m`; whatever does not read as one is left as it was. */
+export void restore(Painter m, string text) {
+  string[] f = words(text);
+  if (f.len() < 7) { return; }
+  Tool[] ts = tools();
+  for (i32 i = 0; i < ts.len(); i++) {
+    if (ts[i].name == f[0] && f[0] != "picker") {
+      m.tool = f[0];
+      m.before = f[0];
+    }
+  }
+  i32 size = number(f[1], m.size);
+  m.size = size < 1 ? 1 : (size > 100 ? 100 : size);
+  m.smooth = f[2] != "0";
+  m.filled = f[3] == "1";
+  i32 tol = number(f[4], m.tolerance);
+  m.tolerance = tol < 0 ? 0 : (tol > 100 ? 100 : tol);
+  m.fg = parseHex(f[5], m.fg);
+  m.bg = parseHex(f[6], m.bg);
+}
+
+/** `s` without the spaces and line ends around it. */
+string trimmed(string s) {
+  u8[] b = s.toBytes();
+  i32 a = 0;
+  i32 z = b.len();
+  while (a < z && (b[a] == ' ' || b[a] == '\n' || b[a] == '\t' || b[a] == '\r')) { a++; }
+  while (z > a && (b[z - 1] == ' ' || b[z - 1] == '\n' || b[z - 1] == '\t' || b[z - 1] == '\r')) { z--; }
+  return s.slice(a, z);
+}
+
+/** `s` with its ASCII letters made capitals, when `upper`, or small. */
+string cased(string s, bool upper) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (upper && b[i] >= 'a' && b[i] <= 'z') { b[i] = b[i] - 32; }
+    if (!upper && b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; }
+  }
+  return string.fromBytes(b);
+}
+
+/** The words of `s`, split at spaces and line ends. */
+string[] words(string s) {
+  Vec<string> out = Vec.create();
+  i32 start = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    bool gap = i == s.len() || s.slice(i, i + 1) == " " || s.slice(i, i + 1) == "\n";
+    if (gap) {
+      if (i > start) { out.push(s.slice(start, i)); }
+      start = i + 1;
+    }
+  }
+  return out.toArray();
+}
+
+/** A whole number written in decimal, or `fallback`. */
+export i32 number(string s, i32 fallback) {
+  u8[] b = trimmed(s).toBytes();
+  if (b.len() == 0 || b.len() > 6) { return fallback; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return fallback; }
+    v = v * 10 + ((b[i] - '0') as i32);
+  }
+  return v;
+}
+
+/** The settings written to the program's folder, one write at a time, the last asked for written last. */
+async void keepSettings(Painter m) {
+  m.wanted = settingsText(m);
+  if (m.writing || m.wanted == m.written) { return; }
+  m.writing = true;
+  while (m.wanted != m.written) {
+    string text = m.wanted;
+    await m.page.sys.files().writeFile(KEPT, text.toBytes());
+    m.written = text;
+  }
+  m.writing = false;
+}
+
+// ── Keys ────────────────────────────────────────────────────────────────────
+
+void choose(Painter m, string tool) {
+  if (tool == "picker" && m.tool != "picker") { m.before = m.tool; }
+  m.tool = tool;
+  keepSettings(m);
+  m.bump();
+}
+
+void resize(Painter m, i32 by) {
+  i32 s = m.size + by;
+  m.size = s < 1 ? 1 : (s > 100 ? 100 : s);
+  keepSettings(m);
+  m.bump();
+}
+
+void undo(Painter m) {
+  if (m.doc.undo()) { changed(m); }
+}
+
+void redo(Painter m) {
+  if (m.doc.redo()) { changed(m); }
+}
+
+void swapColours(Painter m) {
+  i32 t = m.fg;
+  m.fg = m.bg;
+  m.bg = t;
+  keepSettings(m);
+  m.bump();
+}
+
+/** What a key does; false for one that does nothing here. */
+bool onKey(Painter m, string k, i32 mods) {
+  bool ctrl = (mods & MOD_CTRL) != 0 || (mods & MOD_META) != 0;
+  bool shift = (mods & MOD_SHIFT) != 0;
+  if (m.dialog != "") {
+    if (k == "Escape") {
+      m.dialog = "";
+      m.bump();
+      return true;
+    }
+    return false;
+  }
+  if (ctrl) {
+    if ((k == "z" || k == "Z") && !shift) { undo(m); }
+    else if (k == "y" || k == "Y" || ((k == "z" || k == "Z") && shift)) { redo(m); }
+    else if (k == "s" || k == "S") { save(m); }
+    else if (k == "o" || k == "O") { unlessUnsaved(m, () => { pickAndOpen(m); }); }
+    else { return false; }
+    return true;
+  }
+  if (k == "Escape" && m.doc.active) {
+    m.doc.cancel();
+    m.down = false;
+    changed(m);
+    return true;
+  }
+  Tool[] ts = tools();
+  for (i32 i = 0; i < ts.len(); i++) {
+    if (k == ts[i].key || k == cased(ts[i].key, true)) {
+      choose(m, ts[i].name);
+      return true;
+    }
+  }
+  if (k == "[") { resize(m, m.size > 10 ? 0 - 2 : 0 - 1); }
+  else if (k == "]") { resize(m, m.size >= 10 ? 2 : 1); }
+  else if (k == "x" || k == "X") { swapColours(m); }
+  else if (k == "+" || k == "=") { zoomStep(m, 1); }
+  else if (k == "-" || k == "_") { zoomStep(m, 0 - 1); }
+  else if (k == "0") { fit(m); }
+  else if (k == "1") {
+    m.zoom = 1.0;
+    m.fitting = false;
+    m.bump();
+  }
+  else if (k == "?") {
+    m.dialog = "keys";
+    m.bump();
+  }
+  else { return false; }
+  return true;
+}
+
+// ── The window ──────────────────────────────────────────────────────────────
+
+Node ToolButton(Ui ui, Painter m, Tool t, i32 rev) {
+  return <button class={m.tool == t.name ? "ptool on" : "ptool"} title={t.title + " (" + cased(t.key, true) + ")"}
+                 onclick={(ElementEvent e) => { choose(m, t.name); }}>{icon(t.name, "")}</button>;
+}
+
+Node Action(Ui ui, string ic, string title, bool enabled, fn<void()> run) {
+  return enabled
+    ? <button class="pbtn" title={title} onclick={(ElementEvent e) => { run(); }}>{icon(ic, "sm")}</button>
+    : <button class="pbtn" title={title} disabled="">{icon(ic, "sm")}</button>;
+}
+
+/** What the tool in hand can be changed by. */
+Node Options(Ui ui, Painter m, i32 rev) {
+  string t = m.tool;
+  bool sized = t != "bucket" && t != "picker";
+  Vec<Node> parts = Vec.create();
+  if (sized) {
+    parts.push(<span class="plabel">Size</span>);
+    parts.push(<input class="prange" type="range" min="1" max="100" step="1" value={"\{m.size}"} title="Size ([ and ])"
+                      oninput={(ElementEvent e) => { m.size = number(e.value, m.size); keepSettings(m); m.bump(); }}/>);
+    parts.push(<span class="pval">{"\{m.size} px"}</span>);
+  }
+  if (t == "eraser" || t == "line" || t == "ellipse") {
+    parts.push(<button class={m.smooth ? "pchip on" : "pchip"} title="Soft, anti-aliased edges"
+                       onclick={(ElementEvent e) => { m.smooth = !m.smooth; keepSettings(m); m.bump(); }}>Smooth</button>);
+  }
+  if (t == "rect" || t == "ellipse") {
+    parts.push(<span class="pseg">
+      <button class={m.filled ? "pchip" : "pchip on"} onclick={(ElementEvent e) => { m.filled = false; keepSettings(m); m.bump(); }}>Outline</button>
+      <button class={m.filled ? "pchip on" : "pchip"} onclick={(ElementEvent e) => { m.filled = true; keepSettings(m); m.bump(); }}>Filled</button>
+    </span>);
+  }
+  if (t == "bucket") {
+    parts.push(<span class="plabel">Tolerance</span>);
+    parts.push(<input class="prange" type="range" min="0" max="100" step="1" value={"\{m.tolerance}"}
+                      title="How different a colour the fill spreads into"
+                      oninput={(ElementEvent e) => { m.tolerance = number(e.value, m.tolerance); keepSettings(m); m.bump(); }}/>);
+    parts.push(<span class="pval">{"\{m.tolerance}%"}</span>);
+  }
+  if (t == "picker") { parts.push(<span class="phint">Click the picture to take its colour; with Alt, as the second colour</span>); }
+  if (t == "brush" || t == "pencil" || t == "line" || t == "rect" || t == "ellipse" || t == "bucket") {
+    parts.push(<span class="phint">Alt draws with the second colour</span>);
+  }
+  return <div class="popts">{parts.toArray()}</div>;
+}
+
+Node Swatch(Ui ui, Painter m, string colour) {
+  return <button class="pswatch" style={"background:" + colour} title={colour + " — Shift-click for the second colour"}
+                 onclick={(ElementEvent e) => {
+                   if ((e.mods & MOD_SHIFT) != 0) { m.bg = parseHex(colour, m.bg); } else { m.fg = parseHex(colour, m.fg); }
+                   keepSettings(m);
+                   m.bump();
+                 }}/>;
+}
+
+Node Colours(Ui ui, Painter m, i32 rev) {
+  string[] ps = palette();
+  Vec<Node> swatches = Vec.create();
+  for (i32 i = 0; i < ps.len(); i++) { swatches.push(<Swatch m={m} colour={ps[i]}/>); }
+  return <div class="pcolours">
+    <div class="pwell">
+      <input class="pcolor pfg" type="color" value={hex(m.fg)} title="The colour drawn with"
+             oninput={(ElementEvent e) => { m.fg = parseHex(e.value, m.fg); keepSettings(m); m.bump(); }}/>
+      <input class="pcolor pbg" type="color" value={hex(m.bg)} title="The second colour"
+             oninput={(ElementEvent e) => { m.bg = parseHex(e.value, m.bg); keepSettings(m); m.bump(); }}/>
+      <button class="pswap" title="Swap the colours (X)" onclick={(ElementEvent e) => { swapColours(m); }}>{icon("swap", "sm")}</button>
+    </div>
+    <div class="ppalette">{swatches.toArray()}</div>
+  </div>;
+}
+
+/** A dialog's width and height fields. */
+Node SizeFields(Ui ui, Painter m, i32 rev) {
+  return <div class="pfields">
+    <span>Width</span><input class="pnum pw" type="number" min="1" max={"\{MOST_SIDE}"} value={m.fieldW}
+                             oninput={(ElementEvent e) => { m.fieldW = e.value; }}/>
+    <span>Height</span><input class="pnum ph" type="number" min="1" max={"\{MOST_SIDE}"} value={m.fieldH}
+                              oninput={(ElementEvent e) => { m.fieldH = e.value; }}/>
+  </div>;
+}
+
+/** The width and height typed, when both are sizes a picture can have; otherwise the note says why not. */
+i32[] typedSize(Painter m) {
+  i32 w = number(m.fieldW, 0);
+  i32 h = number(m.fieldH, 0);
+  if (w < 1 || h < 1 || w > MOST_SIDE || h > MOST_SIDE || (w as i64) * (h as i64) > MOST_PIXELS as i64) {
+    m.note = "A picture is 1 to \{MOST_SIDE} pixels each way, and at most 16 million in all";
+    m.bump();
+    return i32[]();
+  }
+  return [w, h];
+}
+
+Node Dialog(Ui ui, Painter m, i32 rev) {
+  string d = m.dialog;
+  fn<void()> close = () => { m.dialog = ""; m.bump(); };
+  Node body = <span/>;
+  if (d == "new") {
+    body = <div class="pcard">
+      <h2>New picture</h2>
+      <SizeFields m={m} rev={rev}/>
+      <div class="pfields"><span>Background</span><span class="pseg">
+        <button class={m.fieldClear ? "pchip" : "pchip on"} onclick={(ElementEvent e) => { m.fieldClear = false; m.bump(); }}>Second colour</button>
+        <button class={m.fieldClear ? "pchip on" : "pchip"} onclick={(ElementEvent e) => { m.fieldClear = true; m.bump(); }}>Transparent</button>
+      </span></div>
+      <div class="pact">
+        <button class="btn" onclick={(ElementEvent e) => { close(); }}>Cancel</button>
+        <button class="btn primary pgo" onclick={(ElementEvent e) => {
+          i32[] s = typedSize(m);
+          if (s.len() == 0) { return; }
+          m.dialog = "";
+          bool clear = m.fieldClear;
+          unlessUnsaved(m, () => { newPicture(m, s[0], s[1], clear); });
+        }}>Create</button>
+      </div>
+    </div>;
+  } else if (d == "size" || d == "scale") {
+    bool scaling = d == "scale";
+    body = <div class="pcard">
+      <h2>{scaling ? "Scale picture" : "Canvas size"}</h2>
+      <p class="pfaint">{scaling ? "The picture stretched or shrunk to the new size." : "The picture kept at the top left; new space is the second colour."}</p>
+      <SizeFields m={m} rev={rev}/>
+      <div class="pact">
+        <button class="btn" onclick={(ElementEvent e) => { close(); }}>Cancel</button>
+        <button class="btn primary pgo" onclick={(ElementEvent e) => {
+          i32[] s = typedSize(m);
+          if (s.len() == 0) { return; }
+          m.dialog = "";
+          if (scaling) { m.doc.scale(s[0], s[1]); }
+          else { m.doc.canvasSize(s[0], s[1], red(m.bg), green(m.bg), blue(m.bg), 255); }
+          if (m.fitting) { m.zoom = fitZoom(m); }
+          changed(m);
+        }}>{scaling ? "Scale" : "Resize"}</button>
+      </div>
+    </div>;
+  } else if (d == "save") {
+    body = <div class="pcard">
+      <h2>Save picture</h2>
+      <p class="pfaint">It is saved on the Desktop, as a PNG.</p>
+      <div class="pfields"><span>Name</span><input class="pname" value={m.fieldName} autofocus="" prevent="Enter"
+        oninput={(ElementEvent e) => { m.fieldName = e.value; }}
+        onkeydown={(ElementEvent e) => { if (e.value == "Enter") { saveAs(m, m.fieldName); } }}/></div>
+      <div class="pact">
+        <button class="btn" onclick={(ElementEvent e) => { close(); }}>Cancel</button>
+        <button class="btn primary pgo" onclick={(ElementEvent e) => { saveAs(m, m.fieldName); }}>Save</button>
+      </div>
+    </div>;
+  } else if (d == "discard") {
+    body = <div class="pcard">
+      <h2>Lose your changes?</h2>
+      <p>{m.name} has changes that are not saved.</p>
+      <div class="pact">
+        <button class="btn" onclick={(ElementEvent e) => { close(); }}>Keep editing</button>
+        <button class="btn primary pgo" onclick={(ElementEvent e) => {
+          m.dialog = "";
+          fn<void()> t = m.then;
+          m.then = unseen;
+          m.doc.saved();
+          t();
+          m.bump();
+        }}>Lose them</button>
+      </div>
+    </div>;
+  } else if (d == "keys") {
+    body = <div class="pcard" onclick={(ElementEvent e) => { close(); }}>
+      <h2>Paint</h2>
+      <div class="pkeys">
+        <span>Tools</span><span><b>P</b>encil, <b>B</b>rush, <b>E</b>raser, <b>L</b>ine, <b>R</b>ectangle, ellipse (<b>O</b>), <b>F</b>ill, p<b>I</b>ck a colour</span>
+        <span>Size</span><span><b>[</b> and <b>]</b></span>
+        <span>Straight, square</span><span>hold <b>Shift</b> while drawing a line, rectangle or ellipse</span>
+        <span>Second colour</span><span>hold <b>Alt</b> while drawing; Shift-click a swatch to choose it; <b>X</b> swaps</span>
+        <span>Undo, redo</span><span><b>Ctrl+Z</b>, and <b>Ctrl+Y</b> or <b>Ctrl+Shift+Z</b></span>
+        <span>Zoom</span><span><b>+</b> and <b>−</b>; <b>0</b> fits, <b>1</b> is actual size</span>
+        <span>Save, open</span><span><b>Ctrl+S</b>, <b>Ctrl+O</b>, or drop a PNG on the window</span>
+        <span>Stop a shape</span><span><b>Esc</b> while drawing</span>
+      </div>
+    </div>;
+  }
+  return <div class="pmodal" onpointerdown={(ElementEvent e) => { }}>{body}</div>;
+}
+
+Node App(Ui ui, Painter m) {
+  auto tick = ui.state(0);
+  m.bump = () => { tick.set(tick.get() + 1); };
+  // **Each part is handed the revision**: a component renders again only when what it is handed changes, and the
+  // painter it is handed is always the same one.
+  i32 rev = tick.get();
+  Ref root = ui.ref();
+  Ref cv = ui.ref();
+  Ref scroller = ui.ref();
+  Ref frame = ui.ref();
+  ui.effect("", () => {
+    m.canvas = cv.element();
+    m.sentW = 0 - 1;
+    flush(m);
+    if (scroller.element() is not null) {
+      scroller.element()!.on("resize", Listen.none(), (ElementEvent e) => {
+        f64 ratio = e.value == "" ? 1.0 : parseRatio(e.value);
+        m.viewW = (e.x as f64) / ratio;
+        m.viewH = (e.y as f64) / ratio;
+        if (m.fitting) { m.zoom = fitZoom(m); }
+        m.bump();
+      });
+    }
+    // A stroke whose button was let go outside the window is finished when the pointer leaves it.
+    if (frame.element() is not null) {
+      frame.element()!.on("pointerleave", Listen.none(), (ElementEvent e) => {
+        if (m.down && m.page.now() - m.downAt > 150.0) { finish(m); }
+      });
+    }
+    if (root.element() is not null) { root.element()!.focus(); }
+    return () => { };
+  });
+  Doc d = m.doc;
+  f64 z = m.zoom;
+  i32 shownW = ((d.w as f64) * z).round() as~ i32;
+  i32 shownH = ((d.h as f64) * z).round() as~ i32;
+  string pixelated = z >= 2.0 ? "image-rendering:pixelated;" : "";
+  string status = m.overX >= 0 ? "\{m.overX}, \{m.overY}" : "";
+  string summary = "\{d.w} × \{d.h} · " + percent(z) + (d.modified() ? " · Not saved" : "");
+  Tool[] ts = tools();
+  Vec<Node> toolButtons = Vec.create();
+  for (i32 i = 0; i < ts.len(); i++) { toolButtons.push(<ToolButton m={m} t={ts[i]} rev={rev}/>); }
+  return <div class="paint" tabindex="0" ref={root}
+              prevent="Ctrl+z Ctrl+y Ctrl+Shift+z Ctrl+s Ctrl+o Meta+z Meta+y Meta+Shift+z Meta+s Meta+o"
+              onkeydown={(ElementEvent e) => { onKey(m, e.value, e.mods); }}>
+    <div class="ptop">
+      <button class="btn pnew" title="New picture" onclick={(ElementEvent e) => {
+        m.fieldW = "\{d.w}";
+        m.fieldH = "\{d.h}";
+        m.dialog = "new";
+        m.bump();
+      }}>{icon("plus", "sm")}<span class="label">New</span></button>
+      <button class="btn popen" title="Open a PNG (Ctrl+O)" onclick={(ElementEvent e) => { unlessUnsaved(m, () => { pickAndOpen(m); }); }}>{icon("open", "sm")}<span class="label">Open</span></button>
+      <button class="btn psave" title="Save (Ctrl+S)" onclick={(ElementEvent e) => { save(m); }}>{icon(m.desk is null ? "download" : "save", "sm")}<span class="label">{m.desk is null ? "Download" : "Save"}</span></button>
+      <span class="psep"/>
+      <Action ic="undo" title="Undo (Ctrl+Z)" enabled={d.canUndo()} run={() => { undo(m); }}/>
+      <Action ic="redo" title="Redo (Ctrl+Y)" enabled={d.canRedo()} run={() => { redo(m); }}/>
+      <span class="psep"/>
+      <Action ic="fliph" title="Flip left to right" enabled={true} run={() => { d.flip(true); changed(m); }}/>
+      <Action ic="flipv" title="Flip top to bottom" enabled={true} run={() => { d.flip(false); changed(m); }}/>
+      <Action ic="turn" title="Turn a quarter clockwise" enabled={true} run={() => {
+        d.turn(true);
+        if (m.fitting) { m.zoom = fitZoom(m); }
+        changed(m);
+      }}/>
+      <Action ic="resize" title="Canvas size" enabled={true} run={() => { m.fieldW = "\{d.w}"; m.fieldH = "\{d.h}"; m.dialog = "size"; m.bump(); }}/>
+      <Action ic="scale" title="Scale picture" enabled={true} run={() => { m.fieldW = "\{d.w}"; m.fieldH = "\{d.h}"; m.dialog = "scale"; m.bump(); }}/>
+      <span class="pgrow"/>
+      <Action ic="min" title="Zoom out (−)" enabled={true} run={() => { zoomStep(m, 0 - 1); }}/>
+      <button class="pzoom" title="Fit the window (0); actual size is 1" onclick={(ElementEvent e) => {
+        if (m.fitting) { m.zoom = 1.0; m.fitting = false; m.bump(); } else { fit(m); }
+      }}>{percent(z)}</button>
+      <Action ic="plus" title="Zoom in (+)" enabled={true} run={() => { zoomStep(m, 1); }}/>
+      <button class="pbtn" title="Keys (?)" onclick={(ElementEvent e) => { m.dialog = "keys"; m.bump(); }}>?</button>
+    </div>
+    <Options m={m} rev={rev}/>
+    <div class="pbody">
+      <div class="ptools">{toolButtons.toArray()}</div>
+      <div class="pscroll" ref={scroller}>
+        <div class="pstage">
+          <div class={"pframe t-" + m.tool} ref={frame} style={"width:\{shownW}px;height:\{shownH}px"}
+               onpointerdown={(ElementEvent e) => {
+                 if (root.element() is not null) { root.element()!.focus(); }
+                 pressed(m, (e.x as f64) / m.zoom, (e.y as f64) / m.zoom, e.mods, m.page.now());
+               }}
+               onpointermove={(ElementEvent e) => { dragged(m, (e.x as f64) / m.zoom, (e.y as f64) / m.zoom, e.mods); }}
+               onpointerup={(ElementEvent e) => { if (m.down) { finish(m); } }}>
+            <canvas class="pcanvas" ref={cv} style={pixelated}/>
+            {m.down ? <div class="pcover"/> : <span/>}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="pbottom">
+      <Colours m={m} rev={rev}/>
+      <div class="pstatus">
+        <span class="pnote">{m.note}</span>
+        <span class="ppos">{status}</span>
+        <span class="psum">{summary}</span>
+      </div>
+    </div>
+    {m.dialog != "" ? <Dialog m={m} rev={rev}/> : <span/>}
+  </div>;
+}
+
+/** The device's pixels to a CSS pixel, as `resize` says it: a decimal such as `1` or `1.25`. */
+f64 parseRatio(string s) {
+  u8[] b = s.toBytes();
+  f64 v = 0.0;
+  f64 scale = 0.0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '.') {
+      if (scale > 0.0) { return 1.0; }
+      scale = 1.0;
+    } else if (b[i] >= '0' && b[i] <= '9') {
+      v = v * 10.0 + (((b[i] - '0') as i32) as f64);
+      if (scale > 0.0) { scale = scale * 10.0; }
+    } else {
+      return 1.0;
+    }
+  }
+  if (scale > 0.0) { v = v / scale; }
+  return v > 0.0 ? v : 1.0;
+}
+
+export async i32 main(Page page) {
+  Painter m = create(page, Doc.blank(800, 600, 255, 255, 255, 255));
+  auto kept = await page.sys.files().readFile(KEPT);
+  if (kept.isOk()) {
+    restore(m, string.fromBytes(kept.ok()!));
+    m.written = settingsText(m);
+  }
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { m.desk = d; }
+    Err(why): { }
+  }
+  string[] args = page.sys.args();
+  if (args.len() > 0 && args[0] != "") {
+    m.path = args[0];
+    m.name = leafOf(args[0]);
+    match (await page.sys.files().readFile(args[0])) {
+      Ok(bytes): {
+        match (decodePng(bytes)) {
+          Ok(p): { m.doc = Doc.of(p); }
+          Err(why): {
+            m.note = "Could not open \{m.name}: \{why}";
+            m.path = "";
+            m.name = "Untitled.png";
+          }
+        }
+      }
+      Err(why): {
+        m.note = "Could not read \{m.name}: \{why}";
+        m.path = "";
+        m.name = "Untitled.png";
+      }
+    }
+  }
+  retitle(m);
+  receive(m);
+  page.mount((Ui ui) => <div class="paintpage"><style>{css() + paintCss()}</style><App m={m}/></div>);
+  return 0;
+}

@@ -43,6 +43,7 @@ export Entry[] entries() {
     Entry("Files", "trash", "Trash", "What was deleted, to restore or let go", ["bin", "recycle", "deleted", "restore", "undelete", "rubbish"], false, "files", TRASH),
     Entry("Files", "shield", "Permissions", "What programs were allowed, to take back", ["grants", "security", "privacy", "access", "allowed", "revoke"], false, "allowed", ""),
     Entry("Tools", "edit", "Text editor", "A new text file", ["notes", "text", "write", "notepad", "txt", "edit"], true, "editor", ""),
+    Entry("Tools", "paint", "Paint", "Draw, and edit PNG pictures", ["paint", "draw", "drawing", "picture", "image", "png", "art", "sketch", "brush", "pixel"], true, "paint", ""),
     Entry("Tools", "calc", "Calculator", "Sums, typed or clicked", ["calc", "maths", "math", "arithmetic", "numbers", "sums"], true, "calc", ""),
     Entry("Tools", "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", ["zip", "tar", "gzip", "zstd", "archive", "unpack", "extract", "compressed"], true, "explorer", ""),
     Entry("Programming", "code", "wac IDE", "Write wac, checked as you type, in Projects", ["code", "programming", "compiler", "develop", "build", "run", "test", "wac", "ide"], true, "ide", "Projects"),

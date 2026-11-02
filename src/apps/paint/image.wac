@@ -1,0 +1,555 @@
+// Paint's picture and everything done to it, without a page: strokes, shapes, fills, and undoing them.
+//
+// **Every change is a stroke over a coverage mask.** A stroke starts from a copy of the picture (`before`) and a mask
+// of how much of each pixel it covers, from 0 to 255; a pixel's colour is always worked out from the two, never from
+// what the stroke drew a moment ago. So a soft brush passing over its own path does not darken where its dabs
+// overlap — the mask keeps the most any dab covered — and a line or a shape being dragged out is cleared and drawn
+// again each move, back to exactly what was there. The copy and the mask are made once for the picture's size and
+// kept, since a stroke begins with every press of the pointer.
+//
+// **What a stroke changed is kept to undo**: the rectangle it touched, before and after. A change to the whole picture
+// — a flip, a turn, a new canvas size — keeps the whole picture, before and after. The history is bounded by how many
+// bytes it holds, the oldest forgotten first.
+//
+// **What changed since it was last asked** (`taken`) is a rectangle, so the page sends the canvas only that.
+
+import { Vec } from "core";
+import { Picture } from "../../png.wac";
+
+/** What a stroke does with its colour: lays it over the picture, or takes the picture away to transparent. */
+export static i32 PAINT = 0;
+export static i32 ERASE = 1;
+
+/** The most the history keeps, in bytes, and in steps. */
+static i64 MOST_KEPT = 100000000 as i64;
+static i32 MOST_STEPS = 100;
+
+/** A change, to undo and redo: a rectangle of the picture before and after, or the whole of it. */
+export struct Patch {
+  bool whole;
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+  u8[] before;
+  u8[] after;
+  /** For a whole-picture change, its size after; `w` and `h` are its size before. */
+  i32 aw;
+  i32 ah;
+
+  i64 bytes(this) { return (this.before.len() + this.after.len()) as i64; }
+}
+
+/** A rectangle: from (`x0`, `y0`) up to but not including (`x1`, `y1`); empty when either side is not positive. */
+export struct Rect {
+  i32 x0;
+  i32 y0;
+  i32 x1;
+  i32 y1;
+
+  Rect none() { return Rect(0, 0, 0, 0); }
+  bool empty(this) { return this.x1 <= this.x0 || this.y1 <= this.y0; }
+  i32 w(this) { return this.x1 - this.x0; }
+  i32 h(this) { return this.y1 - this.y0; }
+
+  /** Grown to take in `o` too. */
+  void add(this, Rect o) {
+    if (o.empty()) { return; }
+    if (this.empty()) {
+      this.x0 = o.x0;
+      this.y0 = o.y0;
+      this.x1 = o.x1;
+      this.y1 = o.y1;
+      return;
+    }
+    if (o.x0 < this.x0) { this.x0 = o.x0; }
+    if (o.y0 < this.y0) { this.y0 = o.y0; }
+    if (o.x1 > this.x1) { this.x1 = o.x1; }
+    if (o.y1 > this.y1) { this.y1 = o.y1; }
+  }
+}
+
+/** The picture being painted, its history, and the stroke under way. */
+export struct Doc {
+  i32 w;
+  i32 h;
+  u8[] rgba;
+  Vec<Patch> undos;
+  Vec<Patch> redos;
+  i64 kept;
+  /** Whether a stroke is under way, and what it lays down. */
+  bool active;
+  i32 mode;
+  i32 cr;
+  i32 cg;
+  i32 cb;
+  /** The picture when the stroke began, and how much of each pixel the stroke covers. */
+  u8[] before;
+  u8[] cov;
+  /** What the stroke has covered so far, and what has changed since the page last asked. */
+  Rect touched;
+  Rect changed;
+  /**
+   * Whether the picture differs from what was last saved: the steps since then — below zero when they were undone
+   * past it — and whether it can no longer be got back to, its step undone and another made in its place.
+   */
+  i32 sinceSaved;
+  bool savedLost;
+
+  /** A picture `w` by `h`, all of colour `r`, `g`, `b`, `a`. */
+  Doc blank(i32 w, i32 h, i32 r, i32 g, i32 b, i32 a) {
+    u8[] px = u8[].filled(w * h * 4, 0 as u8);
+    for (i32 i = 0; i < w * h; i++) {
+      px[i * 4] = r as@ u8;
+      px[i * 4 + 1] = g as@ u8;
+      px[i * 4 + 2] = b as@ u8;
+      px[i * 4 + 3] = a as@ u8;
+    }
+    return Doc.of(Picture(w, h, px));
+  }
+
+  /** A picture to paint on: `p`'s pixels themselves, not a copy. */
+  Doc of(Picture p) {
+    return Doc(p.w, p.h, p.rgba, Vec.create(), Vec.create(), 0 as i64, false, PAINT, 0, 0, 0, u8[].filled(p.w * p.h * 4, 0 as u8),
+               u8[].filled(p.w * p.h, 0 as u8), Rect.none(), Rect(0, 0, p.w, p.h), 0, false);
+  }
+
+  Picture picture(this) { return Picture(this.w, this.h, this.rgba); }
+  bool modified(this) { return this.savedLost || this.sinceSaved != 0; }
+  void saved(this) {
+    this.sinceSaved = 0;
+    this.savedLost = false;
+  }
+
+  /** What has changed since this was last asked, and from now on nothing. */
+  Rect taken(this) {
+    Rect r = this.changed;
+    this.changed = Rect.none();
+    return r;
+  }
+
+  /** The pixels of `r`, row by row, to send. */
+  u8[] region(this, Rect r) {
+    u8[] out = u8[].filled(r.w() * r.h() * 4, 0 as u8);
+    for (i32 y = 0; y < r.h(); y++) {
+      out.copyFrom(this.rgba, ((r.y0 + y) * this.w + r.x0) * 4, y * r.w() * 4, r.w() * 4);
+    }
+    return out;
+  }
+
+  /** The colour at (`x`, `y`), as four channels; transparent black outside the picture. */
+  i32[] at(this, i32 x, i32 y) {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) { return [0, 0, 0, 0]; }
+    i32 i = (y * this.w + x) * 4;
+    return [this.rgba[i] as i32, this.rgba[i + 1] as i32, this.rgba[i + 2] as i32, this.rgba[i + 3] as i32];
+  }
+
+  // ── Strokes ──────────────────────────────────────────────────────────────
+
+  /** Begin a stroke laying down colour `r`, `g`, `b` — or, when `mode` is `ERASE`, taking the picture away. */
+  void begin(this, i32 mode, i32 r, i32 g, i32 b) {
+    if (this.active) { this.end(); }
+    this.active = true;
+    this.mode = mode;
+    this.cr = r;
+    this.cg = g;
+    this.cb = b;
+    this.before.copyFrom(this.rgba, 0, 0, this.rgba.len());
+    this.touched = Rect.none();
+  }
+
+  /** Pixel `i`'s colour, from what was there before the stroke and how much of it the stroke covers. */
+  void composite(this, i32 i) {
+    i32 c = this.cov[i] as i32;
+    i32 o = i * 4;
+    if (c == 0) {
+      this.rgba.copyFrom(this.before, o, o, 4);
+      return;
+    }
+    i32 da = this.before[o + 3] as i32;
+    if (this.mode == ERASE) {
+      this.rgba.copyFrom(this.before, o, o, 3);
+      this.rgba[o + 3] = ((da * (255 - c) + 127) / 255) as@ u8;
+      return;
+    }
+    // The colour over what was there, at coverage `c`: alpha `c + da (1 − c)`, each channel weighted by its alpha.
+    i32 back = da * (255 - c);
+    i32 oa = c * 255 + back;
+    if (oa == 0) { return; }
+    this.rgba[o] = ((this.cr * c * 255 + (this.before[o] as i32) * back + oa / 2) / oa) as@ u8;
+    this.rgba[o + 1] = ((this.cg * c * 255 + (this.before[o + 1] as i32) * back + oa / 2) / oa) as@ u8;
+    this.rgba[o + 2] = ((this.cb * c * 255 + (this.before[o + 2] as i32) * back + oa / 2) / oa) as@ u8;
+    this.rgba[o + 3] = ((oa + 127) / 255) as@ u8;
+  }
+
+  /** Pixel (`x`, `y`) covered by at least `c` of 255. */
+  void cover(this, i32 x, i32 y, i32 c) {
+    i32 i = y * this.w + x;
+    if ((this.cov[i] as i32) >= c) { return; }
+    this.cov[i] = c as@ u8;
+    this.composite(i);
+  }
+
+  /** The part of `r` inside the picture. */
+  Rect clip(this, Rect r) {
+    return Rect(r.x0 < 0 ? 0 : r.x0, r.y0 < 0 ? 0 : r.y0, r.x1 > this.w ? this.w : r.x1, r.y1 > this.h ? this.h : r.y1);
+  }
+
+  /** `r`, which the stroke has just drawn in, noted as touched and changed. */
+  void drew(this, Rect r) {
+    this.touched.add(r);
+    this.changed.add(r);
+  }
+
+  /** Take back everything the stroke has drawn, leaving it under way: a shape dragged out is drawn again. */
+  void clearStroke(this) {
+    Rect t = this.touched;
+    for (i32 y = t.y0; y < t.y1; y++) {
+      for (i32 x = t.x0; x < t.x1; x++) {
+        i32 i = y * this.w + x;
+        this.cov[i] = 0 as u8;
+      }
+      this.rgba.copyFrom(this.before, (y * this.w + t.x0) * 4, (y * this.w + t.x0) * 4, t.w() * 4);
+    }
+    this.changed.add(t);
+    this.touched = Rect.none();
+  }
+
+  /** The stroke finished: kept to undo, if it changed anything. Whether it did. */
+  bool end(this) {
+    if (!this.active) { return false; }
+    this.active = false;
+    Rect t = this.touched;
+    this.touched = Rect.none();
+    if (t.empty()) { return false; }
+    u8[] was = u8[].filled(t.w() * t.h() * 4, 0 as u8);
+    for (i32 y = 0; y < t.h(); y++) {
+      i32 from = ((t.y0 + y) * this.w + t.x0) * 4;
+      was.copyFrom(this.before, from, y * t.w() * 4, t.w() * 4);
+      for (i32 x = t.x0; x < t.x1; x++) { this.cov[(t.y0 + y) * this.w + x] = 0 as u8; }
+    }
+    u8[] now = this.region(t);
+    bool same = true;
+    for (i32 i = 0; i < now.len() && same; i++) { if (now[i] != was[i]) { same = false; } }
+    if (same) { return false; }
+    this.remember(Patch(false, t.x0, t.y0, t.w(), t.h(), was, now, 0, 0));
+    return true;
+  }
+
+  /** The stroke abandoned: the picture as it was before it. */
+  void cancel(this) {
+    if (!this.active) { return; }
+    this.clearStroke();
+    this.active = false;
+  }
+
+  /**
+   * A round brush from (`ax`, `ay`) to (`bx`, `by`) — a dab when they are the same point — `size` pixels across: every
+   * pixel within `size / 2` of the segment, soft-edged when `soft`, so a stroke is smooth at any angle.
+   */
+  void segment(this, f64 ax, f64 ay, f64 bx, f64 by, f64 size, bool soft) {
+    f64 r = size / 2.0;
+    Rect box = this.clip(Rect((ax.min(bx) - r - 1.0).floor() as~ i32, (ay.min(by) - r - 1.0).floor() as~ i32,
+                              (ax.max(bx) + r + 2.0).floor() as~ i32, (ay.max(by) + r + 2.0).floor() as~ i32));
+    if (box.empty()) { return; }
+    f64 vx = bx - ax;
+    f64 vy = by - ay;
+    f64 vv = vx * vx + vy * vy;
+    for (i32 y = box.y0; y < box.y1; y++) {
+      f64 py = (y as f64) + 0.5;
+      for (i32 x = box.x0; x < box.x1; x++) {
+        f64 px = (x as f64) + 0.5;
+        f64 t = vv > 0.0 ? (((px - ax) * vx + (py - ay) * vy) / vv).max(0.0).min(1.0) : 0.0;
+        f64 dx = px - (ax + t * vx);
+        f64 dy = py - (ay + t * vy);
+        f64 d = (dx * dx + dy * dy).sqrt();
+        i32 c = soft ? level(r + 0.5 - d) : (d < r ? 255 : 0);
+        if (c > 0) { this.cover(x, y, c); }
+      }
+    }
+    this.drew(box);
+  }
+
+  /** A rectangle with corners at pixels (`x0`, `y0`) and (`x1`, `y1`), both in it: its edge `size` wide, or filled. */
+  void rect(this, i32 x0, i32 y0, i32 x1, i32 y1, i32 size, bool filled) {
+    i32 l = min(x0, x1);
+    i32 t = min(y0, y1);
+    i32 r = max(x0, x1);
+    i32 b = max(y0, y1);
+    Rect box = this.clip(Rect(l, t, r + 1, b + 1));
+    for (i32 y = box.y0; y < box.y1; y++) {
+      for (i32 x = box.x0; x < box.x1; x++) {
+        bool edge = x - l < size || r - x < size || y - t < size || b - y < size;
+        if (filled || edge) { this.cover(x, y, 255); }
+      }
+    }
+    this.drew(box);
+  }
+
+  /**
+   * An ellipse inside the rectangle with corners at pixels (`x0`, `y0`) and (`x1`, `y1`): its edge `size` wide, or
+   * filled; soft-edged when `soft`. How far a pixel is from the edge is the ellipse's equation over the length of its
+   * gradient — exact on a circle, and near enough on an ellipse for an edge a pixel or two wide.
+   */
+  void ellipse(this, i32 x0, i32 y0, i32 x1, i32 y1, i32 size, bool filled, bool soft) {
+    i32 l = min(x0, x1);
+    i32 t = min(y0, y1);
+    i32 r = max(x0, x1);
+    i32 b = max(y0, y1);
+    f64 cx = ((l + r + 1) as f64) / 2.0;
+    f64 cy = ((t + b + 1) as f64) / 2.0;
+    f64 ra = ((r - l + 1) as f64) / 2.0;
+    f64 rb = ((b - t + 1) as f64) / 2.0;
+    f64 thick = size as f64;
+    Rect box = this.clip(Rect(l, t, r + 1, b + 1));
+    for (i32 y = box.y0; y < box.y1; y++) {
+      f64 ny = ((y as f64) + 0.5 - cy) / rb;
+      for (i32 x = box.x0; x < box.x1; x++) {
+        f64 nx = ((x as f64) + 0.5 - cx) / ra;
+        f64 f = nx * nx + ny * ny;
+        f64 g = 2.0 * ((nx / ra) * (nx / ra) + (ny / rb) * (ny / rb)).sqrt();
+        // How far outside the edge, in pixels: below zero is inside.
+        f64 d = g > 0.000000001 ? (f - 1.0) / g : 0.0 - 1000000.0;
+        f64 inside = soft ? 0.5 - d : (d <= 0.0 ? 1.0 : 0.0);
+        f64 v = inside;
+        if (!filled) {
+          f64 within = soft ? d + thick + 0.5 : (d > 0.0 - thick ? 1.0 : 0.0);
+          v = inside.min(within);
+        }
+        i32 c = level(v);
+        if (c > 0) { this.cover(x, y, c); }
+      }
+    }
+    this.drew(box);
+  }
+
+  /**
+   * The area around (`x`, `y`) of colours within `tolerance` of its own (0 to 255, in any one channel), filled. It
+   * spreads to the four neighbours, a row's run at a time, and is read from the picture as it was before the stroke.
+   */
+  void fill(this, i32 x, i32 y, i32 tolerance) {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) { return; }
+    i32 s = (y * this.w + x) * 4;
+    i32 sr = this.before[s] as i32;
+    i32 sg = this.before[s + 1] as i32;
+    i32 sb = this.before[s + 2] as i32;
+    i32 sa = this.before[s + 3] as i32;
+    u8[] seen = u8[].filled(this.w * this.h, 0 as u8);
+    Vec<i32> todo = Vec.create();
+    todo.push(y * this.w + x);
+    Rect box = Rect.none();
+    while (todo.len() > 0) {
+      i32 at = todo.pop()!;
+      i32 py = at / this.w;
+      i32 px = at % this.w;
+      if (seen[at] != 0 as u8 || !this.near(at, sr, sg, sb, sa, tolerance)) { continue; }
+      // The run of this row that matches, left and right of here.
+      i32 l = px;
+      while (l > 0 && seen[py * this.w + l - 1] == 0 as u8 && this.near(py * this.w + l - 1, sr, sg, sb, sa, tolerance)) { l--; }
+      i32 r = px;
+      while (r + 1 < this.w && seen[py * this.w + r + 1] == 0 as u8 && this.near(py * this.w + r + 1, sr, sg, sb, sa, tolerance)) { r++; }
+      for (i32 k = l; k <= r; k++) {
+        seen[py * this.w + k] = 1 as u8;
+        this.cover(k, py, 255);
+        if (py > 0) { todo.push((py - 1) * this.w + k); }
+        if (py + 1 < this.h) { todo.push((py + 1) * this.w + k); }
+      }
+      box.add(Rect(l, py, r + 1, py + 1));
+    }
+    this.drew(box);
+  }
+
+  /** Whether pixel `i` of the picture before the stroke is within `tol` of the colour given, in every channel. */
+  bool near(this, i32 i, i32 r, i32 g, i32 b, i32 a, i32 tol) {
+    i32 o = i * 4;
+    i32 pa = this.before[o + 3] as i32;
+    // Two transparent pixels are the same, whatever colour each hides.
+    if (pa == 0 && a == 0) { return true; }
+    return within(this.before[o] as i32, r, tol) && within(this.before[o + 1] as i32, g, tol)
+           && within(this.before[o + 2] as i32, b, tol) && within(pa, a, tol);
+  }
+
+  // ── Changes to the whole picture ─────────────────────────────────────────
+
+  /** The picture made `rgba`, `w` by `h`, kept to undo. */
+  void replace(this, i32 w, i32 h, u8[] rgba) {
+    if (this.active) { this.end(); }
+    this.remember(Patch(true, 0, 0, this.w, this.h, this.rgba, rgba, w, h));
+    this.become(w, h, copied(rgba));
+  }
+
+  void become(this, i32 w, i32 h, u8[] rgba) {
+    bool resized = w != this.w || h != this.h;
+    this.w = w;
+    this.h = h;
+    this.rgba = rgba;
+    if (resized) {
+      this.before = u8[].filled(w * h * 4, 0 as u8);
+      this.cov = u8[].filled(w * h, 0 as u8);
+    }
+    this.changed = Rect(0, 0, w, h);
+  }
+
+  /** Mirrored left to right, or top to bottom. */
+  void flip(this, bool across) {
+    u8[] out = u8[].filled(this.rgba.len(), 0 as u8);
+    for (i32 y = 0; y < this.h; y++) {
+      for (i32 x = 0; x < this.w; x++) {
+        i32 from = across ? y * this.w + (this.w - 1 - x) : (this.h - 1 - y) * this.w + x;
+        out.copyFrom(this.rgba, from * 4, (y * this.w + x) * 4, 4);
+      }
+    }
+    this.replace(this.w, this.h, out);
+  }
+
+  /** Turned a quarter, clockwise or anticlockwise. */
+  void turn(this, bool clockwise) {
+    i32 w = this.h;
+    i32 h = this.w;
+    u8[] out = u8[].filled(this.rgba.len(), 0 as u8);
+    for (i32 y = 0; y < h; y++) {
+      for (i32 x = 0; x < w; x++) {
+        // The new (x, y) is the old (y, w − 1 − x) turning clockwise, or (h − 1 − y, x) turning anticlockwise.
+        i32 ox = clockwise ? y : this.w - 1 - y;
+        i32 oy = clockwise ? this.h - 1 - x : x;
+        out.copyFrom(this.rgba, (oy * this.w + ox) * 4, (y * w + x) * 4, 4);
+      }
+    }
+    this.replace(w, h, out);
+  }
+
+  /** The canvas made `w` by `h`, the picture kept at its top left, new space the colour given. */
+  void canvasSize(this, i32 w, i32 h, i32 r, i32 g, i32 b, i32 a) {
+    u8[] out = u8[].filled(w * h * 4, 0 as u8);
+    for (i32 i = 0; i < w * h; i++) {
+      out[i * 4] = r as@ u8;
+      out[i * 4 + 1] = g as@ u8;
+      out[i * 4 + 2] = b as@ u8;
+      out[i * 4 + 3] = a as@ u8;
+    }
+    i32 cw = min(w, this.w);
+    i32 ch = min(h, this.h);
+    for (i32 y = 0; y < ch; y++) { out.copyFrom(this.rgba, y * this.w * 4, y * w * 4, cw * 4); }
+    this.replace(w, h, out);
+  }
+
+  /**
+   * The picture scaled to `w` by `h`: each new pixel the average of the old ones it covers, in proportion, so a
+   * picture made smaller is not jagged, and one made larger keeps its pixels square.
+   */
+  void scale(this, i32 w, i32 h) {
+    u8[] out = u8[].filled(w * h * 4, 0 as u8);
+    f64 sx = (this.w as f64) / (w as f64);
+    f64 sy = (this.h as f64) / (h as f64);
+    for (i32 y = 0; y < h; y++) {
+      f64 fy0 = (y as f64) * sy;
+      f64 fy1 = fy0 + sy;
+      for (i32 x = 0; x < w; x++) {
+        f64 fx0 = (x as f64) * sx;
+        f64 fx1 = fx0 + sx;
+        // Premultiplied by alpha while summed, so a transparent pixel's hidden colour does not bleed in.
+        f64 tr = 0.0;
+        f64 tg = 0.0;
+        f64 tb = 0.0;
+        f64 ta = 0.0;
+        f64 area = 0.0;
+        i32 iy0 = fy0.floor() as~ i32;
+        i32 iy1 = fy1.ceil() as~ i32;
+        i32 ix0 = fx0.floor() as~ i32;
+        i32 ix1 = fx1.ceil() as~ i32;
+        for (i32 oy = iy0; oy < iy1 && oy < this.h; oy++) {
+          f64 wy = ((oy + 1) as f64).min(fy1) - (oy as f64).max(fy0);
+          for (i32 ox = ix0; ox < ix1 && ox < this.w; ox++) {
+            f64 wt = wy * (((ox + 1) as f64).min(fx1) - (ox as f64).max(fx0));
+            i32 o = (oy * this.w + ox) * 4;
+            f64 a = (this.rgba[o + 3] as f64) * wt;
+            tr = tr + (this.rgba[o] as f64) * a;
+            tg = tg + (this.rgba[o + 1] as f64) * a;
+            tb = tb + (this.rgba[o + 2] as f64) * a;
+            ta = ta + a;
+            area = area + wt;
+          }
+        }
+        i32 p = (y * w + x) * 4;
+        if (ta > 0.0) {
+          out[p] = (tr / ta).round() as~ i32 as@ u8;
+          out[p + 1] = (tg / ta).round() as~ i32 as@ u8;
+          out[p + 2] = (tb / ta).round() as~ i32 as@ u8;
+          out[p + 3] = (ta / area).round().min(255.0) as~ i32 as@ u8;
+        }
+      }
+    }
+    this.replace(w, h, out);
+  }
+
+  // ── History ──────────────────────────────────────────────────────────────
+
+  void remember(this, Patch p) {
+    this.undos.push(p);
+    this.kept = this.kept + p.bytes();
+    this.redos.clear();
+    // Made after undoing past the save: what was saved was among what could be redone, and is gone with it.
+    if (this.sinceSaved < 0) { this.savedLost = true; }
+    this.sinceSaved++;
+    while (this.undos.len() > 1 && (this.kept > MOST_KEPT || this.undos.len() > MOST_STEPS)) {
+      Patch gone = this.undos.remove(0);
+      this.kept = this.kept - gone.bytes();
+    }
+  }
+
+  bool canUndo(this) { return this.undos.len() > 0 && !this.active; }
+  bool canRedo(this) { return this.redos.len() > 0 && !this.active; }
+
+  /** The last change taken back. Whether there was one. */
+  bool undo(this) {
+    if (!this.canUndo()) { return false; }
+    Patch p = this.undos.pop()!;
+    this.kept = this.kept - p.bytes();
+    this.redos.push(p);
+    this.apply(p, false);
+    this.sinceSaved--;
+    return true;
+  }
+
+  /** The last change taken back made again. Whether there was one. */
+  bool redo(this) {
+    if (!this.canRedo()) { return false; }
+    Patch p = this.redos.pop()!;
+    this.undos.push(p);
+    this.kept = this.kept + p.bytes();
+    this.apply(p, true);
+    this.sinceSaved++;
+    return true;
+  }
+
+  void apply(this, Patch p, bool forward) {
+    if (p.whole) {
+      if (forward) { this.become(p.aw, p.ah, copied(p.after)); } else { this.become(p.w, p.h, copied(p.before)); }
+      return;
+    }
+    u8[] src = forward ? p.after : p.before;
+    for (i32 y = 0; y < p.h; y++) {
+      this.rgba.copyFrom(src, y * p.w * 4, ((p.y + y) * this.w + p.x) * 4, p.w * 4);
+    }
+    this.changed.add(Rect(p.x, p.y, p.x + p.w, p.y + p.h));
+  }
+}
+
+/** A copy of `b`: a whole-picture step's pixels are painted on, and the history's must stay as they were. */
+u8[] copied(u8[] b) {
+  u8[] out = u8[].filled(b.len(), 0 as u8);
+  out.copyFrom(b, 0, 0, b.len());
+  return out;
+}
+
+/** A coverage from 0 to 1 as a level from 0 to 255. */
+i32 level(f64 v) {
+  if (v <= 0.0) { return 0; }
+  if (v >= 1.0) { return 255; }
+  return (v * 255.0).round() as~ i32;
+}
+
+bool within(i32 a, i32 b, i32 tol) { return a - b <= tol && b - a <= tol; }
+
+i32 min(i32 a, i32 b) { return a < b ? a : b; }
+i32 max(i32 a, i32 b) { return a > b ? a : b; }

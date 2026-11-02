@@ -1,8 +1,8 @@
 // The Viewer: one file, shown the way the Archive Explorer shows one — rendered, as text, as hex, with its checksums.
 //
 // **A program of the desktop's** (`src/desk/builtin.wac`): started from the site with the file as its argument and
-// handed that file to read, and nothing else. Edit asks the desktop to open the same file in its Editor
-// (`Desktop.edit`), which it can only do for a file this program may read. Opened as a page on its own, it has no
+// handed that file to read, and nothing else. Edit asks the desktop to open the same file in its Editor — or a PNG in
+// Paint — (`Desktop.edit`), which it can only do for a file this program may read. Opened as a page on its own, it has no
 // file and says so.
 
 import { Desktop, ElementEvent, Node, Page, Ui, html.button, html.div, html.span, html.style } from "web";
@@ -39,12 +39,14 @@ Node Viewer(Ui ui, Page page, Viewing v) {
   string name = leafOf(v.path);
   Kind k = kindOf(l, 0);
   bool text = match (k) { Text: true, default: false };
+  // A PNG is edited in Paint, which the desktop chooses for it (`Desktop.edit`).
+  bool picture = match (k) { Image(mime): mime == "image/png", default: false };
   Desktop? desk = v.desk;
   return <div class="viewer">
     <div class="etools">
       <span class="epath" title={v.path}>{kindLabel(k, name)} · {sizeOf(l.archive.entries[0].size)}</span>
-      {text && desk is not null
-        ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { desk!.edit(v.path); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
+      {(text || picture) && desk is not null
+        ? <button class="btn" title={picture ? "Edit in Paint" : "Edit as text"} onclick={(ElementEvent e) => { desk!.edit(v.path); }}>{icon(picture ? "paint" : "edit", "sm")}<span class="label">Edit</span></button>
         : Node.Text("")}
       <button class="btn" title="Download a copy" onclick={(ElementEvent e) => { page.download(name, l.archive.data); }}>{icon("download", "sm")}<span class="label">Download</span></button>
     </div>
