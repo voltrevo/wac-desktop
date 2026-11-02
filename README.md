@@ -12,9 +12,9 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 
 ## Building it
 
-**Everything is pinned in `wac.lock`**: wac at `f689c4bb7` — the `wac` command should be built from that commit, and
+**Everything is pinned in `wac.lock`**: wac at `6f3ee4093` — the `wac` command should be built from that commit, and
 its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder (the wac-web repository), at
-`d63440e` — and the wac IDE at `9fc66be`. All are public repositories at `https://github.com/voltrevo/`. `wac.json5` names each commit as the `ref` of
+`d63440e` — and the wac IDE at `2811561`. All are public repositories at `https://github.com/voltrevo/`. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
 from `wac.lock`.
@@ -26,7 +26,7 @@ git clone https://github.com/voltrevo/wac.git ~/src/wac
 ```
 
 ```bash
-git -C ~/src/wac checkout f689c4bb714477672b428fa9266ff4b74e95f034
+git -C ~/src/wac checkout 6f3ee40931c09aed8cdd66950cbb51b4954924b7
 ```
 
 ```bash
@@ -201,7 +201,7 @@ shares, so their pages can see each other's files.
 - **`wac` on the site.** `tools/wacbin.py`, run by `wac task build`, compiles the pinned commit's `wac` command
   (2.5 MB) into `dist/bin/wac`. Every terminal has `WACPATH=/site/bin`, so the shell finds `wac` and spawns it as it
   would any program, handed the shell's files, which is why it works on the desktop's disk.
-- **Size.** The desktop is about 0.9 MB of module at wac `f689c4bb7` — 2.6 MB while it carried the Terminal and
+- **Size.** The desktop is about 0.9 MB of module at wac `6f3ee4093` — 2.6 MB while it carried the Terminal and
   `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
   Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
   when it is first started. It also needs a

@@ -23,7 +23,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `f689c4bb7`, `web` to `d4d4521` and the wac IDE (`ide`) to `f2b4333`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `6f3ee4093`, `web` (wac-web) to `d63440e` and the wac IDE (`ide`) to `2811561`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
