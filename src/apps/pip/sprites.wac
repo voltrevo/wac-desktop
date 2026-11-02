@@ -1,0 +1,442 @@
+// Pip's hand-authored 16 × 20 pixel poses. Each frame redraws the whole silhouette, with consistent face, hood and light.
+// The image-review tools read these same rows; there is no separate illustrative version of the character.
+
+import { Hero } from "./world.wac";
+
+export static i32 PIP_W = 16;
+export static i32 PIP_H = 20;
+
+export string[] pipSprite(i32 pose) {
+  // Idle.
+  if (pose == 0) { return [
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFwefo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaa.....",
+    "....aaaaCCCo....",
+    "....AaaCACoo....",
+    "...aaaCCCCoBo...",
+    "...aocCCCCoBo...",
+    ".....CccCCooo...",
+    ".....ooooooo....",
+    ".....oCo.ob.....",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Breathe.
+  if (pose == 1) { return [
+    "................",
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFwefo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaa.....",
+    "....aaaaCCCo....",
+    "....AaaCACoo....",
+    "...aaaCCCCoBo...",
+    "...aocCCCCoBo...",
+    ".....CccCCooo...",
+    ".....ooooooo....",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Blink.
+  if (pose == 2) { return [
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFfeeo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaa.....",
+    "....aaaaCCCo....",
+    "....AaaCACoo....",
+    "...aaaCCCCoBo...",
+    "...aocCCCCoBo...",
+    ".....CccCCooo...",
+    ".....ooooooo....",
+    ".....oCo.ob.....",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Run 1.
+  if (pose == 3) { return [
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCo...",
+    ".a....oaAaaa....",
+    ".aAaaaahCCCCo...",
+    "..aAAaocCACofo..",
+    "..a..ocCCCCoBo..",
+    ".....ocCCCCoBo..",
+    "......CccCCooo..",
+    ".....oooooooo...",
+    "...ooCCo.obboo..",
+    ".ocooo....ooBoo.",
+    ".oooo......oooo."
+  ]; }
+  // Run 2.
+  if (pose == 4) { return [
+    "................",
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCo...",
+    "......oaAaaa....",
+    ".aaaaaahCCCoo...",
+    ".aAAAaocCACoo...",
+    "..aa.ocCCCCoBo..",
+    "..a..ocCCCCoBo..",
+    "......CccCCooo..",
+    "......ooooooo...",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Run 3.
+  if (pose == 5) { return [
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCo...",
+    ".a....oaAaaa....",
+    ".aAaaaahCCooo...",
+    "..aAAaocCoooo...",
+    "..a..ocCCfooBo..",
+    ".....ocCCCCoBo..",
+    "...ocoCccCCooo..",
+    "...oooooooooo...",
+    ".....o..obo.....",
+    "........oBoo....",
+    "........oooo...."
+  ]; }
+  // Run 4.
+  if (pose == 6) { return [
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".a...oCCCCCCo...",
+    ".aA...oaAaaa....",
+    "..aAaaahfoooo...",
+    "..aaAaocCACCo...",
+    ".....ocCCCCoBo..",
+    ".....ocCCCCoBo..",
+    "......CccCCooo..",
+    "......ooooooooo.",
+    "...ocooC..boooo.",
+    "...ooooo..o.....",
+    ".....o..........",
+    "................"
+  ]; }
+  // Run 5.
+  if (pose == 7) { return [
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".a...oCCCCCCo...",
+    ".aA...oaAaaa....",
+    "..aAaaahCCCfo...",
+    "..aaAaocCACCo...",
+    ".....ocCCCCoBo..",
+    ".....ocCCCCoBo..",
+    "......CccCCooo..",
+    "......ooooooo...",
+    "....oobbooCoo...",
+    "..oBooo...oocoo.",
+    "..oooo.....oooo."
+  ]; }
+  // Run 6.
+  if (pose == 8) { return [
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCo...",
+    ".a....oaAaaa....",
+    ".aAaaaahCCCCo...",
+    "..aAAaocCACofo..",
+    "..a..ocCCCCoBo..",
+    ".....ocCCCCoBo..",
+    ".....oCccCCooo..",
+    ".....oooooooo...",
+    ".......oooo.....",
+    "......ocoo......",
+    "......oooo......"
+  ]; }
+  // Jump / push.
+  if (pose == 9) { return [
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCof..",
+    "......oaAaaaooo.",
+    ".a...aahCCCCoo..",
+    ".aAaaaacCACooo..",
+    "..aaaacCCCCoBo..",
+    "..a..ocCCCCoBo..",
+    "......CccCCooo..",
+    "..ocooooooooo...",
+    "..ooooo.ooboo...",
+    "....o....ooBoo..",
+    "..........oooo..",
+    "................"
+  ]; }
+  // Jump / tuck.
+  if (pose == 10) { return [
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFo..",
+    ".....oCCCCCCo...",
+    "......oaAaaaof..",
+    ".a...aahCCCooo..",
+    ".aAaaaacCACCooo.",
+    "..aaaacCCCCoBo..",
+    "..a..ocCCCCoBo..",
+    "......CccCCooo..",
+    "..ocoooooooooo..",
+    "..ooooo..ooooo..",
+    "....o...........",
+    "................",
+    "................"
+  ]; }
+  // Apex.
+  if (pose == 11) { return [
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFwefo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaa.....",
+    ".a...aaCCCCo....",
+    ".aAaaacCACoo....",
+    "..aaaaCCCCoBo...",
+    "..a.ocCCCCoBo...",
+    ".....CccCCooo...",
+    "..ocoooooooooo..",
+    "..ooooo..ooooo..",
+    "....o...........",
+    "................",
+    "................"
+  ]; }
+  // Fall / slow.
+  if (pose == 12) { return [
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    ".aaccCCCFwefo...",
+    ".aAocCCfFfffo...",
+    ".aaoCCCCFFFFo...",
+    "..aaoCCCCCCo....",
+    "..aoaoaAaaa.....",
+    "..fooohCCCCo.of.",
+    ".....ocCACCooo..",
+    "....ocCCCCCoo...",
+    "....ocCCCCCCo...",
+    ".....CccCCCo....",
+    ".....ooooooo....",
+    ".....oCo.ob.....",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Fall / fast.
+  if (pose == 13) { return [
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    ".aoccCCCfffoo...",
+    ".aaccCCCFwefo...",
+    ".aAocCCfFfffo...",
+    "..aoCCCCFFFFo...",
+    "..aaoCCCCCCo....",
+    "..aoaoaAaaa.....",
+    "..fooohCCCCo.of.",
+    ".....ocCACCooo..",
+    "....ocCCCCCoo...",
+    "....ocCCCCCCo...",
+    ".....CccCCCo....",
+    ".....ooooooo....",
+    ".....oCo.ob.....",
+    "....ocoo.oBoo...",
+    "....oooo.oooo..."
+  ]; }
+  // Land / squash.
+  if (pose == 14) { return [
+    "................",
+    "................",
+    "................",
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFwefo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaao....",
+    "....aaaaACoo....",
+    "....AaaCCCoBo...",
+    "...aaaCCCCoBo...",
+    "...aoCccCCooo...",
+    "...ocooooooooo..",
+    "...oooo...oooo.."
+  ]; }
+  // Land / recover.
+  if (pose == 15) { return [
+    "................",
+    "................",
+    "...o............",
+    "...coooooo......",
+    "..oohhhcCoo.....",
+    "..ohcccCCCCoo...",
+    "..occCCCfffoo...",
+    "...ccCCCFwefo...",
+    "...ocCCfFfffo...",
+    "...oCCCCFFFFo...",
+    "....oCCCCCCo....",
+    ".....oaAaaa.....",
+    "....aaaaCCCo....",
+    "....AaaCACoo....",
+    "...aaaCCCCoBo...",
+    "...aocCCCCoBo...",
+    ".....CccCCooo...",
+    "....ooooooooo...",
+    "...ocooo.ooBoo..",
+    "...oooo...oooo.."
+  ]; }
+  // Wall slide.
+  if (pose == 16) { return [
+    "................",
+    "....o...........",
+    "....coooooo.....",
+    "...oohhhcCoo....",
+    "...ohcccCCCCoo..",
+    "...occCCCfffoo..",
+    "....ccCCCFwefo..",
+    "....ocCCfFfffo..",
+    "....oCCCCFFFFof.",
+    ".....oCCCCCCooF.",
+    "......oaAaaaoooo",
+    ".....aaaaCooooo.",
+    ".....AaaCACooo..",
+    "....aaaCCCCCoo..",
+    "....aocCCCCCCo..",
+    "......CccCCCoo..",
+    "......oooooooBo.",
+    "......Co..ooooo.",
+    "....ocoo........",
+    "....oooo........"
+  ]; }
+  // Hurt.
+  if (pose == 17) { return [
+    "................",
+    "................",
+    "..o.............",
+    "..coooooo.......",
+    ".oohhhcCoo......",
+    ".ohcccCCCCoo....",
+    ".occCCCfffoo....",
+    "..ccCCCFfefo....",
+    "..ocCCfFffeo....",
+    "..oCCCCFFFFo....",
+    "...oCCCCCCo.....",
+    "...ooaAaaa......",
+    "..foooaCCCo..of.",
+    "...AaoCACCoooo..",
+    "..aaaCCCCCCo....",
+    "..aocCCCCCCo....",
+    "....CccCCCooo...",
+    "...oooooooooBoo.",
+    "..ocooo....oooo.",
+    "..oooo.........."
+  ]; }
+  return pipSprite(0);
+}
+
+/** Choose by physical state and simulation steps: a paused game freezes its pose, regardless of redraw rate. */
+export i32 pipPose(Hero h, i32 steps, i32 landedAt) {
+  if (h.dying > 0) { return 17; }
+  if (!h.ground) {
+    if (h.wall != 0 && h.vy > 0.0) { return 16; }
+    if (h.vy < -3.0) { return 9; }
+    if (h.vy < -1.0) { return 10; }
+    if (h.vy <= 1.0) { return 11; }
+    return h.vy < 3.5 ? 12 : 13;
+  }
+  i32 landed = steps - landedAt;
+  if (landed >= 0 && landed < 7) { return landed < 3 ? 14 : 15; }
+  if (h.stride > 0) { return 3 + (h.stride / 4) % 6; }
+  if (steps % 240 >= 232) { return 2; }
+  return (steps / 48) % 2;
+}

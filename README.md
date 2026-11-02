@@ -116,9 +116,12 @@ shares, so their pages can see each other's files.
   as WAV files. **It is
   made to feel latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to
   send its jump's sound, measured from the browser's own stamp on the key. Best times and runs are kept in its folder.
-  Its artwork is drawn directly on a 320 × 180 pixel grid: a shaded teal-hooded Pip, moss-edged earth and weathered
+  Its artwork is drawn directly on a 320 × 180 pixel grid: a 16 × 20 teal-hooded courier, moss-edged earth and weathered
   stone, brass lanterns, and moonlit fir trees at two parallax depths. `wac run --allow-read --allow-write
   tools/pip_art.wac /tmp/pip-art` renders five fixed-frame scenes as PPM images for art review.
+  Pip has eighteen whole-body animation frames (`sprites.wac`): breathing and blinking, a six-frame run, rising
+  and tucked jumps, an apex, two falling poses, landing squash and recovery, wall sliding and recoil when hurt.
+  Pose selection follows simulation time; landing animation is cosmetic and never delays a jump.
 
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;

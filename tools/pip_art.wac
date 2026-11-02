@@ -3,7 +3,7 @@
 import { Sys } from "std";
 import { Buf } from "core";
 import { allLevels } from "../src/apps/pip/levels.wac";
-import { load } from "../src/apps/pip/world.wac";
+import { Keys, load, step } from "../src/apps/pip/world.wac";
 import { Screen, SCREEN_W, SCREEN_H, drawWorld, snap } from "../src/apps/pip/art.wac";
 export async i32 main(Sys sys) {
   string[] args = sys.args();
@@ -11,6 +11,7 @@ export async i32 main(Sys sys) {
   auto levels = allLevels();
   for (i32 scene = 0; scene < 5; scene++) {
     auto w = load(levels[scene >= 3 ? 0 : scene]);
+    for (i32 i = 0; i < 10; i++) { step(w, Keys.none()); }
     Screen s = Screen.create(); snap(s, w);
     s.camX = scene >= 3 ? w.cols * 16 - SCREEN_W : (scene == 2 ? 256 : 0);
     if (scene == 4) { w.lit = w.lanterns; }

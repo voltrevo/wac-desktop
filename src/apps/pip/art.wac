@@ -8,6 +8,8 @@
 import { Vec } from "core";
 import { BAT, CRAWLER, FROG, Foe, GHOST, HERO_H, HERO_W, Mover, TILE, World, tileAt } from "./world.wac";
 
+import { pipPose, pipSprite } from "./sprites.wac";
+
 export static i32 SCREEN_W = 320;
 export static i32 SCREEN_H = 180;
 
@@ -23,6 +25,10 @@ export struct Screen {
   /** The sky, a colour a row; and the stars, x and y in turns. */
   i32[] sky;
   i32[] stars;
+  /** Landing is a visual transition, kept outside the rules and the saved best-run replay. */
+  i32 landedAt;
+  i32 lastSteps;
+  bool grounded;
 
   Screen create() {
     i32[] sky = i32[].filled(SCREEN_H, 0);
@@ -35,7 +41,7 @@ export struct Screen {
       seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
       stars[i * 2 + 1] = seed % 110;
     }
-    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, 0, 0.0, 0.0, 0.0, sky, stars);
+    return Screen(u8[].filled(SCREEN_W * SCREEN_H * 4, 255 as u8), 0, 0, 0.0, 0.0, 0.0, sky, stars, -1000, -1, false);
   }
 }
 
@@ -90,6 +96,8 @@ void halo(Screen s, i32 cx, i32 cy, i32 r, i32 c, f64 strength) {
 /** The colour each letter of a sprite stands for; a `.` is not drawn. */
 i32 paint(u8 ch) {
   if (ch == 'o') { return 0x152039; }
+  if (ch == 'a') { return 0xD5A349; }
+  if (ch == 'A') { return 0xFFE0A0; }
   if (ch == 'h') { return 0x80D4BB; }
   if (ch == 'F') { return 0xC99882; }
   if (ch == 'B') { return 0xA57857; }
@@ -159,30 +167,6 @@ string[] crawler(bool step) {
   return ["..Y..Y..Y...", "..OYOOYOOY..", ".OOOOOOOOOO.", "YOOkOOOOkOOY", ".OOOOOOOOOO.", "YOOOOOOOOOOY",
           ".OOOOOOOOOO.", "YOOOOOOOOOOY", ".OOOOOOOOOO.", "..OYOOYOOY..", step ? ".o.o.o.o.o.." : "..o.o.o.o.o.",
           "............"];
-}
-
-/** Pip, facing right: hooded and round, in a cloak; the legs by what Pip is doing. */
-string[] pip(string legs) {
-  string a = "...obo.obo..";
-  string b = "...obo.obo..";
-  if (legs == "run1") { a = "..obo...obo."; b = ".obo.....oo."; }
-  if (legs == "run2") { a = "....obobo..."; b = "....obo....."; }
-  if (legs == "jump") { a = "..obo..obo.."; b = "............"; }
-  if (legs == "fall") { a = "..obo...obo."; b = "..oo.....oo."; }
-  return ["....oooo....",
-          "...ohhhco...",
-          "..ohccccCo..",
-          "..ohccCCCo..",
-          ".ohCffffCCo.",
-          ".ocFfffweCo.",
-          ".ocFfffffCo.",
-          "..oCFFFfCo..",
-          "..ohCyyCCo..",
-          ".ohccyCCbCo.",
-          ".ohccyCCBCo.",
-          ".ocCCyCCCCo.",
-          "..oCCCCCCo..",
-          a, b, "............"];
 }
 
 string[] beetle(bool step) {
@@ -489,6 +473,7 @@ export void follow(Screen s, World w) {
 
 /** The camera straight to Pip: at a level's start, or when Pip comes back to a flag. */
 export void snap(Screen s, World w) {
+  s.landedAt = -1000; s.lastSteps = w.steps; s.grounded = w.hero.ground;
   s.lead = 0.0;
   s.camYF = clampCamY(w, w.hero.y + 7.0 - (SCREEN_H as f64) * 0.55);
   s.camY = s.camYF.round() as~ i32;
@@ -499,6 +484,9 @@ export void snap(Screen s, World w) {
 /** The whole picture: the sky, the level, what moves, Pip, and the light. */
 export void drawWorld(Screen s, World w, World? best, i32 frame) {
   // How far the view is above the level's floor: the hills sink as Pip climbs, the far ones slower.
+  if (w.steps < s.lastSteps) { s.landedAt = -1000; }
+  if (w.hero.ground && !s.grounded) { s.landedAt = w.steps; }
+  s.lastSteps = w.steps; s.grounded = w.hero.ground;
   drawSky(s, frame, w.rows * TILE - SCREEN_H - s.camY);
   i32 x0 = s.camX / TILE;
   i32 y0 = s.camY / TILE;
@@ -527,21 +515,16 @@ export void drawWorld(Screen s, World w, World? best, i32 frame) {
     else if (f.kind == CRAWLER) { sprite(s, crawler((frame / 8) % 2 == 0), fx, fy, false); }
     else { sprite(s, beetle((frame / 8) % 2 == 0), fx, fy, f.vx > 0.0); }
   }
-  i32 hx = (w.hero.x as~ i32) - 1 - s.camX;
-  i32 hy = (w.hero.y as~ i32) - 2 - s.camY;
-  string legs = "stand";
-  if (!w.hero.ground) { legs = w.hero.vy < 0.0 ? "jump" : "fall"; }
-  else if (w.hero.stride > 0) { legs = (w.hero.stride / 6) % 2 == 0 ? "run1" : "run2"; }
-  // The ghost of the best run, see-through, behind Pip.
+  // Six-pixel headroom and three-pixel side margins keep the original 10 × 14 collision box centred under Pip.
+  i32 hx = (w.hero.x as~ i32) - 3 - s.camX;
+  i32 hy = (w.hero.y as~ i32) - 6 - s.camY;
   if (best is not null && best!.hero.dying == 0 && !best!.won) {
     World b = best!;
-    string bl = "stand";
-    if (!b.hero.ground) { bl = b.hero.vy < 0.0 ? "jump" : "fall"; }
-    else if (b.hero.stride > 0) { bl = (b.hero.stride / 6) % 2 == 0 ? "run1" : "run2"; }
-    seeThrough(s, pip(bl), (b.hero.x as~ i32) - 1 - s.camX, (b.hero.y as~ i32) - 2 - s.camY, b.hero.facing < 0, 0.35);
+    seeThrough(s, pipSprite(pipPose(b.hero, b.steps, -1000)), (b.hero.x as~ i32) - 3 - s.camX,
+               (b.hero.y as~ i32) - 6 - s.camY, b.hero.facing < 0, 0.35);
   }
   bool blink = w.hero.dying > 0 && (frame / 3) % 2 == 0;
-  if (!blink) { sprite(s, pip(legs), hx, hy, w.hero.facing < 0); }
+  if (!blink) { sprite(s, pipSprite(pipPose(w.hero, w.steps, s.landedAt)), hx, hy, w.hero.facing < 0); }
   // The light: each lit lantern, the open door, and a little around Pip — and, in the dark, all there is to see by.
   Vec<i32> lights = Vec.create();
   for (i32 ty = y0 - 2 < 0 ? 0 : y0 - 2; ty <= y1 + 2 && ty < w.rows; ty++) {
@@ -562,8 +545,8 @@ export void drawWorld(Screen s, World w, World? best, i32 frame) {
       }
     }
   }
-  halo(s, hx + 6, hy + 8, 22, 0x6070C0, 0.25);
-  light(lights, hx + 6, hy + 8, 52, 100);
+  halo(s, hx + 8, hy + 12, 22, 0x6070C0, 0.25);
+  light(lights, hx + 8, hy + 12, 52, 100);
   if (w.level.dark) { darken(s, lights); }
 }
 
