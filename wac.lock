@@ -1,8 +1,8 @@
 {
   "imports": {
-    "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "f689c4bb714477672b428fa9266ff4b74e95f034", "commit": "f689c4bb714477672b428fa9266ff4b74e95f034" },
-    "web": { "git": "https://git.voltrevo.com/web.git", "ref": "d4d45212bfed5a8c20d51f19bd20549608138a85", "commit": "d4d45212bfed5a8c20d51f19bd20549608138a85" },
-    "ide": { "git": "https://git.voltrevo.com/wac-ide.git", "ref": "f2b43334ff95cd9b2e239cd120c5125c02f3c1cc", "commit": "f2b43334ff95cd9b2e239cd120c5125c02f3c1cc" },
-    "webbuild": { "git": "https://git.voltrevo.com/web.git", "ref": "d4d45212bfed5a8c20d51f19bd20549608138a85", "subdir": "./tools", "commit": "d4d45212bfed5a8c20d51f19bd20549608138a85" }
+    "wac": { "git": "https://github.com/voltrevo/wac.git", "ref": "f689c4bb714477672b428fa9266ff4b74e95f034", "commit": "f689c4bb714477672b428fa9266ff4b74e95f034" },
+    "web": { "git": "https://github.com/voltrevo/wac-web.git", "ref": "d63440ecf3a443b2b2dc28b054084e4cffa3bcb1", "commit": "d63440ecf3a443b2b2dc28b054084e4cffa3bcb1" },
+    "ide": { "git": "https://github.com/voltrevo/wac-ide.git", "ref": "9fc66bef3866fedc3b6bdd4c4932fb322fe04559", "commit": "9fc66bef3866fedc3b6bdd4c4932fb322fe04559" },
+    "webbuild": { "git": "https://github.com/voltrevo/wac-web.git", "ref": "d63440ecf3a443b2b2dc28b054084e4cffa3bcb1", "subdir": "./tools", "commit": "d63440ecf3a443b2b2dc28b054084e4cffa3bcb1" }
   }
 }

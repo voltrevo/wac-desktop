@@ -9,7 +9,7 @@ merged, and so are 8 and 9 — the two wac fixes programs in windows needed. The
 of its own since 2026-10-29; what this list says of wac's `packages/web` is that repository now. The project has no
 patches and no vendored code — it imports wac's packages as `import { json.parse } from "wac"`. From item 6,
 modifier keys in `prevent`, decoders that return errors, and the LICENSE are merged too.
-Still open: the reader's time zone, reproducible names (`0368c`), `wac update` against git.voltrevo.com, the box
+Still open: the reader's time zone, reproducible names (`0368c`), `wac update` through a mirror, the box
 gaps, and item 10, a compiler limit.
 
 ## 1. Folder drops in `web` (merged)
@@ -117,9 +117,10 @@ processes, and `^C`, on `file://`.
 - **Reproducible builds** (filed as `0368c`). The module's debug names include the absolute path of the package cache
   (`…root__wac_cache_git_…`). The same source built under a different `$WAC_HOME` therefore gives
   different bytes, with the builder's home path inside. Names relative to the cache would fix it.
-- **`wac update` against git.voltrevo.com** is answered 401: wac's own fetcher has no credentials there, where
-  `git` does. The project fills the cache with `git` instead (`tools/fill-cache.sh`, the same script as wac's).
-  What would end it: `wac update` taking credentials — a helper, or what `git` is configured with.
+- **`wac update` through a mirror.** Pins name GitHub, and development fetches them from git.voltrevo.com through
+  `git`'s `insteadOf` (`tools/use-mirror.sh`), which wac's own fetcher does not follow. The project fills the cache
+  with `git` instead (`tools/fill-cache.sh`, the same script as wac's). What would end it: `wac update` honouring
+  `git`'s URL rewriting, or fetching with `git`.
 - **Box gaps seen from the terminal:** `ls -l` reports "not implemented", and `ps` does not list the
   shell that a `Session` started.
 - ~~**A LICENSE file.**~~ Done: MIT.
@@ -183,7 +184,7 @@ it needs a module the size of the desktop's.
 | 6 | Decoders return errors | `gzip`, `zstd` | merged; used |
 | 6 | LICENSE | repo root | merged (MIT) |
 | 6 | Reproducible names | build | filed, `0368c` |
-| 6 | Time zone, `wac update` (401 from git.voltrevo.com), box gaps | various | open |
+| 6 | Time zone, `wac update` through a mirror, box gaps | various | open |
 | 7 | `wac` in the terminal | this project | done: `/usr/bin/wac`, a module on the disk |
 | 8 | `Sys` tests beside a `"wac"` import | `wac test` | merged (`3792c730d`) |
 | 9 | A provided capability answered as it settles | `std` | merged (`ec212ae8a`) |

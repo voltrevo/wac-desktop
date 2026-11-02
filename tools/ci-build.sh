@@ -6,7 +6,7 @@
 # Clones wac (into $WAC_SRC, .wac-src by default), bootstraps the `wac` command on Node from the commit
 # wac.lock pins — the same commit the project's wac dependencies are — skipped when $WAC_HOME already has
 # one, as a cached CI run does; puts every pinned commit in wac's package cache; then tests and builds. Needs git
-# with access to git.voltrevo.com, where wac and `web` live, and Node 22+.
+# that can fetch https://github.com/voltrevo/ (or the mirror `tools/use-mirror.sh` sets), and Node 22+.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -16,7 +16,7 @@ commit=$(sed -n 's/.*"wac": {.*"commit": "\([0-9a-f]\{40\}\)".*/\1/p' wac.lock |
 
 if [ ! -d "$src/.git" ]; then
   # Commits and trees only; file contents arrive as the checkout asks for them.
-  git clone -q --filter=blob:none https://git.voltrevo.com/wac.git "$src"
+  git clone -q --filter=blob:none https://github.com/voltrevo/wac.git "$src"
 fi
 sh tools/fill-cache.sh
 

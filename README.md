@@ -13,8 +13,8 @@ to single HTML files. The standalone **Archive Explorer** it grew from is built 
 ## Building it
 
 **Everything is pinned in `wac.lock`**: wac at `f689c4bb7` — the `wac` command should be built from that commit, and
-its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder, at `d4d4521` — and the wac IDE at `f2b4333`. All are
-repositories on `git.voltrevo.com`, `web` its own since 2026-10-29. `wac.json5` names each commit as the `ref` of
+its packages are `import { json.parse } from "wac"` — and `web`, the page and its builder (the wac-web repository), at
+`d63440e` — and the wac IDE at `9fc66be`. All are public repositories at `https://github.com/voltrevo/`. `wac.json5` names each commit as the `ref` of
 its dependencies (`wac`, `web`, `webbuild`), and `wac.lock` agrees. To move one, change its refs and the lock
 together — and rebuild `wac` when it is wac that moved; `tools/ci-build.sh` and `tools/wacbin.py` read the commits
 from `wac.lock`.
@@ -22,7 +22,7 @@ from `wac.lock`.
 Getting that `wac`, on a machine with git and Node 22+:
 
 ```bash
-git clone https://git.voltrevo.com/wac.git ~/src/wac
+git clone https://github.com/voltrevo/wac.git ~/src/wac
 ```
 
 ```bash
@@ -43,18 +43,19 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
 
-**`tools/fill-cache.sh` rather than `wac update`**, because `git.voltrevo.com` answers wac's own fetcher 401:
-`git` has the credentials, so the script fetches each commit `wac.lock` pins with `git` and puts it where `wac`
-looks. Where the host is reachable without them, `wac update` does the same.
+**`tools/fill-cache.sh` fetches with `git`** each commit `wac.lock` pins and puts it where `wac` looks — what
+`wac update` does too, except through a mirror. **During development the commits are on git.voltrevo.com first**,
+and reach GitHub when the owner syncs them; `sh tools/use-mirror.sh`, once per machine, has `git` fetch GitHub's
+URLs from there (one `insteadOf` setting), which `wac update`'s own fetcher does not follow.
 
 `sh tools/ci-build.sh` does all of this from nothing — clone, check out the pinned commit, bootstrap,
 fill the cache, test, build — and is what publishing runs.
 
 **Publishing:** `.github/workflows/pages.yml` builds the site and deploys it to GitHub Pages on every
 push to the default branch — set the repository's Pages source to "GitHub Actions". It runs
-`tools/ci-build.sh`, caching the bootstrapped `wac` between runs, keyed on `wac.lock`. **It needs
-`git.voltrevo.com` reachable from GitHub's runners, with credentials**, since wac and `web` live there now; the
-repository itself lives there too, and goes to GitHub only when the owner says so.
+`tools/ci-build.sh`, caching the bootstrapped `wac` between runs, keyed on `wac.lock`. Everything it fetches is
+public on GitHub, so it needs nothing else — **as long as the commits this repository pins are on GitHub before it
+is**: sync wac, wac-web and wac-ide first, then this.
 
 ## Where it runs
 
@@ -134,7 +135,7 @@ shares, so their pages can see each other's files.
   them again — every window of one, each put back where it was: the first by its slot, the rest by their titles,
   which an app reopening its windows gives them again. A closed window's page hears so (web's `Page.closed`). Each is also a page on its own, in `dist/apps/<name>/`. Files and Permissions stay the desktop's own:
   one is how it shows its disk, and the other governs what programs may reach.
-- **The wac IDE** (https://git.voltrevo.com/wac-ide.git, pinned as `ide` and built by `src/apps/ide.wac`) is one of
+- **The wac IDE** (https://github.com/voltrevo/wac-ide, pinned as `ide` and built by `src/apps/ide.wac`) is one of
   them: wac's compiler checking as you type, in a process of its own, and the name at the caret explained. Its
   projects are the folders in `Projects` on the desktop's disk, which it is handed — so Files and the Terminal see
   them, a dropped folder or archive becomes one, Run and Test run what is in front in the IDE's Output panel — a page

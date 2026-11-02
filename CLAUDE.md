@@ -28,14 +28,17 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:drops
 
-- **`tools/fill-cache.sh`, not `wac update`**: both repositories are on git.voltrevo.com, which answers wac's
-  own fetcher 401; the script fetches each locked commit with `git`, which has credentials.
+- **Pins name GitHub** (`https://github.com/voltrevo/`), where the owner syncs the same commits. During development
+  they are on git.voltrevo.com first: **run `sh tools/use-mirror.sh` once per machine**, so `git` fetches GitHub's
+  URLs from there. `wac update`'s own fetcher does not follow it, so **`tools/fill-cache.sh`, not `wac update`**.
 - `test:desk` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
   All of them pass at the latest commit (43 unit tests, 112 desktop checks, 18 drop cases). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
   runs them, so it needs `wac` on `PATH`.
-- `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs; it needs git access to git.voltrevo.com.
+- `sh tools/ci-build.sh` is the from-nothing build GitHub Actions runs, from GitHub; with the mirror set, it runs
+  here from git.voltrevo.com the same way. Sync wac, wac-web and wac-ide to GitHub before this repository, or its
+  run finds a pinned commit missing.
 - Run unit tests with `wac task test`, which grants what they need; `wac test --allow-read test/one_test.wac`
   runs one file. A test file importing a namespace member from `"wac"` (`fs.ProcTable`) needs a wac from
   `3792c730d` on: before it, its tests taking a `Sys` were silently skipped.
