@@ -172,14 +172,15 @@ Node app(Ui ui, Page page) {
     return () => { };
   });
   // The watchdog: work that is still "in progress" when a timer gets to run has trapped. Say so, and
-  // render again.
-  ui.every(400, () => {
+  // render again. **Armed from an effect, once**: `ui.every` arms a timer each time it is called, and called as the
+  // component renders, every render added one more.
+  ui.effect("", () => ui.every(400, () => {
     if (m.trying == "") { return; }
     m.error = m.trying;
     m.trying = "";
     m.busy = "";
     bump();
-  });
+  }));
   // After a key moved the cursor, focus follows it — which also scrolls it into view.
   ui.effect("\{version.get()}", () => {
     if (m.focusCursor) {

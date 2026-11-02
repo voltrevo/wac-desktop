@@ -1,7 +1,8 @@
 // The desktop's core without a browser: the memory disk, and the window manager's arithmetic and memory.
 
 import { Ticket, Vec } from "core";
-import { PageServer, Runner } from "web";
+import { Page, PageServer, Runner, TestDoc, Ui } from "web";
+import { Clock } from "../src/desk/shell.wac";
 import { Vfs, Got, Info, copyTree, freeName, leafOf, vfsOf } from "../src/desk/vfs.wac";
 import { MemoryStore, Sys } from "std";
 import { Desk, MAX_WINDOWS, NO_WINDOW, Placed, Running, Start, Win, close, dragTo, endDrag, find, focus, hintRight,
@@ -265,5 +266,25 @@ export string test_the_launcher_finds_entries_by_their_tags() {
   if (firstFound("recycle") != "Trash") { return "recycle: \{firstFound("recycle")}"; }
   if (firstFound("hell") != "") { return "a word is matched from its start only: \{firstFound("hell")}"; }
   if (firstFound("nothing like this") != "") { return "an unmatched search finds nothing"; }
+  return "";
+}
+
+
+/**
+ * **The clock keeps one timer, however long it runs.** It armed its ten-second timer as it rendered, and each tick
+ * rendered it: the timers doubled every ten seconds, and a desktop left alone ground to a halt a few minutes in.
+ */
+export string test_the_clock_keeps_one_timer_as_it_ticks() {
+  TestDoc doc = TestDoc.create();
+  Page page = doc.page();
+  schedule page.take;
+  page.mount((Ui ui) => <Clock page={page}/>);
+  page.turn();
+  for (i32 s = 0; s < 90; s++) {
+    doc.advance(1000);
+    page.turn();
+  }
+  i32 waiting = doc.sleepAsks.len();
+  if (waiting > 1) { return "\{waiting} timers waiting after ninety seconds"; }
   return "";
 }
