@@ -42,6 +42,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:pip       # Pip played, heard, measured, paused, muted and silenced, in Chromium
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
+    wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
     wac task test:stackfall # Stackfall controls, focus, saves and restart in Chromium (needs Playwright)
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
     wac task test:drops  # real drops on the Archive Explorer: files and folders, file:// and http://
@@ -115,7 +116,10 @@ shares, so their pages can see each other's files.
   window pauses it. Its board, hold, next piece, random stream and best score live in its private `game.json`;
   a reload always returns paused. New game asks for confirmation during a scored game and keeps the best score.
   A delayed timer after a background tab or suspended computer pauses rather than catching up. The standalone
-  page has the same game; saving needs a host that grants writable files.
+  page has the same game; saving needs a host that grants writable files. Its original, softly synthesised music
+  and movement, rotation, hold, drop, lock, row-clear, level-up and game-over effects use the same audio capability
+  as Pip. M toggles all sound; the Music switch controls just the background loop. Both preferences are kept in
+  `audio.json`. Audio starts only when play starts, and pauses or closes with the game.
 - **Dropping files or folders** puts them in the folder of the Files window in front, or on the desktop.
 - **Windows** move by the title bar and resize from any edge or corner. Dragged to the top they maximise,
   to the left or right edge they fill that half; double-click a title bar to maximise. The taskbar brings

@@ -1,0 +1,37 @@
+// Inspect the samples the app really registers: effects must fade, music must loop without a jump, and none clip.
+import { RATE, CLEAR, LOCK, LEVEL, OVER, START, effects, lockCue, tune } from "../src/apps/stackfall/sound.wac";
+
+string samples(f64[] pcm, bool audible) {
+  f64 peak = 0.0;
+  for (i32 i = 0; i < pcm.len(); i++) {
+    f64 v = pcm[i] < 0.0 ? -pcm[i] : pcm[i];
+    if (v != v || v > 1.0) { return "clipped or non-finite sample"; }
+    if (v > peak) { peak = v; }
+  }
+  if (audible && peak < 0.01) { return "silent sound"; }
+  if (pcm[0] != 0.0 || pcm[pcm.len() - 1] != 0.0) { return "non-silent edge would click"; }
+  return "";
+}
+export string test_stackfall_effects_are_audible_bounded_and_fade() {
+  f64[][] fx = effects();
+  if (fx.len() != START + 1) { return "missing cue"; }
+  for (i32 i = 0; i < fx.len(); i++) {
+    string why = samples(fx[i], i > 0);
+    if (why != "") { return "cue \{i}: \{why}"; }
+    if (fx[i].len() > RATE) { return "effect is too long"; }
+  }
+  for (i32 i = 0; i < 3; i++) { if (fx[CLEAR + i].len() >= fx[CLEAR + i + 1].len()) { return "row celebrations do not grow"; } }
+  return "";
+}
+export string test_stackfall_music_loops_at_silence_without_clipping() {
+  f64[] song = tune();
+  if (song.len() < RATE * 18 || song.len() > RATE * 19) { return "not eight bars at 104 BPM"; }
+  return samples(song, true);
+}
+export string test_stackfall_lock_cues_prioritise_the_result() {
+  if (lockCue(0, false, false) != LOCK) { return "ordinary lock"; }
+  for (i32 n = 1; n <= 4; n++) { if (lockCue(n, false, false) != CLEAR + n - 1) { return "row count"; } }
+  if (lockCue(4, true, false) != LEVEL) { return "level celebration"; }
+  if (lockCue(4, true, true) != OVER) { return "game over priority"; }
+  return "";
+}

@@ -1,10 +1,12 @@
 // A separate desktop program: the rules know nothing of this DOM, and the desktop knows nothing of the game.
 import { ElementEvent, MOD_ALT, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.b, html.button, html.div, html.h1, html.p, html.span, html.style } from "web";
 import { Game, cell, draw, hardDrop, hold, landing, level, move, newGame, restored, rotate, saved, softDrop, tick } from "./stackfall/game.wac";
+import { Audio, MOVE, TURN, HOLD, DROP, LOCK, OVER, START, lockCue } from "./stackfall/sound.wac";
 import { stackfallCss } from "./stackfall/style.wac";
 
 struct Play {
   Game g;
+  Audio audio;
   string[] down;
   string horizontal;
   i32 repeatMs;
@@ -22,7 +24,7 @@ bool pressed(Play p, string key) {
   return false;
 }
 void release(Play p) { p.down = string[](); p.horizontal = ""; p.repeatMs = 0; p.softMs = 0; }
-void pause(Play p) { p.g.paused = true; release(p); }
+void pause(Play p) { p.g.paused = true; release(p); p.audio.stop(); }
 
 /** Serialise writes and coalesce changes made during one, so an older save can never finish last. */
 async void keep(Page page, Play p, fn<void()> notify) {
@@ -45,6 +47,27 @@ async void keep(Page page, Play p, fn<void()> notify) {
 void resume(Play p, Page page) {
   if (p.g.over) { return; }
   p.g.paused = false; p.confirm = false; release(p); p.last = page.now();
+  p.audio.background(true); p.audio.cue(START);
+}
+
+/** A lock can clear rows, cross a level, or end the game: hear the outcome once, from either drop or gravity. */
+void landed(Play p, i32 lines, i32 beforeLevel, bool dropped) {
+  i32 cue = lockCue(p.g.lines - lines, level(p.g) > beforeLevel, p.g.over);
+  if (p.g.over) { p.audio.stop(); }
+  if (cue != LOCK || !dropped) { p.audio.cue(cue); }
+}
+void advance(Play p, i32 ms) {
+  i64 before = p.g.seed;
+  i32 lines = p.g.lines;
+  i32 beforeLevel = level(p.g);
+  tick(p.g, ms);
+  if (p.g.seed != before || p.g.over) { landed(p, lines, beforeLevel, false); }
+}
+void sideways(Play p, i32 dx) { if (move(p.g, dx)) { p.audio.cue(MOVE); } }
+void turn(Play p, i32 direction) { if (rotate(p.g, direction)) { p.audio.cue(TURN); } }
+void mute(Play p, Page page) {
+  p.audio.enabled = !p.audio.enabled;
+  p.audio.background(!p.g.paused && !p.g.over); p.audio.keep(page);
 }
 
 string control(string key) {
@@ -52,6 +75,7 @@ string control(string key) {
   if (key == "z" || key == "Z") { return "z"; }
   if (key == "x" || key == "X") { return "x"; }
   if (key == "c" || key == "C" || key == "Shift") { return "c"; }
+  if (key == "m" || key == "M") { return "mute"; }
   if (key == "p" || key == "P" || key == "Escape" || key == "Enter") { return "pause"; }
   return "";
 }
@@ -62,6 +86,7 @@ void keyDown(Play p, Page page, string key) {
   string[] keys = string[].filled(p.down.len() + 1, "");
   for (i32 i = 0; i < p.down.len(); i++) { keys[i] = p.down[i]; }
   keys[p.down.len()] = key; p.down = keys;
+  if (key == "mute") { mute(p, page); return; }
   if (key == "pause") {
     if (p.g.paused) { resume(p, page); } else { pause(p); }
     // Keep this edge held too: auto-repeat must not toggle pause or start a second game.
@@ -69,12 +94,18 @@ void keyDown(Play p, Page page, string key) {
   }
   if (p.g.paused || p.g.over) { return; }
   if (key == "ArrowLeft" || key == "ArrowRight") {
-    p.horizontal = key; p.repeatMs = -160; move(p.g, key == "ArrowLeft" ? -1 : 1);
-  } else if (key == "ArrowDown") { softDrop(p.g); p.softMs = 0; }
-  else if (key == "ArrowUp" || key == "x") { rotate(p.g, 1); }
-  else if (key == "z") { rotate(p.g, -1); }
-  else if (key == "c") { hold(p.g); }
-  else if (key == " ") { hardDrop(p.g); }
+    p.horizontal = key; p.repeatMs = -160; sideways(p, key == "ArrowLeft" ? -1 : 1);
+  } else if (key == "ArrowDown") { i32 y = p.g.y; softDrop(p.g); if (p.g.y != y) { p.audio.cue(MOVE); } p.softMs = 0; }
+  else if (key == "ArrowUp" || key == "x") { turn(p, 1); }
+  else if (key == "z") { turn(p, -1); }
+  else if (key == "c" && !p.g.heldOnce) {
+    hold(p.g);
+    if (p.g.over) { p.audio.stop(); p.audio.cue(OVER); } else { p.audio.cue(HOLD); }
+  }
+  else if (key == " ") {
+    i32 lines = p.g.lines; i32 beforeLevel = level(p.g);
+    p.audio.cue(DROP); hardDrop(p.g); landed(p, lines, beforeLevel, true);
+  }
 }
 void keyUp(Play p, string key) {
   i32 count = 0;
@@ -102,7 +133,7 @@ Node Stackfall(Ui ui, Page page, Play p) {
   Ref root = ui.ref();
   fn<void()> bump = () => { revision.update((i32 n) => n + 1); };
   fn<void()> focus = () => { if (root.element() is not null) { root.element()!.focus(); } };
-  ui.effect("", () => { focus(); return () => { }; });
+  ui.effect("", () => { focus(); return () => { p.audio.stop(); }; });
   ui.effect("", () => ui.every(16, () => {
     f64 now = page.now();
     i32 elapsed = (now - p.last) as~ i32; p.last = now;
@@ -111,13 +142,13 @@ Node Stackfall(Ui ui, Page page, Play p) {
     if (p.g.paused || p.g.over || elapsed <= 0) { return; }
     if (p.horizontal != "") {
       p.repeatMs += elapsed;
-      while (p.repeatMs >= 40) { move(p.g, p.horizontal == "ArrowLeft" ? -1 : 1); p.repeatMs -= 40; }
+      while (p.repeatMs >= 40) { sideways(p, p.horizontal == "ArrowLeft" ? -1 : 1); p.repeatMs -= 40; }
     }
     if (pressed(p, "ArrowDown")) {
       p.softMs += elapsed;
       while (p.softMs >= 35) { softDrop(p.g); p.softMs -= 35; }
     }
-    tick(p.g, elapsed); bump();
+    advance(p, elapsed); bump();
   }));
   ui.effect("", () => ui.every(200, () => { keep(page, p, bump); }));
   Game g = p.g;
@@ -135,7 +166,7 @@ Node Stackfall(Ui ui, Page page, Play p) {
   }
   fn<void()> toggle = () => { if (g.paused) { resume(p, page); } else { pause(p); } keep(page, p, bump); focus(); bump(); };
   return <div class="sf" tabindex="0" ref={root}
-      prevent="ArrowLeft ArrowRight ArrowDown ArrowUp Space ' ' Enter Escape Shift z x c p"
+      prevent="ArrowLeft ArrowRight ArrowDown ArrowUp Space ' ' Enter Escape Shift z x c p m"
       onkeydown={(ElementEvent e) => {
         if ((e.mods & (MOD_CTRL | MOD_META | MOD_ALT)) != 0) { return; }
         keyDown(p, page, control(e.value)); keep(page, p, bump); bump();
@@ -171,6 +202,14 @@ Node Stackfall(Ui ui, Page page, Play p) {
       }}>{p.confirm ? "Confirm new game" : "New game"}</button>
       <span class="sf-save">{p.error != "" ? p.error : "Saves automatically"}</span>
     </div>
+    <div class="sf-audio">
+      <button class="sf-sound" title="Toggle all audio (M)" tabindex="-1" prevent="*"
+        onpointerdown={(ElementEvent e) => { }} onclick={(ElementEvent e) => { mute(p, page); focus(); bump(); }}>{p.audio.enabled ? "Sound on · M" : "Sound off · M"}</button>
+      <button class="sf-music" title="Toggle background music" tabindex="-1" prevent="*"
+        onpointerdown={(ElementEvent e) => { }} onclick={(ElementEvent e) => {
+          p.audio.musical = !p.audio.musical; p.audio.background(!g.paused && !g.over); p.audio.keep(page); focus(); bump();
+        }}>{p.audio.musical ? "Music on" : "Music off"}</button>
+    </div>
     <div class="sf-help"><span>← → move</span><span>↑ / X rotate · Z reverse</span><span>↓ soft drop</span><span>Space drop</span><span>C / Shift hold</span><span>P / Esc pause</span></div>
   </div>;
 }
@@ -190,7 +229,10 @@ export async i32 main(Page page) {
     Game? kept = restored(string.fromBytes(file.ok()!));
     if (kept is not null) { g = kept!; }
   }
-  Play p = Play(g, string[](), "", 0, 0, page.now(), "", "", false, "", false);
+  Audio audio = Audio.create(page);
+  auto settings = await page.sys.files().readFile("audio.json");
+  if (settings.isOk()) { audio.restore(string.fromBytes(settings.ok()!)); }
+  Play p = Play(g, audio, string[](), "", 0, 0, page.now(), "", "", false, "", false);
   page.mount((Ui ui) => <Stackfall page={page} p={p}/>);
   return 0;
 }
