@@ -1,5 +1,5 @@
-// The desktop's own apps — the Calculator, the Viewer, the Editor and the Markdown editor, the Terminal, the Archive
-// Explorer and the wac IDE — as programs on the site it was served from.
+// The desktop's own apps — the Calculator, the Viewer, the Editor and the Markdown editor, Paint, the Terminal, the
+// Archive Explorer and the wac IDE — as programs on the site it was served from.
 //
 // **Each is a program like any other**, built beside the desktop into `dist/apps/<name>.wasm` and started from
 // `/site/apps/` by `launch`, in windows it opens itself. What makes one the desktop's own is only how it is started:
@@ -46,6 +46,13 @@ export Start builtin(string app, string arg) {
     w = 964;
     h = 584;
     ic = "lantern";
+  } else if (app == "paint") {
+    // **Paint is handed the picture it is opened on**, to change; Open asks the desktop's picker for another, and a
+    // new picture is saved where the desktop says.
+    if (arg != "") { g.grant(arg, true); }
+    w = 1060;
+    h = 720;
+    ic = "paint";
   } else if (app == "mandelbrot") {
     w = 900;
     h = 620;
@@ -67,7 +74,7 @@ export Start builtin(string app, string arg) {
     h = 720;
     ic = "code";
   }
-  return Start(appPath(app), args, g, w, h, ic, app == "explorer" || app == "ide", app, arg, Vec.create());
+  return Start(appPath(app), args, g, w, h, ic, app == "explorer" || app == "ide" || app == "paint", app, arg, Vec.create());
 }
 
 /** A window of running app `app`, if one has a window open; -1 if not. */

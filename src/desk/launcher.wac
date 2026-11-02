@@ -45,6 +45,7 @@ export Entry[] entries() {
     Entry("Tools", "settings", "Settings", "Theme, accent, wallpaper, sound, and what opens what", ["preferences", "options", "theme", "dark", "light", "mode", "accent", "colour", "color", "wallpaper", "background", "volume", "sound", "mute", "default apps", "open with", "control panel", "config"], false, "settings", ""),
     Entry("Tools", "markdown", "Markdown editor", "A new Markdown file, shown as you write", ["markdown", "md", "notes", "write", "document", "preview", "readme", "prose"], true, "markdown", ""),
     Entry("Tools", "edit", "Text editor", "A new text file", ["notes", "text", "write", "notepad", "txt", "edit"], true, "editor", ""),
+    Entry("Tools", "paint", "Paint", "Draw, and edit PNG pictures", ["paint", "draw", "drawing", "picture", "image", "png", "art", "sketch", "brush", "pixel"], true, "paint", ""),
     Entry("Tools", "calc", "Calculator", "Sums, typed or clicked", ["calc", "maths", "math", "arithmetic", "numbers", "sums"], true, "calc", ""),
     Entry("Tools", "layers", "Archive Explorer", "Zip, tar and gzip archives, opened in the browser", ["zip", "tar", "gzip", "zstd", "archive", "unpack", "extract", "compressed"], true, "explorer", ""),
     Entry("Programming", "code", "wac IDE", "Write wac, checked as you type, in Projects", ["code", "programming", "compiler", "develop", "build", "run", "test", "wac", "ide"], true, "ide", "Projects"),

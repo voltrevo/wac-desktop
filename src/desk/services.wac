@@ -21,6 +21,7 @@ import { Consent, Desk, MAX_WINDOWS, NO_WINDOW, Picking, Running, openWindowFor 
 import { remember } from "./remember.wac";
 import { appFolder } from "./program.wac";
 import { isMarkdown, openPath } from "./files.wac";
+import { extOf } from "../bytes.wac";
 import { startApp } from "./builtin.wac";
 
 Answer said(string text) { return Answer(0, text, u8[](), 0 as i64, 0 as i64, 0); }
@@ -120,8 +121,8 @@ Ticket<Answer> asked(Desk d, Running r, fn<void()> bumpDesk, string path, bool w
 }
 
 /**
- * Show `path` in the desktop's app for it, or to be edited — Markdown in the Markdown editor, other text in the Editor —
- * if the program could read it itself.
+ * Show `path` in the desktop's app for it, or to change in the app that edits it — a PNG in Paint, Markdown in the
+ * Markdown editor, anything else as text in the Editor — if the program could read it itself.
  */
 async Answer opened(Desk d, Grants g, fn<void()> bumpDesk, string path, bool asText) {
   if (!g.allows(path, false)) {
@@ -130,7 +131,11 @@ async Answer opened(Desk d, Grants g, fn<void()> bumpDesk, string path, bool asT
   string p = normal(path);
   Got<Info> s = await d.fs.stat(p);
   if (!s.ok) { return Answer(FAULT_UNSUPPORTED(), path + ": " + s.error, u8[](), 0 as i64, 0 as i64, 0); }
-  if (asText && !s.value.isDir) { startApp(d, isMarkdown(p) ? "markdown" : "editor", p); } else { openPath(d, p, s.value.isDir); }
+  if (asText && !s.value.isDir) {
+    startApp(d, extOf(p) == "png" ? "paint" : (isMarkdown(p) ? "markdown" : "editor"), p);
+  } else {
+    openPath(d, p, s.value.isDir);
+  }
   bumpDesk();
   return said("");
 }

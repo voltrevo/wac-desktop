@@ -3,7 +3,7 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Markdown editor**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Stackfall**, and the **wac IDE** —
+**Editor**, a **Markdown editor**, **Paint**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Stackfall**, and the **wac IDE** —
 each a program of its own on the site the desktop is served from, started in windows it opens itself — and
 **Settings**. Deleting moves things to a **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
@@ -43,6 +43,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test:pip       # Pip played, heard, measured, paused, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
+    wac task test:paint  # Paint drawn in, filled, undone, saved, opened again, dropped on and picked, in Chromium
     wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
     wac task test:stackfall # Stackfall controls, focus, saves and restart in Chromium (needs Playwright)
     wac task test:desk   # the desktop in Chromium, as a person uses it (needs Playwright)
@@ -99,6 +100,15 @@ shares, so their pages can see each other's files.
   calculators do them (`200 + 10%` is 220). The answer shows as you type; finished sums stay above, and
   a click on one carries its answer on. Answers have twelve significant digits, so `0.1 + 0.2` is 0.3. It
   keeps the sum in its own folder, so started again it is still there.
+- **Paint** draws, and opens, changes and saves PNGs. Its tools are a pencil with hard edges, a soft brush, an eraser
+  (to transparent), lines, rectangles and ellipses — Shift keeps a line to 45° and a shape square — and a fill with a
+  tolerance, and a picker that takes a colour from the picture; lines, ellipses and the eraser can be smooth or hard.
+  Alt draws with the second colour. A stroke can leave the picture and come back. Undo and redo (Ctrl+Z, Ctrl+Y) go
+  back through strokes and through flips, quarter turns, new canvas sizes and scaling, up to 100 steps or 100 MB.
+  Zoom from 6% to 3200%, with the pixels square from 200%; transparency shows as a checkerboard. It reads every kind of
+  PNG — palettes, greyscale, sixteen bits, interlaced — and writes eight-bit RGBA. **Edit** on a PNG, in Files or the
+  Viewer, opens it in Paint; Open asks the desktop's picker; a PNG dropped on its window opens there; a new picture is
+  saved on the Desktop under the name typed. Its tool, sizes and colours are kept in its folder; `?` lists its keys.
 - **Mandelbrot** is a rewrite in wac of github.com/voltrevo/mandelbrot: the same values and the same palette, drawn
   from the middle out a block at a time. A drag or the wheel moves the picture at once by the canvas's transform and
   draws it once still; what was worked out is kept, so a drag works out only what came into view and new colours work
@@ -209,6 +219,8 @@ shares, so their pages can see each other's files.
 | `src/desk/builtin.wac` | the desktop's own apps, as programs on its site: what each is handed, its window, starting one again |
 | `src/apps/viewer.wac`, `src/apps/editor.wac`, `src/apps/mdedit.wac`, `src/apps/calc.wac`, `src/apps/terminal.wac`, `src/apps/style.wac` | the Viewer, the Editor, the Markdown editor, the Calculator and the Terminal — box's `Session` with a screen, prompt, completion, type-ahead and `open` — each a program, with its look |
 | `src/desk/prefs.wac`, `src/desk/settings.wac` | what Settings keeps — the look as classes and their rules, the volume, what opens what — and its window |
+| `src/apps/paint.wac`, `src/apps/paint/` | Paint: its page; the picture, strokes, shapes, fills and history (`image.wac`); its stylesheet |
+| `src/png.wac` | PNG written (Mandelbrot and Paint) and read, every kind |
 | `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, and the logarithms, powers and decimals it needs, which wac's core leaves out |
 | `src/apps/pip.wac`, `src/apps/pip/` | Pip: its page, its rules (`world.wac`), levels, pictures (`art.wac`), sounds (`chip.wac`) and stylesheet |
 | `src/apps/stackfall.wac`, `src/apps/stackfall/` | Stackfall: its page, independent game rules, versioned saves and stylesheet |
@@ -222,6 +234,7 @@ shares, so their pages can see each other's files.
 | `src/preview.wac`, `src/markdown.wac`, `src/jsonview.wac`, `src/table.wac`, `src/highlight.wac` | previews |
 | `src/model.wac`, `src/archive.wac`, `src/tree.wac`, `src/sniff.wac` | archives: levels, formats (zip incl. zip64, CP437 names and self-extracting stubs; tar with GNU and pax names; gzip; zstd), folders from paths, what a file is |
 | `src/style.wac`, `src/bytes.wac` | the shared stylesheet and icons; byte and number helpers |
+| `test/png_fixtures.wac` | PNGs of every kind, and what each reads as (from `tools/png_fixtures.py`, which Pillow runs) |
 | `samples/` | `demo.zip`'s source; `counter.wac`, `notes.wac`, `two.wac`, `hello.wac` and `reader.wac`, programs the browser test runs |
 | `tools/` | test archives, the demo and seed generators, the browser tests; `ci-build.sh` and `fill-cache.sh` |
 | `.github/workflows/pages.yml` | build and deploy to GitHub Pages |
@@ -255,7 +268,7 @@ shares, so their pages can see each other's files.
   would any program, handed the shell's files, which is why it works on the desktop's disk.
 - **Size.** The desktop is about 0.9 MB of module at wac `6f3ee4093` — 2.6 MB while it carried the Terminal and
   `wac`, 3.5 MB at `b0d60f33`, and 5.4 MB at `563d8828`. On the site beside it: the Terminal 1.1 MB, the Archive
-  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
+  Explorer 0.3 MB, the Viewer 0.3 MB, the Editor and the Calculator 0.15 MB each, Paint 0.25 MB, the IDE 1.7 MB, and `wac` 2.5 MB, each fetched
   when it is first started. It also needs a
   `wac` whose compiler lets its table of generic instantiations grow, which wac has had since
   `63edaad6b` — so a `wac` older than that cannot build the desktop.

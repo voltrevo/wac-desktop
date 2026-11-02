@@ -1,0 +1,277 @@
+// Paint without a page: PNGs of every kind read as Pillow reads them (`tools/png_fixtures.py`), a picture written and
+// read back, strokes, shapes and fills on the picture, the history, and the settings kept between runs.
+
+import { Picture, decodePng, encodePng, isPng } from "../src/png.wac";
+import { Doc, ERASE, PAINT, Rect } from "../src/apps/paint/image.wac";
+import { hex, number, parseHex, pngName } from "../src/apps/paint.wac";
+import { greyAlpha8Png, greyAlpha8Rgba, grey16Png, grey16Rgba, grey1Png, grey1Rgba, grey8Png, grey8Rgba, height,
+         interlacedPng, interlacedRgba, palette2Png, palette2Rgba, rgb8Png, rgb8Rgba, rgba8Png, rgba8Rgba,
+         width } from "./png_fixtures.wac";
+
+/** "" when `png` reads as `want`, or what differs. */
+string reads(string name, u8[] png, u8[] want) {
+  match (decodePng(png)) {
+    Ok(p): {
+      if (p.w != width() || p.h != height()) { return "\{name}: \{p.w} × \{p.h}"; }
+      for (i32 i = 0; i < want.len(); i++) {
+        if (p.rgba[i] != want[i]) {
+          return "\{name}: pixel \{i / 4} channel \{i % 4} is \{p.rgba[i] as i32}, not \{want[i] as i32}";
+        }
+      }
+      return "";
+    }
+    Err(why): { return "\{name}: \{why}"; }
+  }
+}
+
+export string test_every_kind_of_png_reads_as_pillow_reads_it() {
+  string[] got = [reads("rgba8", rgba8Png(), rgba8Rgba()), reads("rgb8", rgb8Png(), rgb8Rgba()),
+                  reads("grey8", grey8Png(), grey8Rgba()), reads("greyAlpha8", greyAlpha8Png(), greyAlpha8Rgba()),
+                  reads("grey1", grey1Png(), grey1Rgba()), reads("palette2", palette2Png(), palette2Rgba()),
+                  reads("grey16", grey16Png(), grey16Rgba()), reads("interlaced", interlacedPng(), interlacedRgba())];
+  for (i32 i = 0; i < got.len(); i++) { if (got[i] != "") { return got[i]; } }
+  return "";
+}
+
+export string test_a_picture_written_reads_back_the_same() {
+  u8[] px = u8[].filled(13 * 9 * 4, 0 as u8);
+  for (i32 i = 0; i < px.len(); i++) { px[i] = ((i * 37 + i / 7) & 255) as@ u8; }
+  u8[] png = encodePng(13, 9, px);
+  if (!isPng(png)) { return "not a PNG"; }
+  match (decodePng(png)) {
+    Ok(p): {
+      if (p.w != 13 || p.h != 9) { return "\{p.w} × \{p.h}"; }
+      for (i32 i = 0; i < px.len(); i++) { if (p.rgba[i] != px[i]) { return "byte \{i} differs"; } }
+      return "";
+    }
+    Err(why): { return why; }
+  }
+}
+
+export string test_damaged_pngs_are_refused_with_a_reason() {
+  if (decodePng("not a picture".toBytes()).isOk()) { return "text read as a PNG"; }
+  u8[] good = rgba8Png();
+  u8[] cut = u8[].filled(60, 0 as u8);
+  cut.copyFrom(good, 0, 0, 60);
+  if (decodePng(cut).isOk()) { return "a PNG cut short read"; }
+  // The data's first byte in the IDAT made nonsense: the inflater says so, and so does the decoder.
+  u8[] bad = u8[].filled(good.len(), 0 as u8);
+  bad.copyFrom(good, 0, 0, good.len());
+  i32 at = 33;
+  while (at + 8 < bad.len() && string.fromBytes(sub(bad, at + 4, 4)) != "IDAT") { at = at + 12 + word(bad, at); }
+  bad[at + 10] = 0xFF as u8;
+  bad[at + 11] = 0xFF as u8;
+  if (decodePng(bad).isOk()) { return "damaged data read"; }
+  return "";
+}
+
+u8[] sub(u8[] b, i32 at, i32 n) {
+  u8[] out = u8[].filled(n, 0 as u8);
+  out.copyFrom(b, at, 0, n);
+  return out;
+}
+
+i32 word(u8[] b, i32 at) { return ((b[at] as i32) << 24) | ((b[at + 1] as i32) << 16) | ((b[at + 2] as i32) << 8) | (b[at + 3] as i32); }
+
+/** The pixel at (`x`, `y`) of `d`, as `r,g,b,a`. */
+string px(Doc d, i32 x, i32 y) {
+  i32[] c = d.at(x, y);
+  return "\{c[0]},\{c[1]},\{c[2]},\{c[3]}";
+}
+
+/** How many pixels of `d` are colour `c`, written as `px` writes one. */
+i32 count(Doc d, string c) {
+  i32 n = 0;
+  for (i32 y = 0; y < d.h; y++) { for (i32 x = 0; x < d.w; x++) { if (px(d, x, y) == c) { n++; } } }
+  return n;
+}
+
+export string test_a_hard_line_is_one_pixel_wide_and_reaches_both_ends() {
+  Doc d = Doc.blank(20, 10, 255, 255, 255, 255);
+  d.begin(PAINT, 0, 0, 0);
+  d.segment(2.5, 4.5, 17.5, 4.5, 1.0, false);
+  if (!d.end()) { return "the line changed nothing"; }
+  if (count(d, "0,0,0,255") != 16) { return "\{count(d, "0,0,0,255")} pixels black, not 16"; }
+  if (px(d, 2, 4) != "0,0,0,255" || px(d, 17, 4) != "0,0,0,255" || px(d, 1, 4) != "255,255,255,255") { return "the ends"; }
+  if (px(d, 9, 3) != "255,255,255,255" || px(d, 9, 5) != "255,255,255,255") { return "the line is more than a pixel wide"; }
+  return "";
+}
+
+export string test_a_soft_brush_does_not_darken_where_it_crosses_itself() {
+  Doc d = Doc.blank(30, 30, 255, 255, 255, 255);
+  d.begin(PAINT, 0, 0, 0);
+  // Off the pixels' centres, so its edge falls part way across a row.
+  d.segment(5.0, 15.3, 25.0, 15.3, 6.0, true);
+  string edge = px(d, 20, 12);
+  // Back over the same path, and across it.
+  d.segment(25.0, 15.3, 5.0, 15.3, 6.0, true);
+  d.segment(15.3, 5.0, 15.3, 25.0, 6.0, true);
+  d.end();
+  if (px(d, 15, 15) != "0,0,0,255") { return "the middle: \{px(d, 15, 15)}"; }
+  // Pixel 5's centre is half a pixel inside the start, as pixel 24's is inside the end.
+  if (px(d, 5, 13) != px(d, 24, 13)) { return "the ends differ: \{px(d, 5, 13)} and \{px(d, 24, 13)}"; }
+  if (px(d, 20, 12) != edge) { return "going back over the stroke changed its edge: \{px(d, 20, 12)}, was \{edge}"; }
+  i32[] e = d.at(20, 12);
+  if (e[3] != 255 || e[0] == 0 || e[0] == 255) { return "the edge is not soft: \{px(d, 20, 12)}"; }
+  return "";
+}
+
+export string test_a_shape_dragged_out_leaves_only_its_last_place() {
+  Doc d = Doc.blank(40, 40, 255, 255, 255, 255);
+  d.begin(PAINT, 255, 0, 0);
+  d.rect(5, 5, 30, 30, 1, false);
+  d.clearStroke();
+  d.rect(5, 5, 10, 12, 1, false);
+  d.end();
+  // A 6 × 8 outline is 2·6 + 2·6 pixels.
+  if (count(d, "255,0,0,255") != 24) { return "\{count(d, "255,0,0,255")} red pixels, not 24"; }
+  if (px(d, 30, 30) != "255,255,255,255") { return "the first place is still drawn"; }
+  d.begin(PAINT, 0, 0, 255);
+  d.rect(20, 20, 23, 22, 1, true);
+  d.end();
+  if (count(d, "0,0,255,255") != 12) { return "a filled 4 × 3 is \{count(d, "0,0,255,255")} pixels"; }
+  return "";
+}
+
+export string test_an_ellipse_is_round_and_its_filled_area_about_pi_r_squared() {
+  Doc d = Doc.blank(64, 64, 255, 255, 255, 255);
+  d.begin(PAINT, 0, 0, 0);
+  d.ellipse(2, 2, 61, 61, 1, true, false);
+  d.end();
+  i32 n = count(d, "0,0,0,255");
+  // A circle 60 across: π·30² is 2827.
+  if (n < 2780 || n > 2880) { return "\{n} pixels filled"; }
+  if (px(d, 32, 2) != "0,0,0,255" || px(d, 2, 32) != "0,0,0,255" || px(d, 3, 3) != "255,255,255,255") { return "not round"; }
+  Doc o = Doc.blank(64, 64, 255, 255, 255, 255);
+  o.begin(PAINT, 0, 0, 0);
+  o.ellipse(2, 2, 61, 61, 2, false, false);
+  o.end();
+  if (px(o, 32, 32) != "255,255,255,255" || px(o, 32, 2) != "0,0,0,255" || px(o, 32, 3) != "0,0,0,255") { return "the outline"; }
+  if (px(o, 32, 4) != "255,255,255,255") { return "the outline is wider than two"; }
+  return "";
+}
+
+export string test_fill_stops_at_a_border_and_takes_near_colours_by_tolerance() {
+  Doc d = Doc.blank(20, 20, 255, 255, 255, 255);
+  d.begin(PAINT, 0, 0, 0);
+  d.rect(5, 5, 14, 14, 1, false);
+  d.end();
+  // A near-white speck inside, which only a tolerant fill takes.
+  d.begin(PAINT, 250, 250, 250);
+  d.rect(9, 9, 9, 9, 1, true);
+  d.end();
+  d.begin(PAINT, 0, 200, 0);
+  d.fill(7, 7, 0);
+  d.end();
+  if (count(d, "0,200,0,255") != 63) { return "an exact fill took \{count(d, "0,200,0,255")} pixels, not 63"; }
+  if (px(d, 0, 0) != "255,255,255,255") { return "the fill leaked out"; }
+  d.undo();
+  d.begin(PAINT, 0, 200, 0);
+  d.fill(7, 7, 10);
+  d.end();
+  if (count(d, "0,200,0,255") != 64) { return "a tolerant fill took \{count(d, "0,200,0,255")} pixels, not 64"; }
+  return "";
+}
+
+export string test_the_eraser_makes_pixels_transparent() {
+  Doc d = Doc.blank(10, 10, 255, 0, 0, 255);
+  d.begin(ERASE, 0, 0, 0);
+  // An odd size is centred on a pixel, as the page snaps it.
+  d.segment(5.5, 5.5, 5.5, 5.5, 3.0, false);
+  d.end();
+  if (px(d, 5, 5) != "255,0,0,0") { return "erased: \{px(d, 5, 5)}"; }
+  if (count(d, "255,0,0,0") != 9) { return "a 3-pixel eraser took \{count(d, "255,0,0,0")} pixels"; }
+  return "";
+}
+
+export string test_undo_and_redo_go_back_and_forth_through_strokes_and_whole_changes() {
+  Doc d = Doc.blank(8, 6, 255, 255, 255, 255);
+  string blank = px(d, 1, 1);
+  d.begin(PAINT, 0, 0, 0);
+  d.segment(1.5, 1.5, 1.5, 1.5, 1.0, false);
+  d.end();
+  d.turn(true);
+  if (d.w != 6 || d.h != 8) { return "turned: \{d.w} × \{d.h}"; }
+  // (1, 1) of the 8 × 6 picture is (4, 1) once turned clockwise.
+  if (px(d, 4, 1) != "0,0,0,255") { return "the dot did not turn with the picture: \{px(d, 4, 1)}"; }
+  if (!d.modified()) { return "not modified"; }
+  d.undo();
+  if (d.w != 8 || px(d, 1, 1) != "0,0,0,255") { return "undoing the turn"; }
+  d.undo();
+  if (px(d, 1, 1) != blank) { return "undoing the dot"; }
+  if (d.modified()) { return "back where it started, it is still modified"; }
+  if (d.undo()) { return "undid past the start"; }
+  d.redo();
+  d.redo();
+  if (d.w != 6 || px(d, 4, 1) != "0,0,0,255") { return "redoing both"; }
+  // Saved, then undone past and redone back to: as saved.
+  d.saved();
+  d.undo();
+  if (!d.modified()) { return "undone past the save, it is not modified"; }
+  d.redo();
+  if (d.modified()) { return "redone back to the save, it is still modified"; }
+  // A new stroke forgets what could have been redone.
+  d.undo();
+  d.begin(PAINT, 0, 0, 0);
+  d.segment(6.5, 4.5, 6.5, 4.5, 1.0, false);
+  d.end();
+  if (d.canRedo()) { return "a new stroke left something to redo"; }
+  // The saved picture was what could be redone, and is gone: one step on from one undone is not it.
+  if (!d.modified()) { return "the saved picture was lost, but it reads as saved"; }
+  return "";
+}
+
+export string test_a_stroke_that_changes_nothing_is_not_a_step() {
+  Doc d = Doc.blank(8, 8, 0, 0, 0, 255);
+  d.begin(PAINT, 0, 0, 0);
+  d.segment(3.5, 3.5, 3.5, 3.5, 2.0, false);
+  if (d.end()) { return "black on black was a change"; }
+  if (d.canUndo() || d.modified()) { return "and was kept"; }
+  return "";
+}
+
+export string test_canvas_size_scale_and_flip() {
+  Doc d = Doc.blank(4, 2, 10, 20, 30, 255);
+  d.begin(PAINT, 255, 255, 255);
+  d.segment(0.5, 0.5, 0.5, 0.5, 1.0, false);
+  d.end();
+  d.flip(true);
+  if (px(d, 3, 0) != "255,255,255,255" || px(d, 0, 0) != "10,20,30,255") { return "flipped across"; }
+  d.flip(false);
+  if (px(d, 3, 1) != "255,255,255,255") { return "flipped down"; }
+  d.canvasSize(6, 3, 1, 2, 3, 255);
+  if (d.w != 6 || d.h != 3 || px(d, 3, 1) != "255,255,255,255" || px(d, 5, 2) != "1,2,3,255") { return "the canvas grown"; }
+  Doc s = Doc.blank(4, 4, 0, 0, 0, 255);
+  s.begin(PAINT, 255, 255, 255);
+  s.rect(0, 0, 1, 3, 1, true);
+  s.end();
+  s.scale(2, 2);
+  if (px(s, 0, 0) != "255,255,255,255" || px(s, 1, 1) != "0,0,0,255") { return "halved: \{px(s, 0, 0)} \{px(s, 1, 1)}"; }
+  s.undo();
+  s.scale(8, 4);
+  if (px(s, 3, 0) != "255,255,255,255" || px(s, 4, 0) != "0,0,0,255") { return "doubled across: \{px(s, 3, 0)} \{px(s, 4, 0)}"; }
+  return "";
+}
+
+export string test_changed_rectangles_are_what_the_canvas_is_sent() {
+  Doc d = Doc.blank(50, 50, 255, 255, 255, 255);
+  Rect all = d.taken();
+  if (all.w() != 50 || all.h() != 50) { return "a new picture is sent whole"; }
+  d.begin(PAINT, 0, 0, 0);
+  d.segment(10.5, 10.5, 12.5, 10.5, 1.0, false);
+  Rect r = d.taken();
+  if (r.empty() || r.x0 > 10 || r.x1 < 13 || r.w() > 8 || r.h() > 6) { return "the dirty rectangle: \{r.x0},\{r.y0} \{r.w()}×\{r.h()}"; }
+  if (!d.taken().empty()) { return "taken twice"; }
+  u8[] region = d.region(Rect(10, 10, 13, 11));
+  if (region.len() != 12 || region[0] != 0 as u8 || region[11] != 255 as u8) { return "the region's pixels"; }
+  return "";
+}
+
+export string test_colours_numbers_and_names() {
+  if (parseHex("#1e6fb8", 0) != 0x1e6fb8 || parseHex("#FFFFFF", 0) != 0xffffff || parseHex("1e6fb8", 7) != 7
+      || parseHex("#12345g", 7) != 7) { return "parseHex"; }
+  if (hex(0x0a0b0c) != "#0a0b0c" || hex(0xffffff) != "#ffffff") { return "hex: \{hex(0x0a0b0c)}"; }
+  if (number("42", 0) != 42 || number(" 7 ", 0) != 7 || number("4x", 9) != 9 || number("", 9) != 9) { return "number"; }
+  if (pngName("cat") != "cat.png" || pngName("Cat.PNG") != "Cat.PNG" || pngName("  ") != "Untitled.png") { return "pngName: \{pngName("cat")}"; }
+  return "";
+}

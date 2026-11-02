@@ -637,6 +637,9 @@ Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<voi
     {d.site && !it.isDir && !trash && (iconFor(it.name) == "text" || iconFor(it.name) == "code" || iconFor(it.name) == "binary")
       ? <button class="btn" title="Edit as text" onclick={(ElementEvent e) => { startApp(d, "editor", path); bumpDesk(); }}>{icon("edit", "sm")}<span class="label">Edit</span></button>
       : Node.Text("")}
+    {d.site && !it.isDir && !trash && extOf(it.name) == "png"
+      ? <button class="btn" title="Edit in Paint" onclick={(ElementEvent e) => { startApp(d, "paint", path); bumpDesk(); }}>{icon("paint", "sm")}<span class="label">Edit</span></button>
+      : Node.Text("")}
     {!trash ? <button class="btn" title="Rename (F2)" onclick={(ElementEvent e) => { s.renaming = it.name; s.draft = it.name; bump(); }}>{icon("rename", "sm")}<span class="label">Rename</span></button>
             : Node.Text("")}
     {selectionActions(d, page, s, bump, bumpDesk)}
