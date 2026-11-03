@@ -2,7 +2,8 @@
 // The desktop on a phone, in Chromium against dist/ as an iPhone 13 — touch, its size, its pixel ratio: a home screen
 // of apps where a tap starts one; each app the whole screen; the phone's Back leaving an app for what was in front
 // before, and Forward returning; what is open listed, to go to or close; a folder in Files opened with a tap; the same
-// phone on its side still a phone; and a desktop's screen still a desktop, its address untouched.
+// phone on its side still a phone; installed as an app, opening with no network; and a desktop's screen still a
+// desktop, its address untouched.
 const { chromium, devices } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,7 +17,8 @@ const shots = process.env.SHOTS || '';
     const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
     const file = path.join(root, rel);
     if (rel.split('/').includes('..') || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404).end(); return; }
-    res.setHeader('content-type', file.endsWith('.wasm') ? 'application/wasm' : file.endsWith('.json') ? 'application/json' : 'text/html');
+    res.setHeader('content-type', file.endsWith('.wasm') ? 'application/wasm' : file.endsWith('.json') ? 'application/json'
+      : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.png') ? 'image/png' : file.endsWith('.webmanifest') ? 'application/manifest+json' : 'text/html');
     res.end(fs.readFileSync(file));
   }).listen(0);
   let browser;
@@ -90,6 +92,26 @@ const shots = process.env.SHOTS || '';
     await p.locator('.rcard', { hasText: 'Welcome.md' }).locator('.rgo').tap();
     await until('Welcome.md', 'gone back to');
     ok('what is open: listed, one closed, one gone back to');
+
+    // **An app to install**: its manifest — standalone, its icon — and a service worker that keeps what the desktop
+    // loads, so that with no network it opens, and so does an app it has opened before.
+    const manifest = await p.evaluate(() => fetch(document.querySelector('link[rel=manifest]').href).then((r) => r.json()));
+    assert.equal(manifest.name, 'Desktop');
+    assert.equal(manifest.display, 'standalone');
+    assert.equal(manifest.icons[0].src, 'icon.png');
+    assert.equal(await p.evaluate(() => fetch('icon.png').then((r) => r.headers.get('content-type'))), 'image/png');
+    await p.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    // The Viewer's note drawn — in front or put away, as the session last kept it: its program started.
+    const viewed = () => p.locator('.win', { hasText: 'Welcome.md' }).locator('.md h1').first().waitFor({ state: 'attached', timeout: 60000 });
+    await p.reload();
+    await p.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 30000 });
+    await viewed();
+    await p.context().setOffline(true);
+    await p.reload();
+    await p.waitForSelector('.desk.phone', { timeout: 30000 });
+    await viewed();
+    await p.context().setOffline(false);
+    ok('an app to install: its manifest and icon, and, offline, it opens — the Viewer it opened before too');
 
     // On its side the phone is wider than a desktop's narrowest, but too short for windows: still a phone.
     await p.setViewportSize({ width: 844, height: 390 });

@@ -1,0 +1,72 @@
+// The desktop's icon, as an app installed on a phone or a computer: `assets/icon.png`, which the build hands
+// `build.wac --app`.
+//
+//     wac run --allow-write tools/app_icon.wac -- assets/icon.png
+//
+// The launcher's mark — four rounded tiles — in white on the accent's gradient, the colours the desktop's Apps button
+// wears. The whole square is filled, and the mark kept to its middle four-fifths: a phone that rounds an icon off, or
+// cuts it to a circle (a "maskable" icon), takes nothing that matters.
+
+import { Sys } from "std";
+import { encodePng } from "../src/png.wac";
+
+static i32 SIZE = 512;
+
+/** Inside a rounded square of side `s`, corner radius `r`, whose top left is (`x0`, `y0`)? */
+bool inRounded(f64 x, f64 y, f64 x0, f64 y0, f64 s, f64 r) {
+  f64 cx = x < x0 + r ? x0 + r : (x > x0 + s - r ? x0 + s - r : x);
+  f64 cy = y < y0 + r ? y0 + r : (y > y0 + s - r ? y0 + s - r : y);
+  return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r && x >= x0 && y >= y0 && x <= x0 + s && y <= y0 + s;
+}
+
+/** How much of the pixel at (`px`, `py`) one of the mark's tiles covers, four samples to a side. */
+f64 cover(i32 px, i32 py) {
+  f64 tile = 104.0;
+  f64 gap = 40.0;
+  f64 from = (SIZE as f64) / 2.0 - tile - gap / 2.0;
+  i32 hits = 0;
+  for (i32 sy = 0; sy < 4; sy++) {
+    for (i32 sx = 0; sx < 4; sx++) {
+      f64 x = (px as f64) + (sx as f64 + 0.5) / 4.0;
+      f64 y = (py as f64) + (sy as f64 + 0.5) / 4.0;
+      bool on = false;
+      for (i32 k = 0; k < 4; k++) {
+        f64 tx = from + ((k % 2) as f64) * (tile + gap);
+        f64 ty = from + ((k / 2) as f64) * (tile + gap);
+        if (inRounded(x, y, tx, ty, tile, 26.0)) { on = true; }
+      }
+      if (on) { hits++; }
+    }
+  }
+  return (hits as f64) / 16.0;
+}
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() < 1) {
+    sys.stderr().line("usage: app_icon.wac <out.png>");
+    return 2;
+  }
+  u8[] px = u8[].filled(SIZE * SIZE * 4, 255 as u8);
+  for (i32 y = 0; y < SIZE; y++) {
+    for (i32 x = 0; x < SIZE; x++) {
+      // The accent's gradient, corner to corner: #5b55e6 to #8b5cf6.
+      f64 t = ((x + y) as f64) / ((2 * SIZE - 2) as f64);
+      f64 r = 91.0 + (139.0 - 91.0) * t;
+      f64 g = 85.0 + (92.0 - 85.0) * t;
+      f64 b = 230.0 + (246.0 - 230.0) * t;
+      f64 c = cover(x, y);
+      i32 at = (y * SIZE + x) * 4;
+      px[at] = (r + (255.0 - r) * c) as~ u8;
+      px[at + 1] = (g + (255.0 - g) * c) as~ u8;
+      px[at + 2] = (b + (255.0 - b) * c) as~ u8;
+    }
+  }
+  auto wrote = sys.files().writeFile(args[0], encodePng(SIZE, SIZE, px)).wait();
+  if (wrote.isErr()) {
+    sys.stderr().line("\{args[0]}: could not write it");
+    return 1;
+  }
+  sys.stdout().line("\{args[0]}: \{SIZE} × \{SIZE}");
+  return 0;
+}

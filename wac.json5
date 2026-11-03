@@ -4,10 +4,10 @@
     // as a program reaches into it.
     wac: { git: 'https://github.com/voltrevo/wac.git', ref: '84955c78c187a9c5f0c5be13d6666927c7fbdcef' },
     // The page a program is handed — `import { Page, Event } from "web"` — a repository of its own since 2026-10-29.
-    web: { git: 'https://github.com/voltrevo/wac-web.git', ref: 'f474bfbdbbed3e51c13b1e7aa392871d0af3ed79' },
+    web: { git: 'https://github.com/voltrevo/wac-web.git', ref: '82a20ace2b6dd1071be11cb9ce9eb286c0a3f6d2' },
     // The wac IDE, which the build makes one of the desktop's programs (`src/apps/ide.wac`).
-    ide: { git: 'https://github.com/voltrevo/wac-ide.git', ref: '02f661929c61cb4068c6457df61c20237bb8202d' },
+    ide: { git: 'https://github.com/voltrevo/wac-ide.git', ref: '0202f8d77969dbe5db42e32603bc16af932bf13b' },
     // The page builder `build.wac` calls — a program, so building needs nothing but `wac`.
-    webbuild: { git: 'https://github.com/voltrevo/wac-web.git', ref: 'f474bfbdbbed3e51c13b1e7aa392871d0af3ed79', subdir: './tools' },
+    webbuild: { git: 'https://github.com/voltrevo/wac-web.git', ref: '82a20ace2b6dd1071be11cb9ce9eb286c0a3f6d2', subdir: './tools' },
   },
 }

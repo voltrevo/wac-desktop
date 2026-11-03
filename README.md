@@ -176,6 +176,10 @@ shares, so their pages can see each other's files.
   and a file tapped is shown below with Open, and a finger on the list scrolls it rather than dragging. The page is
   drawn to the screen's edges (`--edge`) and keeps clear of the notch and home bar itself; an on-screen keyboard
   makes it smaller rather than covering it, and buttons are a thumb's size.
+- **It installs as an app** — Install in a computer's browser, Add to Home Screen on a phone — and opens standing
+  alone, with its own icon (`assets/icon.png`, drawn by `wac task icon`), and **with no network**: the desktop is
+  built with web's `--app`, whose service worker answers from the network first and keeps a copy of everything the
+  site sends, so the desktop, and every app it has opened before, open offline.
 - **Dropping files or folders** puts them in the folder of the Files window in front, or on the desktop.
 - **Windows** move by the title bar and resize from any edge or corner. Dragged to the top they maximise,
   to the left or right edge they fill that half; double-click a title bar to maximise. The taskbar brings
