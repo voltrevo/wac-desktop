@@ -580,7 +580,9 @@ export void drawInputs(Screen s, u8[] recent) {
       if (k < 0) { continue; }
       i32 b = recent[k] as i32;
       i32 x = x0 + 12 + i;
-      if ((b & bit) != 0) { rect(s, x, y, 1, 5, mix(0x0B0D22, colours[r], 0.75)); }
+      // A run pushed short of full speed by a thumb shows paler, the less the paler (`Keys.slow`).
+      f64 push = r < 2 ? ((15 - ((b >> 4) & 15)) as f64) / 15.0 : 1.0;
+      if ((b & bit) != 0) { rect(s, x, y, 1, 5, mix(0x0B0D22, colours[r], 0.25 + 0.5 * push)); }
       if (r == 2 && (b & 8) != 0) { rect(s, x, y - 1, 1, 7, 0xFFFFFF); }
     }
   }

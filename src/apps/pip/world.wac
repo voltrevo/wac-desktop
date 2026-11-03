@@ -67,9 +67,17 @@ export struct Keys {
   bool right;
   bool jump;
   bool jumped;
+  /**
+   * **How far short of full speed the run is pushed**: 0 is full — every key, and a thumb slid all the way on the
+   * touch pad — up to `RUN_LEVELS - 1`, barely. Only a thumb pushes less: how far it has slid past the dead zone.
+   */
+  i32 slow;
 
-  Keys none() { return Keys(false, false, false, false); }
+  Keys none() { return Keys(false, false, false, false, 0); }
 }
+
+/** How many speeds a run can be pushed at, full among them: `Keys.slow` is 0 to one less than this. */
+export static i32 RUN_LEVELS = 15;
 
 export struct Hero {
   f64 x;
@@ -445,10 +453,24 @@ void stepHero(World w, Keys k) {
   // In wind, Pip's running does not hold Pip back to running speed: a tailwind carries Pip faster.
   u8 here = tileAt(w, tileOf(h.x + HERO_W / 2.0), tileOf(h.y + HERO_H / 2.0));
   f64 top = here == '<' || here == '>' ? GUST : RUN;
-  if (want != 0) {
+  if (want != 0 && k.slow <= 0) {
     h.vx = h.vx + accel * (want as f64);
     if (h.vx > top) { h.vx = top; }
     if (h.vx < 0.0 - top) { h.vx = 0.0 - top; }
+  } else if (want != 0) {
+    // Pushed less than full: up to that share of full speed, picking up as fast as ever, and from faster easing down
+    // to it — a thumb drawn back slows Pip rather than stopping it dead.
+    f64 limit = top * ((RUN_LEVELS - k.slow) as f64) / (RUN_LEVELS as f64);
+    f64 v = h.vx * (want as f64);
+    if (v < limit) {
+      v = v + accel;
+      if (v > limit) { v = limit; }
+    } else {
+      v = v - accel;
+      if (v < limit) { v = limit; }
+    }
+    if (v < 0.0 - top) { v = 0.0 - top; }
+    h.vx = v * (want as f64);
   } else if (h.ground) {
     if (h.vx > FRICTION) { h.vx = h.vx - FRICTION; } else if (h.vx < 0.0 - FRICTION) { h.vx = h.vx + FRICTION; } else { h.vx = 0.0; }
   } else {

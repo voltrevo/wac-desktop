@@ -72,7 +72,7 @@ export async i32 main(Sys sys) {
       u8[] m = u8[].filled(CHUNK, 0 as u8);
       for (i32 s = 0; s < CHUNK; s++) {
         bool held = jump == 1 || (jump == 2 && s < 3);
-        Keys k = Keys(dir == 0, dir == 2, held, held && s == 0);
+        Keys k = Keys(dir == 0, dir == 2, held, held && s == 0, 0);
         m[s] = keyByte(k);
       }
       moves.push(m);

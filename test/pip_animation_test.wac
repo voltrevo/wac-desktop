@@ -9,13 +9,13 @@ export string test_pip_jump_animation_follows_takeoff_apex_fall_and_landing() {
   for (i32 i = 0; i < 10; i++) { step(w, Keys.none()); }
   Screen s = Screen.create(); snap(s, w);
   f64 floor = w.hero.y;
-  step(w, Keys(false, false, true, true));
+  step(w, Keys(false, false, true, true, 0));
   drawWorld(s, w, null, w.steps);
   i32 first = pipPose(w.hero, w.steps, s.landedAt);
   if (w.hero.y >= floor || (first != 9 && first != 10)) { return "takeoff was delayed for animation"; }
   bool apex = false; bool fall = false; bool landing = false; bool recovered = false;
   for (i32 i = 0; i < 85; i++) {
-    step(w, Keys(false, false, i < 10, false));
+    step(w, Keys(false, false, i < 10, false, 0));
     drawWorld(s, w, null, w.steps);
     i32 pose = pipPose(w.hero, w.steps, s.landedAt);
     if (pose == 11) { apex = true; }
@@ -34,7 +34,7 @@ export string test_pip_running_uses_all_six_frames_with_feet_on_the_same_floor()
   f64 floor = w.hero.y;
   bool[] seen = bool[].filled(6, false);
   for (i32 i = 0; i < 30; i++) {
-    step(w, Keys(false, true, false, false));
+    step(w, Keys(false, true, false, false, 0));
     i32 pose = pipPose(w.hero, w.steps, -1000);
     if (pose >= 3 && pose <= 8) { seen[pose - 3] = true; }
     if (w.hero.y != floor || !w.hero.ground) { return "run animation moved the collision body"; }

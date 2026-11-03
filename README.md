@@ -131,9 +131,11 @@ shares, so their pages can see each other's files.
   run of each level comes back as a **ghost** to race (`G` hides it), and each level has a par for **gold, silver and
   bronze**. Enter, P or Esc pauses, and the pause card lists the levels reached: the arrows, a number or a click
   plays another. **On a touch screen it has controls of its own**: a pad for the left thumb — touch anywhere in it and
-  slide, turning without lifting — and a Jump button for the right, held for higher; each keeps its finger until it
+  slide, turning without lifting; **the further it slides the faster Pip runs**, past a small dead zone, full at its
+  reach — and a Jump button for the right, held for higher; each keeps its finger until it
   lifts (web's `prevent="capture"` and the event's `pointer`), so both thumbs work at once and a thumb slid off still
-  lets go. Upright, the picture is at the top and the controls below it; on its side they lie over the picture. The
+  lets go. How hard the run is pushed is part of each step's keys in a run, so a run made with a thumb plays back,
+  and races as a ghost, the same; every run made before reads as full speed. Upright, the picture is at the top and the controls below it; on its side they lie over the picture. The
   cards have buttons to tap, and Options says when the controls show and which side Jump is on. **For speedrunning, all opt-in** (**O**, Options, from the title or the pause card, kept in its
   folder): a **full run** (**F**) plays every level in order on one clock — R starts a level again and the time spent
   stays spent — with the whole run's time along the top and how far ahead or behind the best full run it was at the

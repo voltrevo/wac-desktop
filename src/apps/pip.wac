@@ -20,7 +20,7 @@ import { Desktop, Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html
 import { css } from "../style.wac";
 import { pipCss } from "./pip/style.wac";
 import { Level, allLevels } from "./pip/levels.wac";
-import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "./pip/world.wac";
+import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, RUN_LEVELS, World, load, step } from "./pip/world.wac";
 import { SCREEN_H, SCREEN_W, Screen, drawInputs, drawWorld, follow, snap } from "./pip/art.wac";
 import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
          runBytes, runOf, stepsIn, sumOfBest, total } from "./pip/runs.wac";
@@ -133,19 +133,28 @@ struct Pip {
  * keys-held display cannot tell them from a keyboard's.
  */
 struct Touch {
-  /** The pad's finger, or -1; where it came down, where it is now, and which way that runs: -1, 0 or 1. */
+  /**
+   * The pad's finger, or -1; where it came down, where it is now, which way that runs — -1, 0 or 1 — and how hard, as
+   * `Keys.slow` has it: 0 full, more the less far it has slid.
+   */
   i32 pad;
   i32 fromX;
   i32 fromY;
   i32 atX;
   i32 dir;
+  i32 slow;
   /** The Jump button's finger, or -1. */
   i32 jump;
 }
 
-/** How far from where it came down a thumb must slide to run — and how far it can be, so turning back is quick. */
-static i32 DEAD = 14;
+/**
+ * How far from where it came down a thumb must slide to run — a small dead zone, so a thumb resting is still — and how
+ * far it can be, so turning back is quick. Between the two, **the further it slides the faster Pip runs**: from
+ * `SLOWEST` levels of `RUN_LEVELS` just past the dead zone, to full at its reach.
+ */
+static i32 DEAD = 8;
 static i32 REACH = 46;
+static i32 SLOWEST = 3;
 
 /** The speedrunning side of the game, all of it opt-in (`pip/options.wac`). */
 struct Speed {
@@ -466,12 +475,15 @@ void readKeys(Pip g) {
   g.keys.left = l || g.touch.dir < 0;
   g.keys.right = r || g.touch.dir > 0;
   g.keys.jump = j || g.touch.jump >= 0;
+  // A key held runs at full speed; only the thumb alone runs slower.
+  g.keys.slow = l || r ? 0 : g.touch.slow;
 }
 
 /** The on-screen controls let go of: paused, the window left — as the keys are. */
 void letGo(Pip g) {
   g.touch.pad = 0 - 1;
   g.touch.dir = 0;
+  g.touch.slow = 0;
   g.touch.jump = 0 - 1;
 }
 
@@ -483,6 +495,7 @@ void padDown(Pip g, ElementEvent e) {
   g.touch.fromY = e.y;
   g.touch.atX = e.x;
   g.touch.dir = 0;
+  g.touch.slow = 0;
   g.bump();
 }
 
@@ -494,18 +507,31 @@ void padMove(Pip g, ElementEvent e) {
   g.touch.atX = e.x;
   i32 dx = e.x - g.touch.fromX;
   i32 dir = dx < 0 - DEAD ? 0 - 1 : (dx > DEAD ? 1 : 0);
-  if (dir != g.touch.dir) {
+  i32 slow = dir == 0 ? 0 : slowAt(dx < 0 ? 0 - dx : dx);
+  if (dir != g.touch.dir || slow != g.touch.slow) {
+    if (dir != 0 && g.touch.dir == 0 && g.pressedAt < 0.0) { g.pressedAt = e.at; }
     g.touch.dir = dir;
-    if (dir != 0 && g.pressedAt < 0.0) { g.pressedAt = e.at; }
+    g.touch.slow = slow;
     readKeys(g);
   }
   g.bump();
+}
+
+/** How far short of full speed a thumb `d` from where it came down pushes the run, past the dead zone (`Keys.slow`). */
+export i32 slowAt(i32 d) {
+  if (d >= REACH) { return 0; }
+  i32 levels = RUN_LEVELS - SLOWEST;
+  i32 level = SLOWEST + ((d - DEAD) * levels + (REACH - DEAD) / 2) / (REACH - DEAD);
+  if (level > RUN_LEVELS) { level = RUN_LEVELS; }
+  if (level < SLOWEST) { level = SLOWEST; }
+  return RUN_LEVELS - level;
 }
 
 void padUp(Pip g, ElementEvent e) {
   if (e.pointer != g.touch.pad) { return; }
   g.touch.pad = 0 - 1;
   g.touch.dir = 0;
+  g.touch.slow = 0;
   readKeys(g);
   g.bump();
 }
@@ -1510,7 +1536,7 @@ export async i32 main(Page page) {
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
               0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), STEP_MS, options[LATENCY].chosen == 0,
               options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
-              null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1), false);
+              null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0, 0 - 1), false);
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

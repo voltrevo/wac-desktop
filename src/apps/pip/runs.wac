@@ -1,7 +1,8 @@
 // Runs: what a run is when it is kept, sent to someone, or checked — and the sums a full run is timed by.
 //
 // **A run is its keys.** The rules step sixty times a second and nothing in them is random (`world.wac`), so a byte a
-// step (`keyByte`: left 1, right 2, jump held 4, jump pressed 8) is the whole run: played again, it does exactly what
+// step (`keyByte`: left 1, right 2, jump held 4, jump pressed 8, and in the top four bits how far short of full speed
+// a touch pad's thumb pushed the run — 0, full, in every run made before there was one) is the whole run: played again, it does exactly what
 // it did. A level started again within a run is the byte `RESTART`, which takes no step.
 //
 // **A run file** is `PIPRUN`, a version, its kind — one level, or the full game — then each level played: its number,
@@ -9,7 +10,7 @@
 // or watched (`checkRun`), and only one that reaches the door — and stops there — is a run.
 
 import { Vec } from "core";
-import { Keys, World, load, step } from "./world.wac";
+import { Keys, RUN_LEVELS, World, load, step } from "./world.wac";
 import { Level } from "./levels.wac";
 
 /** A level started again, within a run's keys: no step. */
@@ -17,12 +18,25 @@ export static u8 RESTART = 255 as u8;
 export static i32 LEVEL_RUN = 0;
 export static i32 FULL_RUN = 1;
 
-/** The keys of a step as a byte: left 1, right 2, jump held 4, jump pressed 8. */
+/**
+ * The keys of a step as a byte: left 1, right 2, jump held 4, jump pressed 8 — and, running, how far short of full
+ * speed (`Keys.slow`) in the top four bits.
+ */
 export u8 keyByte(Keys k) {
-  return ((k.left ? 1 : 0) | (k.right ? 2 : 0) | (k.jump ? 4 : 0) | (k.jumped ? 8 : 0)) as@ u8;
+  i32 slow = k.left || k.right ? (k.slow < 0 ? 0 : (k.slow >= RUN_LEVELS ? RUN_LEVELS - 1 : k.slow)) : 0;
+  return ((k.left ? 1 : 0) | (k.right ? 2 : 0) | (k.jump ? 4 : 0) | (k.jumped ? 8 : 0) | (slow << 4)) as@ u8;
 }
 
-export Keys keysOf(u8 b) { return Keys((b & (1 as u8)) != (0 as u8), (b & (2 as u8)) != (0 as u8), (b & (4 as u8)) != (0 as u8), (b & (8 as u8)) != (0 as u8)); }
+export Keys keysOf(u8 b) {
+  return Keys((b & (1 as u8)) != (0 as u8), (b & (2 as u8)) != (0 as u8), (b & (4 as u8)) != (0 as u8), (b & (8 as u8)) != (0 as u8),
+              ((b as i32) >> 4) & 15);
+}
+
+/** Whether `b` is a step's keys someone could press: a speed short of full only while running, and not `RESTART`'s. */
+bool pressable(u8 b) {
+  i32 slow = ((b as i32) >> 4) & 15;
+  return slow == 0 || (slow < RUN_LEVELS && ((b as i32) & 3) != 0);
+}
 
 /** One level of a run: which, and its keys — `RESTART` among them where it was started again. */
 export struct Leg {
@@ -137,7 +151,7 @@ export Checked checkRun(Run r, Level[] levels) {
         w = load(levels[leg.level]);
         continue;
       }
-      if (b > (15 as u8)) { return Checked(false, "level \{leg.level + 1} has a key no one can press", times); }
+      if (!pressable(b)) { return Checked(false, "level \{leg.level + 1} has a key no one can press", times); }
       if (w.won) { return Checked(false, "level \{leg.level + 1} goes on past the door", times); }
       step(w, keysOf(b));
     }

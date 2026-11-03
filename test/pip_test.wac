@@ -4,10 +4,10 @@
 
 import { Level, allLevels } from "../src/apps/pip/levels.wac";
 import { Vec } from "core";
-import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
+import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, RUN_LEVELS, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
-import { Pace, clock, medal, movedTo, paced, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { Pace, clock, medal, movedTo, paced, par, restoreBest, slowAt, styleOf } from "../src/apps/pip.wac";
 import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
          runBytes, runOf, stepsIn, sumOfBest, total } from "../src/apps/pip/runs.wac";
 import { Option, defaultOptions, optionsText, readOptions, turn } from "../src/apps/pip/options.wac";
@@ -25,7 +25,7 @@ World made(string[] rows) {
   return load(Level("test", false, full));
 }
 
-Keys pressing(bool left, bool right, bool jump, bool jumped) { return Keys(left, right, jump, jumped); }
+Keys pressing(bool left, bool right, bool jump, bool jumped) { return Keys(left, right, jump, jumped, 0); }
 
 /** Steps with `k`, the first with `jumped` as given and the rest without; whether any cued `c`. */
 bool stepFor(World w, Keys k, i32 n, i32 c) {
@@ -721,12 +721,48 @@ Level runway(string name, i32 gap) {
 u8[] runAcross(Level l) {
   World w = load(l);
   Vec<u8> keys = Vec.create();
-  Keys k = Keys(false, true, false, false);
+  Keys k = Keys(false, true, false, false, 0);
   for (i32 i = 0; i < 2000 && !w.won; i++) {
     keys.push(keyByte(k));
     step(w, k);
   }
   return keys.toArray();
+}
+
+/**
+ * **A thumb slid part way runs part speed**: past a small dead zone, the further the faster, full at its reach; a key
+ * is always full speed. Slower is a share of full, reached as quickly, and eased down to from faster; and the speed
+ * goes into the run's bytes, so a run made with a thumb plays back the same — while a byte with a speed but no way to
+ * run is no one's.
+ */
+export string test_a_thumb_slid_part_way_runs_part_speed_and_plays_back_the_same() {
+  if (slowAt(9) != RUN_LEVELS - 3 || slowAt(46) != 0 || slowAt(200) != 0) { return "the pad's ends: \{slowAt(9)} \{slowAt(46)}"; }
+  if (!(slowAt(20) > slowAt(30) && slowAt(30) > slowAt(40))) { return "further, faster: \{slowAt(20)} \{slowAt(30)} \{slowAt(40)}"; }
+  World w = made(string[]());
+  Keys half = Keys(false, true, false, false, 7);
+  for (i32 i = 0; i < 60; i++) { step(w, half); }
+  f64 want = 2.3 * 8.0 / 15.0;
+  if (w.hero.vx < want - 0.001 || w.hero.vx > want + 0.001) { return "eight fifteenths of full speed: \{w.hero.vx}"; }
+  for (i32 i = 0; i < 60; i++) { step(w, pressing(false, true, false, false)); }
+  if (w.hero.vx != 2.3) { return "a key, full speed: \{w.hero.vx}"; }
+  step(w, half);
+  if (w.hero.vx <= want || w.hero.vx >= 2.3) { return "drawn back, eased down, not stopped dead: \{w.hero.vx}"; }
+  Keys left = Keys(true, false, true, false, 11);
+  Keys back = keysOf(keyByte(left));
+  if (!back.left || back.right || !back.jump || back.slow != 11) { return "the speed in the byte, and back"; }
+  if (keyByte(Keys(false, false, true, false, 11)) != (4 as u8)) { return "no speed kept while not running"; }
+  // Played again from its bytes, a run made with a thumb does the same.
+  Level l = runway("thumb", 6);
+  World first = load(l);
+  Vec<u8> keys = Vec.create();
+  for (i32 i = 0; i < 2000 && !first.won; i++) {
+    Keys k = Keys(false, true, false, false, i % 13);
+    keys.push(keyByte(k));
+    step(first, k);
+  }
+  Checked c = checkRun(Run(LEVEL_RUN, [Leg(0, keys.toArray())]), [l]);
+  if (!first.won || !c.ok || c.times[0] != keys.len()) { return "a run made with a thumb stands: \{c.why}"; }
+  return "";
 }
 
 /**
@@ -750,7 +786,8 @@ export string test_a_run_stands_only_if_playing_it_again_reaches_the_door() {
   if (checkRun(Run(LEVEL_RUN, [Leg(0, cut)]), levels).why.indexOf("never reaches") < 0) { return "a run cut short"; }
   u8[] odd = u8[].filled(a.len(), 0 as u8);
   for (i32 i = 0; i < a.len(); i++) { odd[i] = a[i]; }
-  odd[3] = 77 as u8;
+  // A speed short of full with no way to run: no one can press that.
+  odd[3] = 64 as u8;
   if (checkRun(Run(LEVEL_RUN, [Leg(0, odd)]), levels).ok) { return "a key no one can press"; }
   // A full run with the first level started again part way: the time spent before the restart counts.
   Vec<u8> again = Vec.create();
