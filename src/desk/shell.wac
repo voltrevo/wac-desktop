@@ -6,12 +6,13 @@
 // them; a save bumps the disk's, so every window showing the disk looks again.
 
 import { Result, Ticket, Vec } from "core";
-import { ElementEvent, MOD_CTRL, MOD_META, Node, Page, Picked, Ui, html.b, html.button, html.div, html.input, html.label, html.span, html.style, Site, siteFiles } from "web";
+import { Element, ElementEvent, Listen, MOD_CTRL, MOD_META, Node, Page, Picked, Ref, Ui, html.b, html.button, html.div, html.input, html.label, html.span,
+         html.style, Site, siteFiles } from "web";
 import { Vfs, Got, Info, nowMillis, copyInto, filesystem, freeName, join, leafOf, moveInto, parentOf, usable, vfsOf } from "./vfs.wac";
 import { Files, MemoryStore, Mount } from "std";
 import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropKey, dropOn, endDrag, find, focus, dragTo, hintRight,
          hover, minimise, moved, newDesk, open, pressFiles, restore, sessionOf, startMove, startResize, taskbarClick, toggleMax,
-         Consent, Hand, Picking, Placed, Start, handFor } from "./wm.wac";
+         Consent, Hand, Picking, Placed, Start, handFor, PHONE_HEIGHT, PHONE_SIDEWAYS, PHONE_WIDTH, followTo, frontOf, goHome } from "./wm.wac";
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { FilesApp, openPath } from "./files.wac";
 import { ProgramApp, launch } from "./program.wac";
@@ -20,7 +21,7 @@ import { SETTINGS, deskClasses, prefsCss, prefsOf } from "./prefs.wac";
 import { SettingsApp } from "./settings.wac";
 import { deskCss } from "./style.wac";
 import { startApp, startPlaced } from "./builtin.wac";
-import { Launcher } from "./launcher.wac";
+import { Entry, Launcher, groups, launch as launchEntry, offered } from "./launcher.wac";
 import { demoZip, welcomeMd } from "./seed.wac";
 import { css } from "../style.wac";
 import { icon } from "../preview.wac";
@@ -384,6 +385,104 @@ Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i3
   return <div class="placeholder"><div>{icon("alert", "")}<div>Nothing here: “{w.app}” is not one of the desktop's windows.</div></div></div>;
 }
 
+// ── a phone ─────────────────────────────────────────────────────────────────
+
+/**
+ * **A phone's home screen**: every app the launcher offers, in its groups, as a phone shows them — a tap starts one —
+ * and what is on the Desktop below, a tap opening it. The search above opens the launcher, to find an app by name.
+ */
+Node PhoneHome(Ui ui, Desk d, fn<void()> bumpDesk, i32 fsRev) {
+  Icons s = ui.memo<Icons>("", () => Icons(Info[](), string[](), string[](), 0));
+  auto version = ui.state(0);
+  fn<void()> bump = () => { version.update((i32 v) => v + 1); };
+  ui.effect("\{fsRev}", () => { loadIcons(d, s, bump); return () => { }; });
+  Entry[] all = offered(d);
+  string[] gs = groups();
+  Vec<Node> sections = Vec.create();
+  for (i32 g = 0; g < gs.len(); g++) {
+    Vec<Node> tiles = Vec.create();
+    for (i32 i = 0; i < all.len(); i++) {
+      Entry e = all[i];
+      if (e.group != gs[g]) { continue; }
+      tiles.push(<button class="ptile" key={e.title} title={e.sub} onclick={(ElementEvent ev) => { launchEntry(d, e); bumpDesk(); }}>
+        <span class={"ptic c-\{e.icon}"}>{icon(e.icon, "lg")}</span><span class="ptname">{e.title}</span></button>);
+    }
+    if (tiles.len() > 0) {
+      sections.push(<div class="phsec"><div class="phhead">{gs[g]}</div><div class="phgrid">{tiles.toArray()}</div></div>);
+    }
+  }
+  Node[] files = Node[].filled(s.names.len(), Node.Text(""));
+  for (i32 i = 0; i < s.names.len(); i++) {
+    string n = s.names[i];
+    bool dir = s.infos[i].isDir;
+    string ic = dir ? "folder" : iconFor(n);
+    files[i] = <button class="ptile" key={n} title={n} onclick={(ElementEvent ev) => { openPath(d, join("Desktop", n), dir); bumpDesk(); }}>
+      <span class={"ptic c-\{ic}"}>{icon(ic, "lg")}</span><span class="ptname">{n}</span></button>;
+  }
+  return <div class="phome">
+    <button class="psearch" onclick={(ElementEvent e) => { d.launcher = true; d.query = ""; d.chosen = 0; bumpDesk(); }}>
+      {icon("search", "sm")}<span>Search apps</span></button>
+    {sections.toArray()}
+    {files.len() > 0 ? <div class="phsec"><div class="phhead">On the Desktop</div><div class="phgrid">{files}</div></div> : Node.Text("")}
+  </div>;
+}
+
+/** On a phone, what is open — the window in front first — to go back to with a tap, or close. */
+Node recentsOf(Desk d, fn<void()> bump) {
+  Vec<Win> order = Vec.create();
+  for (i32 i = 0; i < d.wins.len(); i++) {
+    Win w = d.wins.get(i);
+    i32 at = 0;
+    while (at < order.len() && order.get(at).z > w.z) { at++; }
+    order.insert(at, w);
+  }
+  Node[] cards = Node[].filled(order.len(), Node.Text(""));
+  for (i32 i = 0; i < order.len(); i++) {
+    Win w = order.get(i);
+    i32 id = w.id;
+    cards[i] = <div class="rcard" key={"r\{id}"}>
+      <button class="rgo" onclick={(ElementEvent e) => { focus(d, id); d.recents = false; bump(); }}>
+        <span class={"ic i-\{w.icon} c-\{w.icon}"}></span><span class="rt">{w.title}</span></button>
+      <button class="rclose" title={"Close " + w.title} onclick={(ElementEvent e) => { close(d, id); bump(); }}>{icon("close", "sm")}</button>
+    </div>;
+  }
+  return <div class="recents">
+    <div class="rhead"><b>Open</b>
+      {order.len() > 1 ? <button class="btn" onclick={(ElementEvent e) => {
+        while (d.wins.len() > 0) { close(d, d.wins.get(0).id); }
+        d.recents = false;
+        bump();
+      }}>Close all</button> : Node.Text("")}</div>
+    {order.len() == 0 ? <div class="rnone">Nothing is open.</div> : <div class="rlist">{cards}</div>}
+  </div>;
+}
+
+/** A phone's taskbar: the apps, home, and what is open — each a thumb's width. */
+Node phoneBar(Desk d, Page page, fn<void()> bump) {
+  return <div class="taskbar phonebar">
+    <button class={d.launcher ? "pbbtn on" : "pbbtn"} title="Apps"
+            onclick={(ElementEvent e) => { d.launcher = !d.launcher; d.recents = false; d.query = ""; d.chosen = 0; bump(); }}>{icon("grid", "")}</button>
+    <button class="pbbtn" title="Home" onclick={(ElementEvent e) => { goHome(d); d.launcher = false; d.recents = false; bump(); }}>{icon("home", "")}</button>
+    <button class={d.recents ? "pbbtn on" : "pbbtn"} title="What is open"
+            onclick={(ElementEvent e) => { d.recents = !d.recents; d.launcher = false; bump(); }}>
+      {icon("layers", "")}{d.wins.len() > 0 ? <span class="pbcount">{"\{d.wins.len()}"}</span> : Node.Text("")}</button>
+    <Clock page={page}/>
+  </div>;
+}
+
+/** A device-pixel ratio as the host says it: `2`, `2.625`. */
+f64 ratioOf(string s) {
+  f64 v = 0.0;
+  f64 scale = 0.0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '.') { scale = 1.0; continue; }
+    if (b[i] < '0' || b[i] > '9') { continue; }
+    if (scale > 0.0) { scale = scale / 10.0; v = v + scale * ((b[i] - '0') as f64); } else { v = v * 10.0 + ((b[i] - '0') as f64); }
+  }
+  return v > 0.0 ? v : 1.0;
+}
+
 // ── the taskbar ─────────────────────────────────────────────────────────────
 
 string two(i32 n) { return n < 10 ? "0\{n}" : "\{n}"; }
@@ -449,7 +548,7 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
               onpointermove={dragging(drop) ? (ElementEvent e) => { hover(d, null, ""); } : null}
               onpointerdown={(ElementEvent e) => { if (d.focused != id || d.launcher) { focus(d, id); bump(); } }}>
     <div class="tbar"
-         onpointerdown={(ElementEvent e) => { startMove(d, id, w.x + 1 + e.x, w.y + 1 + e.y); bump(); }}
+         onpointerdown={(ElementEvent e) => { if (!d.phone) { startMove(d, id, w.x + 1 + e.x, w.y + 1 + e.y); bump(); } }}
          ondblclick={(ElementEvent e) => { toggleMax(d, id); bump(); }}>
       <span class={"ic sm i-\{w.icon} c-\{w.icon}"}></span>
       <span class="tt">{w.title}</span>
@@ -477,6 +576,31 @@ export Node Desktop(Ui ui, Page page) {
     start(page, d, bump, () => { ready.set(true); });
     return () => { };
   });
+  // **Phone or desktop**, by the screen's size, told as it changes: narrow, or — a phone on its side — too short for windows.
+  Ref sizer = ui.ref();
+  ui.effect("", () => {
+    Element? el = sizer.element();
+    if (el is not null) {
+      el!.on("resize", Listen.none(), (ElementEvent e) => {
+        f64 ratio = ratioOf(e.value);
+        f64 w = (e.x as f64) / ratio;
+        bool phone = w < (PHONE_WIDTH as f64) || ((e.y as f64) / ratio < (PHONE_HEIGHT as f64) && w < (PHONE_SIDEWAYS as f64));
+        if (phone == d.phone) { return; }
+        d.phone = phone;
+        d.front = 0 - 1;
+        d.launcher = false;
+        d.recents = false;
+        bump();
+      });
+    }
+    return () => { };
+  });
+  // The browser's Back and Forward, on a phone: what the address says is in front comes forward.
+  ui.effect("", () => page.onLocation((string where) => {
+    if (!d.phone || where == (d.front <= 0 ? "" : "w\{d.front}")) { return; }
+    followTo(d, where);
+    bump();
+  }));
   // The watchdog: opening that was still "in progress" when a timer ran has trapped. Armed once, from an effect, as
   // every timer here is (`Clock`).
   ui.effect("", () => ui.every(400, () => {
@@ -522,7 +646,21 @@ export Node Desktop(Ui ui, Page page) {
       {c.hasOver ? <span class="fto">{c.over == TRASH && !c.copy ? "→ the Trash" : (c.copy ? "+ copy to " : "→ ") + (c.over == TRASH ? "the Trash" : c.overName)}</span> : Node.Text("")}
     </div>;
   }
-  return <div class={"desk" + deskClasses(d.prefs) + (dragging || carrying ? " dragging" : "") + (carrying ? " carrying" : "") + cursor}
+  // **On a phone, each app brought to the front is a place in the browser's history**, so Back leaves it for what was
+  // in front before. The first time, the home screen is put under it, and Back from the first app goes home.
+  if (d.phone && ready.get()) {
+    i32 front = frontOf(d);
+    if (front != d.front) {
+      if (d.front < 0) {
+        page.go("", false);
+        if (front > 0) { page.go("w\{front}", true); }
+      } else {
+        page.go(front == 0 ? "" : "w\{front}", true);
+      }
+      d.front = front;
+    }
+  }
+  return <div class={"desk" + (d.phone ? " phone" : "") + deskClasses(d.prefs) + (dragging || carrying ? " dragging" : "") + (carrying ? " carrying" : "") + cursor}
               onpointermove={pressed ? (ElementEvent e) => {
                 if (d.fdrag is not null) {
                   if (dragFilesTo(d, e.x, e.y, (e.mods & (MOD_CTRL | MOD_META)) != 0)) { bump(); }
@@ -540,9 +678,11 @@ export Node Desktop(Ui ui, Page page) {
               } : null}>
     <style>{css()}</style>
     <style>{deskCss() + prefsCss()}</style>
+    <div class="sizer" ref={sizer}></div>
     <div class="area" onpointerdown={(ElementEvent e) => { if (d.launcher) { d.launcher = false; bump(); } }}
          onpointermove={carrying ? (ElementEvent e) => { hover(d, "Desktop", "the desktop"); } : null}>
-      {ready.get() ? <DesktopIcons d={d} bumpDesk={bump} fsRev={d.fsRev} drop={drop}/> : <div class="booting"><span class="spin"></span>Starting…</div>}
+      {ready.get() ? (d.phone ? <PhoneHome d={d} bumpDesk={bump} fsRev={d.fsRev}/> : <DesktopIcons d={d} bumpDesk={bump} fsRev={d.fsRev} drop={drop}/>)
+                   : <div class="booting"><span class="spin"></span>Starting…</div>}
       {frames}
       {hint == 1 ? <div class="snapghost l"></div> : (hint == 2 ? <div class="snapghost r"></div> : (hint == 3 ? <div class="snapghost m"></div> : Node.Text("")))}
       {dragging && g!.mode == "move" ? <div class="edge-r" onpointermove={(ElementEvent e) => { hintRight(d); bump(); }}></div> : Node.Text("")}
@@ -553,7 +693,8 @@ export Node Desktop(Ui ui, Page page) {
                                        {d.undo.len() > 0 ? <button class="tundo" onclick={(ElementEvent e) => { undoTrash(d, bump); }}>Undo</button> : Node.Text("")}</div>
                                    : Node.Text(""))}
     {ghost}
-    {taskbar(d, page, bump)}
+    {d.phone && d.recents ? recentsOf(d, bump) : Node.Text("")}
+    {d.phone ? phoneBar(d, page, bump) : taskbar(d, page, bump)}
     {d.picking is not null ? <Picker d={d} p={d.picking!} dir={d.picking!.dir} fsRev={d.fsRev} bumpDesk={bump}/> : Node.Text("")}
     {d.consent is not null ? <Consenting c={d.consent!}/> : Node.Text("")}
   </div>;

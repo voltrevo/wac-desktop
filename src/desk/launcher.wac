@@ -115,7 +115,7 @@ export i32 score(Entry e, string query) {
 }
 
 /** The entries `d` offers: those that need a site only when it has one. */
-Entry[] offered(Desk d) {
+export Entry[] offered(Desk d) {
   Entry[] all = entries();
   Vec<Entry> out = Vec.create();
   for (i32 i = 0; i < all.len(); i++) { if (d.site || !all[i].site) { out.push(all[i]); } }
@@ -155,7 +155,7 @@ void fold(Desk d, string group) {
 }
 
 /** What the arrow keys move over: the search's results, or every entry in an open group. */
-Entry[] choosable(Desk d) {
+export Entry[] choosable(Desk d) {
   Entry[] es = offered(d);
   if (d.query != "") { return found(es, d.query); }
   Vec<Entry> out = Vec.create();

@@ -5,7 +5,7 @@ import { Page, PageServer, Runner, TestDoc, Ui } from "web";
 import { Clock } from "../src/desk/shell.wac";
 import { Vfs, Got, Info, copyTree, freeName, leafOf, vfsOf } from "../src/desk/vfs.wac";
 import { MemoryStore, Sys } from "std";
-import { Desk, MAX_WINDOWS, NO_WINDOW, Placed, Running, Start, Win, close, dragTo, endDrag, find, focus, hintRight,
+import { Desk, MAX_WINDOWS, NO_WINDOW, Placed, Running, Start, Win, close, dragTo, endDrag, find, focus, followTo, frontOf, goHome, hintRight,
          minimise, newDesk, open, openWindowFor, restore, sessionOf, startMove, startResize, startOf, taskbarClick,
          toggleMax } from "../src/desk/wm.wac";
 import { Grants } from "../src/desk/grants.wac";
@@ -339,5 +339,26 @@ export string test_files_open_in_the_app_settings_chose() {
   if (appFor(p, "e.zip") != "files" || appFor(p, "f.wasm") != "program" || appFor(p, "g.png") != "viewer") {
     return "what Settings does not choose: \{appFor(p, "e.zip")} \{appFor(p, "f.wasm")} \{appFor(p, "g.png")}";
   }
+  return "";
+}
+
+/**
+ * **On a phone, the address says what is in front**: a window by its id, or the home screen. Going home puts every
+ * window away and closes none; the address naming a window brings it back; naming one closed since is the home screen.
+ */
+export string test_on_a_phone_the_address_says_what_is_in_front(Sys sys) {
+  Desk d = desk(sys);
+  Win a = open(d, "files", "", "Home", "home");
+  Win b = open(d, "files", "Desktop", "Desktop", "folder");
+  if (frontOf(d) != b.id) { return "the last opened is in front"; }
+  goHome(d);
+  if (frontOf(d) != 0 || d.wins.len() != 2) { return "home: \{frontOf(d)} in front, \{d.wins.len()} open"; }
+  followTo(d, "w\{a.id}");
+  if (frontOf(d) != a.id || d.front != a.id) { return "back to the first: \{frontOf(d)}"; }
+  close(d, b.id);
+  followTo(d, "w\{b.id}");
+  if (frontOf(d) != 0) { return "a window closed since is the home screen"; }
+  followTo(d, "nonsense");
+  if (frontOf(d) != 0) { return "an address that names nothing is the home screen"; }
   return "";
 }

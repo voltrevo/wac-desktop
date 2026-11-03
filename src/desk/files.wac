@@ -382,7 +382,8 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
     rows[k] = <div class={"row" + (sel ? " sel" : "") + (k == s.cursor ? " cursor" : "") + (dropOn(drop, path) ? " dropon" : "")}
                    key={it.name} tabindex="-1" title={it.name} ref={k == s.cursor ? cursorRef : null}
                    onpointerdown={(ElementEvent e) => {
-                     if (s.renaming != "") { return; }
+                     // On a phone a finger on a row is the list scrolling, not files picked up to drag.
+                     if (s.renaming != "" || d.phone) { return; }
                      pressFiles(d, pathsOf(s, sel ? chosen(s) : [it.name]));
                      bumpDesk();
                    }}
@@ -407,6 +408,10 @@ Node diskListing(Desk d, Win w, Page page, FilesState s, Item[] items, fn<void()
                        for (i32 i = lo; i <= hi; i++) { range[i - lo] = items[i].name; }
                        s.picked = range;
                        s.selected = it.name;
+                     } else if (d.phone && it.isDir) {
+                       // On a phone a tap goes into a folder; a file is shown below, with Open beside it.
+                       activate(it);
+                       return;
                      } else {
                        pickOnly(s, it.name);
                        s.cursor = at;
@@ -617,7 +622,7 @@ Node diskPreview(Desk d, Win w, Page page, FilesState s, fn<void()> bump, fn<voi
   }
   if (s.selected == "") {
     return <div class="pane preview"><div class="placeholder"><div>{icon("layers", "")}
-      {inTrash(s.dir) ? <div>Select something to restore it,<br/>or to delete it for good.</div> : <div>Select something to see it here.<br/>Double-click to open it.</div>}</div></div></div>;
+      {inTrash(s.dir) ? <div>Select something to restore it,<br/>or to delete it for good.</div> : (d.phone ? <div>Tap a file to see it here,<br/>and Open it.</div> : <div>Select something to see it here.<br/>Double-click to open it.</div>)}</div></div></div>;
   }
   Item? found = null;
   for (i32 i = 0; i < s.items.len(); i++) { if (s.items[i].name == s.selected) { found = s.items[i]; } }

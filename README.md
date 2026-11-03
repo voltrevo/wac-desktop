@@ -42,6 +42,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test        # formats, previews, the disk and the window manager, without a browser
     wac task test:pip       # Pip played, heard, measured, paused, another level chosen, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
+    wac task test:phone     # the desktop on a phone: its home screen, Back, what is open, Files by tap — as an iPhone
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:paint  # Paint drawn in, filled, undone, saved, reopened, dropped on, coloured, selected, pasted and typed in
     wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
@@ -167,6 +168,14 @@ shares, so their pages can see each other's files.
   and movement, rotation, hold, drop, lock, row-clear, level-up and game-over effects use the same audio capability
   as Pip. M toggles all sound; the Music switch controls just the background loop. Both preferences are kept in
   `audio.json`. Audio starts only when play starts, and pauses or closes with the game.
+- **On a phone** — narrower than 700 pixels, or a phone on its side, under 500 high and 1000 wide — the desktop is a phone's: a
+  home screen of every app in its groups and what is on the Desktop, a tap starting or opening one; each app the whole
+  screen, with only Close; and a taskbar of the apps, home, and what is open — listed over everything, to go back to
+  or close. **The phone's Back works**: each app brought to the front is a place in the browser's history (web's
+  `Page.go`), so Back leaves it for what was in front before, and Forward returns. In Files a tap goes into a folder,
+  and a file tapped is shown below with Open, and a finger on the list scrolls it rather than dragging. The page is
+  drawn to the screen's edges (`--edge`) and keeps clear of the notch and home bar itself; an on-screen keyboard
+  makes it smaller rather than covering it, and buttons are a thumb's size.
 - **Dropping files or folders** puts them in the folder of the Files window in front, or on the desktop.
 - **Windows** move by the title bar and resize from any edge or corner. Dragged to the top they maximise,
   to the left or right edge they fill that half; double-click a title bar to maximise. The taskbar brings

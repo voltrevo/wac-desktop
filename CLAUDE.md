@@ -26,15 +26,15 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `84955c78c`, `web` (wac-web) to `e746b49` and the wac IDE (`ide`) to `872601e`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `84955c78c`, `web` (wac-web) to `f474bfb` and the wac IDE (`ide`) to `02f6619`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
-    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:stackfall && wac task test:stackfall-audio && wac task test:mandelbrot && wac task test:paint && wac task test:pip && wac task test:settings && wac task test:drops
+    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:stackfall && wac task test:stackfall-audio && wac task test:mandelbrot && wac task test:paint && wac task test:pip && wac task test:settings && wac task test:phone && wac task test:drops
 
 - **Pins name GitHub** (`https://github.com/voltrevo/`), where the owner syncs the same commits. During development
   they are on git.voltrevo.com first: **run `sh tools/use-mirror.sh` once per machine**, so `git` fetches GitHub's
   URLs from there. `wac update`'s own fetcher does not follow it, so **`tools/fill-cache.sh`, not `wac update`**.
-- `test:desk`, `test:stackfall`, `test:stackfall-audio`, `test:mandelbrot`, `test:paint`, `test:pip`, `test:settings` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
+- `test:desk`, `test:stackfall`, `test:stackfall-audio`, `test:mandelbrot`, `test:paint`, `test:pip`, `test:settings`, `test:phone` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
   All of them pass at the latest commit (120 unit tests, 112 desktop checks, 18 drop cases, 12 Paint steps). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
