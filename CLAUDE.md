@@ -60,6 +60,9 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   `src/apps/maths.wac` predates both. String escapes are the usual few — `"\1"` is an error. A string has few methods:
   `len`, `slice`, `indexOf`, `toBytes` — no `trim`, `split` or case changes.
 - `import { json.parse } from "wac"` binds `parse`, not `json.parse`.
+- **`(1 << n) as f64` with an untyped literal compiles to invalid wasm** (wac `84955c78c`): the build says "rejected
+  page.wasm", and the engine names the function. Give the literal a type (`i32 one = 1; one << n`). To find which
+  function: `node -e "WebAssembly.compile(require('fs').readFileSync('dist/apps/<app>/page.wasm')).catch(e => console.log(e.message))"`.
 - A component re-renders only when its attributes change. Window contents are components handed
   `fsRev`, `rev` and, for Files, `drop` and `clipN`, so that dragging a window does not redraw what is
   in it. Something a window must react to has to arrive as one of those. A skipped component is redrawn before an event

@@ -7,7 +7,10 @@ import { Vec } from "core";
 import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
-import { clock, keyByte, keysOf, medal, movedTo, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { clock, medal, movedTo, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
+         runBytes, runOf, stepsIn, sumOfBest, total } from "../src/apps/pip/runs.wac";
+import { Option, defaultOptions, optionsText, readOptions, turn } from "../src/apps/pip/options.wac";
 import { LAYERS, Song, mixed, songs, stems } from "../src/apps/pip/music.wac";
 
 /** A level of `rows`, padded with air to the full width, bedrock below. */
@@ -697,5 +700,117 @@ export string test_the_arrows_choose_among_the_levels_reached() {
   if (movedTo(9, 10, "ArrowDown") != 10 || movedTo(4, 4, "ArrowRight") != 4) { return "not past the furthest reached"; }
   if (movedTo(0, 0, "ArrowDown") != 0) { return "with one level reached, there is nothing else to choose"; }
   if (movedTo(4, 10, "Enter") != 4) { return "another key moves nothing"; }
+  return "";
+}
+
+/** A short level for runs: a lantern, and the door beyond it, on flat ground — `gap` tiles of it before the door. */
+Level runway(string name, i32 gap) {
+  string row = "P.L";
+  for (i32 i = 0; i < gap; i++) { row = row + "."; }
+  string[] rows = string[].filled(12, "");
+  for (i32 y = 0; y < 12; y++) {
+    string r = y == 9 ? row + "E" : (y >= 10 ? "#" : ".");
+    u8 fill = y >= 10 ? '#' : '.';
+    while (r.len() < 40) { r = r + string.fromBytes([fill]); }
+    rows[y] = r;
+  }
+  return Level(name, false, rows);
+}
+
+/** Keys that run right across `l` to its door, a byte a step — stopping on the step that goes through it. */
+u8[] runAcross(Level l) {
+  World w = load(l);
+  Vec<u8> keys = Vec.create();
+  Keys k = Keys(false, true, false, false);
+  for (i32 i = 0; i < 2000 && !w.won; i++) {
+    keys.push(keyByte(k));
+    step(w, k);
+  }
+  return keys.toArray();
+}
+
+/**
+ * **A run stands only if playing it again reaches the door, and stops there**: a run kept or brought in is checked from
+ * its keys, so a run cut short, one that goes on past the door, one with a key no one can press, or a full run out
+ * of order is not taken — and a level started again within a run takes no time of its own.
+ */
+export string test_a_run_stands_only_if_playing_it_again_reaches_the_door() {
+  Level[] levels = [runway("one", 4), runway("two", 8)];
+  u8[] a = runAcross(levels[0]);
+  u8[] b = runAcross(levels[1]);
+  if (a.len() < 10 || a.len() >= 2000) { return "the test level is not crossed: \{a.len()} steps"; }
+  Checked c = checkRun(Run(LEVEL_RUN, [Leg(0, a)]), levels);
+  if (!c.ok || c.times[0] != a.len()) { return "a level crossed: \{c.why} \{c.times[0]}"; }
+  Vec<u8> more = Vec.create();
+  for (i32 i = 0; i < a.len(); i++) { more.push(a[i]); }
+  more.push(2 as u8);
+  if (checkRun(Run(LEVEL_RUN, [Leg(0, more.toArray())]), levels).why.indexOf("past the door") < 0) { return "a key past the door"; }
+  u8[] cut = u8[].filled(a.len() - 1, 0 as u8);
+  for (i32 i = 0; i < cut.len(); i++) { cut[i] = a[i]; }
+  if (checkRun(Run(LEVEL_RUN, [Leg(0, cut)]), levels).why.indexOf("never reaches") < 0) { return "a run cut short"; }
+  u8[] odd = u8[].filled(a.len(), 0 as u8);
+  for (i32 i = 0; i < a.len(); i++) { odd[i] = a[i]; }
+  odd[3] = 77 as u8;
+  if (checkRun(Run(LEVEL_RUN, [Leg(0, odd)]), levels).ok) { return "a key no one can press"; }
+  // A full run with the first level started again part way: the time spent before the restart counts.
+  Vec<u8> again = Vec.create();
+  for (i32 i = 0; i < 20; i++) { again.push(2 as u8); }
+  again.push(RESTART);
+  for (i32 i = 0; i < a.len(); i++) { again.push(a[i]); }
+  u8[] first = again.toArray();
+  Checked full = checkRun(Run(FULL_RUN, [Leg(0, first), Leg(1, b)]), levels);
+  if (!full.ok || full.times[0] != a.len() + 20 || full.times[1] != b.len()) { return "a full run: \{full.why} \{full.times[0]}"; }
+  if (lastAttempt(first).len() != a.len() || stepsIn(first) != a.len() + 20) { return "the attempt that reached the door"; }
+  if (checkRun(Run(FULL_RUN, [Leg(1, b), Leg(0, a)]), levels).ok) { return "a full run out of order"; }
+  if (checkRun(Run(FULL_RUN, [Leg(0, a)]), levels).ok) { return "a full run of one level of two"; }
+  return "";
+}
+
+/** **A run file reads back as it was written**, and anything else — cut short, too long, another file — is no run. */
+export string test_a_run_file_reads_back_and_nothing_else_is_one() {
+  Run r = Run(FULL_RUN, [Leg(0, [2 as u8, 6 as u8, RESTART, 10 as u8]), Leg(1, [1 as u8])]);
+  u8[] bytes = runBytes(r);
+  Run? back = runOf(bytes);
+  if (back is null) { return "not read back"; }
+  if (back!.kind != FULL_RUN || back!.legs.len() != 2 || back!.legs[0].keys.len() != 4 || back!.legs[0].keys[2] != RESTART
+      || back!.legs[1].level != 1) { return "read back otherwise"; }
+  u8[] cut = u8[].filled(bytes.len() - 1, 0 as u8);
+  for (i32 i = 0; i < cut.len(); i++) { cut[i] = bytes[i]; }
+  if (runOf(cut) is not null) { return "a file cut short"; }
+  u8[] long = u8[].filled(bytes.len() + 1, 0 as u8);
+  for (i32 i = 0; i < bytes.len(); i++) { long[i] = bytes[i]; }
+  if (runOf(long) is not null) { return "a file with more after it"; }
+  if (runOf("# Notes\nnot a run".toBytes()) is not null) { return "another file"; }
+  return "";
+}
+
+/**
+ * **A full run's sums**: its time; ahead or behind the best full run at the last level finished — negative ahead —
+ * and the sum of the best of every level, which waits for every level to have one.
+ */
+export string test_a_full_runs_sums() {
+  i32[] mine = [600, 900, 300];
+  i32[] best = [660, 840, 360];
+  if (total(mine) != 1800) { return "total"; }
+  if (deltaAt(mine, best, 0) != 0 - 60 || deltaAt(mine, best, 1) != 0 || deltaAt(mine, best, 2) != 0 - 60) { return "ahead or behind"; }
+  if (deltaAt(mine, i32[](), 1) != 0) { return "with nothing to compare"; }
+  if (sumOfBest([600, 840, 300]) != 1740 || sumOfBest([600, 0, 300]) != 0) { return "sum of best"; }
+  if (deltaOf(0 - 60) != "−1.0" || deltaOf(63) != "+1.0" || deltaOf(4500) != "+1:15.0") { return "deltas: \{deltaOf(0 - 60)} \{deltaOf(4500)}"; }
+  if (clockOf(3726) != "1:02.1" || clockOf(60 * 3725) != "1:02:05.0") { return "clocks: \{clockOf(3726)} \{clockOf(60 * 3725)}"; }
+  return "";
+}
+
+/** **The options are kept as chosen**; a line not understood, or a choice out of range, leaves the option as it was. */
+export string test_the_options_are_kept_as_chosen() {
+  Option[] o = defaultOptions();
+  turn(o[2], 1);
+  turn(o[1], 0 - 1);
+  Option[] back = defaultOptions();
+  readOptions(optionsText(o), back);
+  if (optionsText(back) != optionsText(o)) { return "read back as \{optionsText(back)}"; }
+  if (back[1].chosen != o[1].choices.len() - 1) { return "turning back from the first goes round to the last"; }
+  Option[] odd = defaultOptions();
+  readOptions("inputs=7\nsplits=x\nnonsense\nwho=1\nbetween=1", odd);
+  if (odd[2].chosen != 0 || odd[3].chosen != 0 || odd[4].chosen != 1) { return "not understood, not left: \{optionsText(odd)}"; }
   return "";
 }

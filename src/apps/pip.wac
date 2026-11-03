@@ -15,13 +15,17 @@
 // as many steps as time has passed, then draws. The sounds are made once, at the start (`pip/chip.wac`).
 
 import { Vec } from "core";
-import { Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html.b, html.button, html.canvas, html.div, html.h1,
-         html.p, html.span, html.style } from "web";
+import { Desktop, Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html.b, html.button, html.canvas, html.div,
+         html.h1, html.p, html.span, html.style } from "web";
 import { css } from "../style.wac";
 import { pipCss } from "./pip/style.wac";
 import { Level, allLevels } from "./pip/levels.wac";
 import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "./pip/world.wac";
-import { SCREEN_H, SCREEN_W, Screen, drawWorld, follow, snap } from "./pip/art.wac";
+import { SCREEN_H, SCREEN_W, Screen, drawInputs, drawWorld, follow, snap } from "./pip/art.wac";
+import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
+         runBytes, runOf, stepsIn, sumOfBest, total } from "./pip/runs.wac";
+import { BETWEEN, FULL_GHOST, GHOST, INPUTS, LATENCY, Option, SOUND, SPLITS, defaultOptions, optionsText, readOptions,
+         turn } from "./pip/options.wac";
 import { RATE, effects } from "./pip/chip.wac";
 import { LAYERS, RACE, mixed, songNamed, stems } from "./pip/music.wac";
 import { fixed } from "./maths.wac";
@@ -31,8 +35,15 @@ static i32 PLAYING = 1;
 static i32 PAUSED = 2;
 static i32 CLEARED = 3;
 static i32 DONE = 4;
+/** The Options card, the Replays card, a run being watched, and a full run's end. */
+static i32 OPTIONS = 5;
+static i32 REPLAYS = 6;
+static i32 WATCHING = 7;
+static i32 FULL_DONE = 8;
 static f64 STEP_MS = 16.666666666666668;
 static string KEPT = "best";
+static string FULL = "fullrun";
+static string OPTIONS_FILE = "options";
 
 /** A running measure: the last few values, to show their mean. */
 struct Meter {
@@ -102,19 +113,64 @@ struct Pip {
   fn<void()> bump;
   /** Paused: the level the arrows have chosen, which Enter plays — the one being played until they move. */
   i32 pick;
+  /** The ghost's keys on the level being played: whichever the options say (`ghostFor`). */
+  u8[] ghostRun;
+  Speed sp;
+}
+
+/** The speedrunning side of the game, all of it opt-in (`pip/options.wac`). */
+struct Speed {
+  Option[] options;
+  /** The Options and Replays cards: what they were opened over — the title or the pause card — and the row chosen. */
+  i32 back;
+  i32 row;
+  /** The full run under way; null when none is. */
+  Full? full;
+  /** The best full run: each level's keys and time; empty until there is one. */
+  Leg[] bestFull;
+  i32[] bestSplits;
+  /** The last steps' keys, for the keys-held display. */
+  Vec<u8> recent;
+  /** The run being watched. */
+  Watch? watch;
+  /** A run brought in from elsewhere, raced as the ghost on its level until the title. */
+  Leg? race;
+  /** The desktop, to save a run to and choose one from; null on a page of its own. */
+  Desktop? desk;
+  /** A line on the Replays card: what was saved, or why a run was not taken. */
+  string note;
+}
+
+/** **A full run**: every level in order, on one clock that does not stop for a level started again. */
+struct Full {
+  /** Each finished level's time, and its keys — restarts among them. */
+  Vec<i32> splits;
+  Vec<Leg> legs;
+  /** This level's keys so far. */
+  Vec<u8> keys;
+  bool newBest;
+  /** The best full run's level times when this run started: what it is compared with, all the way. */
+  i32[] against;
+}
+
+/** A run watched: the run, each level's time, where it is — which level and which key — and how. */
+struct Watch {
+  Run run;
+  i32[] times;
+  i32 leg;
+  i32 at;
+  i32 steps;
+  bool paused;
+  /** How fast, as a power of two: 0 is as played, -2 a quarter, 2 four times. */
+  i32 speed;
+  f64 owed;
+  bool imported;
 }
 
 /** What `bump` is until the window is drawn. */
 void quiet() { }
 
 // ── Time kept ───────────────────────────────────────────────────────────────
-
-/** The keys of a step as a byte, for the ghost: left 1, right 2, jump held 4, jump pressed 8. */
-export u8 keyByte(Keys k) {
-  return ((k.left ? 1 : 0) | (k.right ? 2 : 0) | (k.jump ? 4 : 0) | (k.jumped ? 8 : 0)) as@ u8;
-}
-
-export Keys keysOf(u8 b) { return Keys((b & (1 as u8)) != (0 as u8), (b & (2 as u8)) != (0 as u8), (b & (4 as u8)) != (0 as u8), (b & (8 as u8)) != (0 as u8)); }
 
 /**
  * **A level's par**, in steps: the way across it at a run — floor after floor, and each climb between, for a tower —
@@ -253,7 +309,8 @@ void silence(Pip g) {
  */
 f64 loudness(Pip g, i32 l) {
   if (g.muted) { return 0.0; }
-  f64 duck = g.mode == PAUSED ? 0.35 : (g.mode == PLAYING && g.world.hero.dying > 0 ? 0.45 : 1.0);
+  bool held = g.mode == PAUSED || (g.mode == OPTIONS && g.sp.back == PAUSED);
+  f64 duck = held ? 0.35 : (g.mode == PLAYING && g.world.hero.dying > 0 ? 0.45 : 1.0);
   f64 full = 0.8 * duck;
   if (g.band.style == "title" || g.band.style == "finale") { return l == RACE ? 0.0 : full; }
   World w = g.world;
@@ -294,7 +351,9 @@ void begin(Pip g, i32 index) {
   g.world = load(g.levels[index]);
   g.recording = Vec.create();
   g.shadowAt = 0;
-  g.shadow = g.bestRuns[index].len() > 0 ? load(g.levels[index]) : null;
+  g.ghostRun = ghostFor(g, index);
+  g.shadow = g.ghostRun.len() > 0 ? load(g.levels[index]) : null;
+  g.sp.recent.clear();
   g.mode = PLAYING;
   g.newBest = false;
   snap(g.screen, g.world);
@@ -305,10 +364,6 @@ void begin(Pip g, i32 index) {
 }
 
 /**
- * On the title, level `i` chosen — any reached so far — and shown behind the title, as it starts. The list is three
- * columns filled a row at a time: ← and → step by one, ↑ and ↓ by a row.
- */
-/**
  * The level the arrow `k` moves to from `at`, in the title's and the pause card's list — three to a row, so up and
  * down move by three — and never past the furthest level reached; `at` for any other key.
  */
@@ -317,6 +372,7 @@ export i32 movedTo(i32 at, i32 reached, string k) {
   return to < 0 ? 0 : (to > reached ? reached : to);
 }
 
+/** On the title, level `i` chosen — any reached so far — and shown behind the title, as it starts. */
 void choose(Pip g, i32 i) {
   i32 n = i < 0 ? 0 : (i > g.reached ? g.reached : i);
   if (n == g.index) { return; }
@@ -375,15 +431,24 @@ void readKeys(Pip g) {
 void down(Pip g, ElementEvent e) {
   string k = e.value;
   g.arrive.add(g.page.now() - e.at);
+  if (g.mode == OPTIONS) { optionsKey(g, k); return; }
+  if (g.mode == REPLAYS) { replaysKey(g, k); return; }
+  if (g.mode == WATCHING) { watchKey(g, k); return; }
+  if (g.mode == FULL_DONE) {
+    if (k == "Enter" || k == " " || k == "Escape") { toTitle(g); }
+    if (k == "x" || k == "X") { exportFull(g); }
+    return;
+  }
+  if (g.mode == TITLE && (k == "f" || k == "F")) { startFull(g); return; }
+  if (g.mode == TITLE && (k == "v" || k == "V")) { openReplays(g); return; }
+  if ((g.mode == TITLE || g.mode == PAUSED) && (k == "o" || k == "O")) { openOptions(g); return; }
+  if (g.mode == PAUSED && (k == "f" || k == "F")) { startFull(g); return; }
+  if (g.mode == PAUSED && (k == "t" || k == "T")) { toTitle(g); return; }
   if (g.mode == TITLE || g.mode == CLEARED || g.mode == DONE) {
     if (k == "Enter" || k == " ") {
       if (g.mode == TITLE) { begin(g, g.index); }
       else if (g.mode == CLEARED) { begin(g, g.index + 1); }
-      else {
-        g.mode = TITLE;
-        play(g, "title");
-        g.bump();
-      }
+      else { toTitle(g); }
     } else if (g.mode == TITLE && isArrow(k)) {
       choose(g, movedTo(g.index, g.reached, k));
     } else if (g.mode == TITLE && isKey(k, "1 2 3 4 5 6 7 8 9")) {
@@ -403,7 +468,7 @@ void down(Pip g, ElementEvent e) {
   }
   if (g.mode == PAUSED) {
     if (k == "Enter" || k == " ") {
-      if (g.pick == g.index) { goOn(g); } else { begin(g, g.pick); }
+      if (g.pick == g.index) { goOn(g); } else { leaveFor(g, g.pick); }
       return;
     }
     if (isArrow(k)) {
@@ -413,13 +478,13 @@ void down(Pip g, ElementEvent e) {
     }
     if (isKey(k, "1 2 3 4 5 6 7 8 9")) {
       i32 n = wholeOf(k) - 1;
-      if (n <= g.reached) { begin(g, n); }
+      if (n <= g.reached) { leaveFor(g, n); }
       return;
     }
   }
   if (k == "m" || k == "M") {
-    g.muted = !g.muted;
-    g.bump();
+    turn(g.sp.options[SOUND], 1);
+    applyOptions(g);
     return;
   }
   if (k == "g" || k == "G") {
@@ -428,11 +493,14 @@ void down(Pip g, ElementEvent e) {
     return;
   }
   if (k == "l" || k == "L") {
-    g.latency = !g.latency;
-    g.bump();
+    turn(g.sp.options[LATENCY], 1);
+    applyOptions(g);
     return;
   }
   if (k == "r" || k == "R") {
+    // In a full run the clock goes on: the restart is in the run's keys, and the time spent stays spent.
+    Full? full = g.sp.full;
+    if (full is not null) { full!.keys.push(RESTART); }
     begin(g, g.index);
     return;
   }
@@ -476,11 +544,16 @@ void frame(Pip g, f64 dt, f64 now) {
       f64 key = g.pressedAt;
       g.pressedAt = 0.0 - 1.0;
       bool dying = w.hero.dying > 0;
-      g.recording.push(keyByte(g.keys));
+      u8 byte = keyByte(g.keys);
+      g.recording.push(byte);
+      g.sp.recent.push(byte);
+      if (g.sp.recent.len() > 60) { g.sp.recent.remove(0); }
+      Full? full = g.sp.full;
+      if (full is not null) { full!.keys.push(byte); }
       step(w, g.keys);
       World? ghost = g.shadow;
       if (ghost is not null) {
-        u8[] run = g.bestRuns[g.index];
+        u8[] run = g.ghostRun;
         if (g.shadowAt < run.len()) {
           step(ghost!, keysOf(run[g.shadowAt]));
           g.shadowAt++;
@@ -507,19 +580,25 @@ void frame(Pip g, f64 dt, f64 now) {
         // The level's song stops for the fanfare; after the last level, the finale.
         silence(g);
         if (!g.muted && g.band.fanfare is not null) { g.band.fanfare!.play(0.8); }
-        if (g.index + 1 >= g.levels.len()) {
+        if (g.index + 1 < g.levels.len() && g.reached < g.index + 1) { g.reached = g.index + 1; }
+        keepBest(g);
+        if (full is not null) {
+          levelDone(g, full!);
+        } else if (g.index + 1 >= g.levels.len()) {
           g.mode = DONE;
           play(g, "finale");
         }
-        else if (g.reached < g.index + 1) { g.reached = g.index + 1; }
-        keepBest(g);
         g.bump();
         break;
       }
     }
   }
+  if (g.mode == WATCHING) { watching(g, dt); }
   tuneUp(g);
-  drawWorld(g.screen, g.world, g.ghosts && g.mode != TITLE ? g.shadow : null, g.frame);
+  bool inLevel = g.mode == PLAYING || g.mode == PAUSED || g.mode == CLEARED || g.mode == DONE
+              || (g.mode == OPTIONS && g.sp.back == PAUSED);
+  drawWorld(g.screen, g.world, g.ghosts && inLevel ? g.shadow : null, g.frame);
+  if (g.sp.options[INPUTS].chosen == 1 && (inLevel || g.mode == WATCHING)) { drawInputs(g.screen, g.sp.recent.toArray()); }
   if (g.canvas is not null) { g.canvas!.pixels(SCREEN_W, SCREEN_H, g.screen.px); }
   if (g.takenAt >= 0.0) {
     g.showing = g.takenAt;
@@ -544,6 +623,356 @@ async void playLoop(Pip g) {
   }
 }
 
+// ── Speedrunning ────────────────────────────────────────────────────────────
+
+/** The title again: any full run or raced run left, and the title's level and song. */
+void toTitle(Pip g) {
+  g.sp.full = null;
+  g.sp.race = null;
+  g.sp.watch = null;
+  g.mode = TITLE;
+  g.world = load(g.levels[g.index]);
+  snap(g.screen, g.world);
+  play(g, "title");
+  g.bump();
+}
+
+/** Paused, level `n` chosen: a full run under way is left, since it can only go on in order. */
+void leaveFor(Pip g, i32 n) {
+  g.sp.full = null;
+  begin(g, n);
+}
+
+/**
+ * **Whose ghost runs beside Pip on level `index`**: a run brought in to race, on its own level; in a full run, the
+ * best full run's run of the level — the attempt that reached the door — or the level's own best, as the options say;
+ * otherwise the level's own best, unless that is turned off.
+ */
+u8[] ghostFor(Pip g, i32 index) {
+  Leg? race = g.sp.race;
+  if (race is not null && race!.level == index) { return race!.keys; }
+  if (g.sp.full is not null) {
+    i32 c = g.sp.options[FULL_GHOST].chosen;
+    if (c == 0 && index < g.sp.bestFull.len()) { return lastAttempt(g.sp.bestFull[index].keys); }
+    return c <= 1 ? g.bestRuns[index] : u8[]();
+  }
+  return g.sp.options[GHOST].chosen == 0 ? g.bestRuns[index] : u8[]();
+}
+
+/** A full run from the first level, compared all the way with the best full run as it is now. */
+void startFull(Pip g) {
+  g.sp.race = null;
+  g.sp.full = Full(Vec.create(), Vec.create(), Vec.create(), false, g.sp.bestSplits);
+  begin(g, 0);
+}
+
+/** How long the full run has taken: every level done, and this one so far, restarts and all. */
+i32 fullTime(Full f) {
+  i32 t = 0;
+  for (i32 i = 0; i < f.splits.len(); i++) { t = t + f.splits.get(i); }
+  return t + stepsIn(f.keys.toArray());
+}
+
+/** A level of the full run reached its door: its time kept, and on to the next — or to the end of the run. */
+void levelDone(Pip g, Full f) {
+  u8[] keys = f.keys.toArray();
+  f.splits.push(stepsIn(keys));
+  f.legs.push(Leg(g.index, keys));
+  f.keys = Vec.create();
+  if (g.index + 1 >= g.levels.len()) {
+    fullDone(g, f);
+    return;
+  }
+  if (g.sp.options[BETWEEN].chosen == 0) { begin(g, g.index + 1); }
+}
+
+/** The last door: the run's time, kept as the best full run if it is one. */
+void fullDone(Pip g, Full f) {
+  g.mode = FULL_DONE;
+  i32[] splits = f.splits.toArray();
+  if (f.against.len() == 0 || total(splits) < total(f.against)) {
+    f.newBest = true;
+    g.sp.bestFull = f.legs.toArray();
+    g.sp.bestSplits = splits;
+    g.page.sys.files().writeFile(FULL, runBytes(Run(FULL_RUN, g.sp.bestFull)));
+  }
+  play(g, "finale");
+}
+
+/** A time as a file name can carry it: `12m34.5s`. */
+string fileClock(i32 steps) {
+  i32 tenths = steps * 10 / 60;
+  i32 secs = tenths / 10;
+  return "\{secs / 60}m\{secs % 60 < 10 ? "0" : ""}\{secs % 60}.\{tenths % 10}s";
+}
+
+/** `r` as a file: on the Desktop, from a window of the desktop's; downloaded, on a page of its own. */
+async void exportRun(Pip g, Run r, i32[] times) {
+  string name = r.kind == FULL_RUN ? "Pip full run \{fileClock(total(times))}.piprun"
+                                   : "Pip level \{r.legs[0].level + 1} \{fileClock(total(times))}.piprun";
+  u8[] bytes = runBytes(r);
+  Desktop? d = g.sp.desk;
+  if (d is null) {
+    g.page.download(name, bytes);
+    g.sp.note = "Downloaded \{name}";
+    g.bump();
+    return;
+  }
+  match (await d!.newFile(name)) {
+    Ok(path): {
+      match (await g.page.sys.files().writeFile(path, bytes)) {
+        Ok(v): { g.sp.note = "Saved on the Desktop as \{name}"; }
+        Err(why): { g.sp.note = "Not saved: \{why}"; }
+      }
+    }
+    Err(why): { g.sp.note = "Not saved: \{why}"; }
+  }
+  g.bump();
+}
+
+void exportFull(Pip g) {
+  Full? f = g.sp.full;
+  if (f is null) { return; }
+  exportRun(g, Run(FULL_RUN, f!.legs.toArray()), f!.splits.toArray());
+}
+
+// ── the Options card ──
+
+void openOptions(Pip g) {
+  g.sp.back = g.mode;
+  g.sp.row = 0;
+  g.mode = OPTIONS;
+  g.bump();
+}
+
+/** What the options say, done: the corners shown or not, the sound, and the options kept. */
+void applyOptions(Pip g) {
+  g.latency = g.sp.options[LATENCY].chosen == 0;
+  g.muted = g.sp.options[SOUND].chosen == 1;
+  g.page.sys.files().writeFile(OPTIONS_FILE, optionsText(g.sp.options).toBytes());
+  g.bump();
+}
+
+void optionsKey(Pip g, string k) {
+  i32 n = g.sp.options.len();
+  if (k == "Escape" || k == "o" || k == "O" || k == "Backspace") {
+    g.mode = g.sp.back;
+    g.bump();
+    return;
+  }
+  if (k == "ArrowUp") { g.sp.row = (g.sp.row + n - 1) % n; }
+  if (k == "ArrowDown") { g.sp.row = (g.sp.row + 1) % n; }
+  if (k == "ArrowLeft") { turn(g.sp.options[g.sp.row], 0 - 1); applyOptions(g); }
+  if (k == "ArrowRight" || k == "Enter" || k == " ") { turn(g.sp.options[g.sp.row], 1); applyOptions(g); }
+  g.bump();
+}
+
+// ── the Replays card, and watching ──
+
+/** What the Replays card lists: "full", a level's number as "L3" — the level's best — and "import". */
+string[] replayRows(Pip g) {
+  Vec<string> out = Vec.create();
+  if (g.sp.bestFull.len() > 0) { out.push("full"); }
+  for (i32 i = 0; i < g.levels.len(); i++) { if (g.bestRuns[i].len() > 0) { out.push("L\{i}"); } }
+  if (g.sp.desk is not null) { out.push("import"); }
+  return out.toArray();
+}
+
+/** The run a Replays row stands for, and each of its levels' times. */
+Run runAt(Pip g, string row) {
+  if (row == "full") { return Run(FULL_RUN, g.sp.bestFull); }
+  i32 i = wholeOf(row);
+  return Run(LEVEL_RUN, [Leg(i, g.bestRuns[i])]);
+}
+
+void openReplays(Pip g) {
+  g.sp.back = TITLE;
+  g.sp.row = 0;
+  g.sp.note = "";
+  g.mode = REPLAYS;
+  g.bump();
+}
+
+void replaysKey(Pip g, string k) {
+  string[] rows = replayRows(g);
+  if (k == "Escape" || k == "v" || k == "V" || k == "Backspace") {
+    g.mode = TITLE;
+    g.bump();
+    return;
+  }
+  if (rows.len() == 0) { return; }
+  if (g.sp.row >= rows.len()) { g.sp.row = rows.len() - 1; }
+  if (k == "ArrowUp") { g.sp.row = (g.sp.row + rows.len() - 1) % rows.len(); }
+  if (k == "ArrowDown") { g.sp.row = (g.sp.row + 1) % rows.len(); }
+  string row = rows[g.sp.row];
+  if (k == "Enter" || k == " ") { replayRow(g, row); return; }
+  if ((k == "x" || k == "X") && row != "import") {
+    Run r = runAt(g, row);
+    Checked c = checkRun(r, g.levels);
+    if (c.ok) { exportRun(g, r, c.times); }
+  }
+  g.bump();
+}
+
+void replayRow(Pip g, string row) {
+  if (row == "import") { importRun(g); return; }
+  watchRun(g, runAt(g, row), false);
+}
+
+/** A run chosen from the disk, through the desktop's picker: watched, if playing it again shows it is one. */
+async void importRun(Pip g) {
+  Desktop? d = g.sp.desk;
+  if (d is null) { return; }
+  match (await d!.pick("a Pip run to watch")) {
+    Ok(path): {
+      match (await g.page.sys.files().readFile(path)) {
+        Ok(bytes): {
+          Run? r = runOf(bytes);
+          if (r is null) { g.sp.note = "That is not a Pip run"; } else { watchRun(g, r!, true); }
+        }
+        Err(why): { g.sp.note = "Could not read it: \{why}"; }
+      }
+    }
+    Err(why): { g.sp.note = why; }
+  }
+  g.bump();
+}
+
+/** `r` watched from its start — once playing it again from its keys has shown it reaches every door it should. */
+void watchRun(Pip g, Run r, bool imported) {
+  Checked c = checkRun(r, g.levels);
+  if (!c.ok) {
+    g.sp.note = "That run does not stand: \{c.why}";
+    g.bump();
+    return;
+  }
+  g.sp.note = "";
+  g.sp.watch = Watch(r, c.times, 0, 0, 0, false, 0, 0.0, imported);
+  startLeg(g, g.sp.watch!);
+  g.mode = WATCHING;
+  g.bump();
+}
+
+/** The level the watched run is on, from its start. */
+void startLeg(Pip g, Watch v) {
+  v.at = 0;
+  v.steps = 0;
+  g.world = load(g.levels[v.run.legs[v.leg].level]);
+  g.sp.recent.clear();
+  snap(g.screen, g.world);
+  play(g, styleOf(g.world));
+}
+
+/** One key of the watched run: a step, a level started again, or on to the next level. False at the very end. */
+bool watchStep(Pip g, Watch v, bool loud) {
+  Leg leg = v.run.legs[v.leg];
+  if (v.at >= leg.keys.len()) {
+    if (v.leg + 1 >= v.run.legs.len()) { return false; }
+    v.leg++;
+    startLeg(g, v);
+    return true;
+  }
+  u8 b = leg.keys[v.at];
+  v.at++;
+  if (b == RESTART) {
+    g.world = load(g.levels[leg.level]);
+    snap(g.screen, g.world);
+    return true;
+  }
+  World w = g.world;
+  bool dying = w.hero.dying > 0;
+  step(w, keysOf(b));
+  v.steps++;
+  g.sp.recent.push(b);
+  if (g.sp.recent.len() > 60) { g.sp.recent.remove(0); }
+  if (dying && w.hero.dying == 0) { snap(g.screen, w); } else { follow(g.screen, w); }
+  for (i32 i = 0; i < w.cues.len() && loud; i++) {
+    i32 c = w.cues.get(i);
+    if (!g.muted && c < g.fx.len()) { g.fx[c].play(c == CUE_WIN || c == CUE_OPEN ? 0.9 : 0.75); }
+  }
+  return true;
+}
+
+/** The watched run `steps` steps into the level it is on: played again from the level's start, quietly. */
+void seek(Pip g, Watch v, i32 steps) {
+  Leg leg = v.run.legs[v.leg];
+  v.at = 0;
+  v.steps = 0;
+  g.world = load(g.levels[leg.level]);
+  g.sp.recent.clear();
+  while (v.steps < steps && v.at < leg.keys.len()) { watchStep(g, v, false); }
+  snap(g.screen, g.world);
+}
+
+/** The watched run moved on by the time that has passed, at its speed. */
+void watching(Pip g, f64 dt) {
+  Watch? v = g.sp.watch;
+  if (v is null || v!.paused) { return; }
+  // The literal is given its type: `(1 << n) as f64` compiles to a function the engine rejects (wac 84955c78c).
+  i32 one = 1;
+  f64 rate = v!.speed >= 0 ? ((one << v!.speed) as f64) : 1.0 / ((one << (0 - v!.speed)) as f64);
+  v!.owed = v!.owed + (dt > 250.0 ? STEP_MS : dt) * rate;
+  i32 n = 0;
+  while (v!.owed >= STEP_MS && n < 40) {
+    v!.owed = v!.owed - STEP_MS;
+    n++;
+    if (!watchStep(g, v!, rate <= 1.0)) {
+      v!.paused = true;
+      g.bump();
+      break;
+    }
+  }
+}
+
+void watchKey(Pip g, string k) {
+  Watch? maybe = g.sp.watch;
+  if (maybe is null) { return; }
+  Watch v = maybe!;
+  if (k == "Escape" || k == "Backspace" || k == "v" || k == "V") {
+    g.sp.watch = null;
+    g.mode = REPLAYS;
+    g.world = load(g.levels[g.index]);
+    snap(g.screen, g.world);
+    play(g, "title");
+  } else if (k == " " || k == "p" || k == "P" || k == "Enter") {
+    // At the very end, it starts again.
+    bool ended = v.leg + 1 >= v.run.legs.len() && v.at >= v.run.legs[v.leg].keys.len();
+    if (ended) {
+      v.leg = 0;
+      startLeg(g, v);
+      v.paused = false;
+    } else {
+      v.paused = !v.paused;
+    }
+    v.owed = 0.0;
+  } else if (k == "ArrowLeft" || k == "ArrowRight") {
+    i32 to = v.steps + (k == "ArrowLeft" ? 0 - 300 : 300);
+    seek(g, v, to < 0 ? 0 : to);
+  } else if (k == "ArrowUp" && v.speed < 3) {
+    v.speed++;
+  } else if (k == "ArrowDown" && v.speed > 0 - 2) {
+    v.speed--;
+  } else if (k == "." && v.paused) {
+    watchStep(g, v, false);
+  } else if (k == "," && v.paused) {
+    seek(g, v, v.steps > 0 ? v.steps - 1 : 0);
+  } else if (k == "x" || k == "X") {
+    exportRun(g, v.run, v.times);
+  } else if ((k == "r" || k == "R") && v.imported && v.run.kind == LEVEL_RUN) {
+    Leg leg = v.run.legs[0];
+    if (leg.level > g.reached) {
+      g.sp.note = "Reach level \{leg.level + 1} to race it";
+    } else {
+      g.sp.watch = null;
+      g.sp.full = null;
+      g.sp.race = leg;
+      begin(g, leg.level);
+      return;
+    }
+  }
+  g.bump();
+}
+
 // ── The window ──────────────────────────────────────────────────────────────
 
 Node Help(Ui ui) {
@@ -552,6 +981,7 @@ Node Help(Ui ui) {
     <span>Jump</span><span><b>Space</b>, <b>↑</b>, <b>Z</b> or <b>W</b> — hold for higher; against a wall, jump off it</span>
     <span>Pause</span><span><b>Enter</b>, <b>P</b> or <b>Esc</b> — and choose another level · <b>R</b> starts the level again</span>
     <span>Sound</span><span><b>M</b> · <b>L</b> shows or hides the latency · <b>G</b> your best run's ghost</span>
+    <span>Speedrun</span><span><b>F</b> all the levels in one run · <b>V</b> replays · <b>O</b> options</span>
   </div>;
 }
 
@@ -588,7 +1018,13 @@ Node overlay(Pip g) {
       <p>The lanterns of the valley have gone out. Light every one, then find the door.</p>
       <Help/>
       {levelList(g, g.index)}
+      {runsLine(g)}
       <p class="pgo">Press <b>Enter</b> to play {g.levels[g.index].name}{g.reached > 0 ? " — or choose another with the arrows" : ""}</p>
+      <div class="pbtns">
+        <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> Full run</button>
+        <button class="pbtn" onclick={(ElementEvent e) => { openReplays(g); }}><b>V</b> Replays</button>
+        <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
+      </div>
     </div></div>;
   }
   if (g.mode == PAUSED) {
@@ -599,7 +1035,12 @@ Node overlay(Pip g) {
       {levelList(g, g.pick)}
       {g.pick == g.index
         ? <p class="pgo">Press <b>Enter</b> or <b>P</b> to go on with {here}{g.reached > 0 ? " — or choose another level with the arrows" : ""}</p>
-        : <p class="pgo">Press <b>Enter</b> to play {g.levels[g.pick].name} · <b>P</b> goes on with {here}</p>}
+        : <p class="pgo">Press <b>Enter</b> to play {g.levels[g.pick].name}{g.sp.full is not null ? ", leaving the full run" : ""} · <b>P</b> goes on with {here}</p>}
+      <div class="pbtns">
+        <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> {g.sp.full is not null ? "Full run again" : "Full run"}</button>
+        <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
+        <button class="pbtn" onclick={(ElementEvent e) => { toTitle(g); }}><b>T</b> Title</button>
+      </div>
     </div></div>;
   }
   if (g.mode == CLEARED || g.mode == DONE) {
@@ -611,10 +1052,171 @@ Node overlay(Pip g) {
       <p class={g.newBest ? "pbest" : "pfaint"}>{g.newBest ? "A best time!" : "Best: \{clock(g.best[g.index])}"}</p>
       <p class="pmedal"><span class={"pm " + medalName(medal(w.steps, g.pars[g.index]))}/>
         {medalName(medal(w.steps, g.pars[g.index]))} — par \{clock(g.pars[g.index])}{g.newBest ? " · your ghost runs it next time" : ""}</p>
+      {g.sp.full is not null ? <p>Full run {clockOf(fullTime(g.sp.full!))} {deltaNode(g.sp.full!)}</p> : <span/>}
       <p class="pgo">Press <b>Enter</b> {g.mode == DONE ? "for the title" : "for level \{g.index + 2}"}</p>
     </div></div>;
   }
+  if (g.mode == OPTIONS) { return optionsCard(g); }
+  if (g.mode == REPLAYS) { return replaysCard(g); }
+  if (g.mode == FULL_DONE && g.sp.full is not null) { return fullCard(g, g.sp.full!); }
   return <span/>;
+}
+
+/** Ahead or behind the best full run, at the last level this run finished — or nothing, with nothing to compare. */
+Node deltaNode(Full f) {
+  i32 done = f.splits.len() - 1;
+  if (done < 0 || done >= f.against.len()) { return <span/>; }
+  i32 d = deltaAt(f.splits.toArray(), f.against, done);
+  return <span class={d <= 0 ? "pdelta ahead" : "pdelta behind"} title={"against your best full run, at the end of level \{done + 1}"}>{deltaOf(d)}</span>;
+}
+
+/**
+ * **The line along the top**: the level, its lanterns and its time — or, in a full run, the whole run's time first,
+ * and how far ahead or behind the best full run it was at the last level finished.
+ */
+Node hudOf(Pip g) {
+  if (g.mode == TITLE || g.mode == REPLAYS || (g.mode == OPTIONS && g.sp.back == TITLE)) { return <span/>; }
+  World w = g.world;
+  Watch? v = g.sp.watch;
+  if (g.mode == WATCHING && v is not null) {
+    Leg leg = v!.run.legs[v!.leg];
+    i32 before = 0;
+    for (i32 i = 0; i < v!.leg; i++) { before = before + v!.times[i]; }
+    i32 one = 1;
+    string speed = v!.speed == 0 ? "" : (v!.speed > 0 ? " · ×\{one << v!.speed}" : " · ×1/\{one << (0 - v!.speed)}");
+    string whole = v!.run.kind == FULL_RUN ? " · run \{clockOf(before + v!.steps)} / \{clockOf(total(v!.times))}" : "";
+    return <div class="phud">Replay · {g.levels[leg.level].name} · {clockOf(v!.steps)} / {clockOf(v!.times[v!.leg])}{whole}{speed}{v!.paused ? " · Paused" : ""}{g.sp.note != "" ? " · " + g.sp.note : ""}</div>;
+  }
+  string level = "\{g.levels[g.index].name} · Lanterns \{w.lit}/\{w.lanterns}" + (w.deaths > 0 ? " · Falls \{w.deaths}" : "") + (g.muted ? " · Muted" : "");
+  Full? f = g.sp.full;
+  if (f is null) {
+    Leg? race = g.sp.race;
+    return <div class="phud">{level} · {clock(w.steps)}{race is not null && race!.level == g.index ? " · racing a run brought in" : ""}</div>;
+  }
+  return <div class="phud"><span class="pfull">Full run {clockOf(fullTime(f!))}</span> {deltaNode(f!)} · {level}</div>;
+}
+
+/**
+ * **Splits**, in a full run, when the options ask: the last few levels finished — each with the run's time at its end,
+ * how that stood against the best full run, and a gold mark where the level was as fast as it has ever been — the level
+ * under way, and the best full run and the sum of the best of every level, which is what a run could be at best.
+ */
+Node splitsOf(Pip g) {
+  Full? maybe = g.sp.full;
+  if (maybe is null || g.sp.options[SPLITS].chosen == 0) { return <span/>; }
+  if (g.mode != PLAYING && g.mode != PAUSED && g.mode != CLEARED && !(g.mode == OPTIONS && g.sp.back == PAUSED)) { return <span/>; }
+  Full f = maybe!;
+  Vec<Node> rows = Vec.create();
+  i32[] splits = f.splits.toArray();
+  i32 at = 0;
+  for (i32 i = 0; i < splits.len(); i++) {
+    at = at + splits[i];
+    if (i < splits.len() - 4) { continue; }
+    i32 d = i < f.against.len() ? deltaAt(splits, f.against, i) : 0;
+    rows.push(<div class="psrow">
+      <span class="psname">{"\{i + 1} \{g.levels[i].name}"}{splits[i] <= g.best[i] ? <span class="pm gold" title="as fast as this level has been"/> : <span/>}</span>
+      <span class="pstime">{clockOf(at)}</span>
+      {i < f.against.len() ? <span class={d <= 0 ? "pdelta ahead" : "pdelta behind"}>{deltaOf(d)}</span> : <span class="pdelta"/>}
+    </div>);
+  }
+  i32 n = splits.len();
+  if (n < g.levels.len()) {
+    i32 target = 0;
+    for (i32 i = 0; i <= n && i < f.against.len(); i++) { target = target + f.against[i]; }
+    rows.push(<div class="psrow now">
+      <span class="psname">{"\{n + 1} \{g.levels[n].name}"}</span>
+      <span class="pstime">{clockOf(fullTime(f))}</span>
+      <span class="pdelta">{n < f.against.len() ? clockOf(target) : ""}</span>
+    </div>);
+  }
+  i32 sob = sumOfBest(g.best);
+  return <div class="psplits">
+    {rows.toArray()}
+    <div class="psfoot">
+      <span>{f.against.len() > 0 ? "Best \{clockOf(total(f.against))}" : "No full run yet"}</span>
+      <span>{sob > 0 ? "Sum of best \{clockOf(sob)}" : "No sum of best yet"}</span>
+    </div>
+  </div>;
+}
+
+/** On the title: the best full run, and the sum of the best of every level, once there are any. */
+Node runsLine(Pip g) {
+  i32 sob = sumOfBest(g.best);
+  if (g.sp.bestSplits.len() == 0 && sob == 0) { return <span/>; }
+  string full = g.sp.bestSplits.len() > 0 ? "Best full run \{clockOf(total(g.sp.bestSplits))}" : "";
+  string sum = sob > 0 ? "Sum of best \{clockOf(sob)}" : "";
+  return <p class="pfaint">{full}{full != "" && sum != "" ? " · " : ""}{sum}</p>;
+}
+
+Node optionsCard(Pip g) {
+  Vec<Node> rows = Vec.create();
+  for (i32 i = 0; i < g.sp.options.len(); i++) {
+    Option o = g.sp.options[i];
+    Vec<Node> cs = Vec.create();
+    for (i32 c = 0; c < o.choices.len(); c++) {
+      i32 pickIt = c;
+      cs.push(<span class={c == o.chosen ? "pc on" : "pc"} onclick={(ElementEvent e) => { o.chosen = pickIt; applyOptions(g); }}>{o.choices[c]}</span>);
+    }
+    i32 row = i;
+    rows.push(<div class={i == g.sp.row ? "popt on" : "popt"} onclick={(ElementEvent e) => { g.sp.row = row; g.bump(); }}>
+      <span class="potitle">{o.title}</span><span class="pchoices">{cs.toArray()}</span></div>);
+  }
+  return <div class="pover"><div class="pcard">
+    <h1>Options</h1>
+    <div class="popts">{rows.toArray()}</div>
+    <p class="pfaint">A ghost chosen here runs from the next start of a level.</p>
+    <p class="pgo"><b>↑</b> <b>↓</b> choose · <b>←</b> <b>→</b> change · <b>Esc</b> back</p>
+  </div></div>;
+}
+
+Node replaysCard(Pip g) {
+  string[] ids = replayRows(g);
+  if (g.sp.row >= ids.len()) { g.sp.row = ids.len() > 0 ? ids.len() - 1 : 0; }
+  Vec<Node> rows = Vec.create();
+  for (i32 i = 0; i < ids.len(); i++) {
+    string id = ids[i];
+    string name = id == "full" ? "Best full run" : (id == "import" ? "A run from a file…" : "\{wholeOf(id) + 1} \{g.levels[wholeOf(id)].name}");
+    string time = id == "full" ? clockOf(total(g.sp.bestSplits)) : (id == "import" ? "" : clockOf(g.best[wholeOf(id)]));
+    i32 row = i;
+    rows.push(<div class={i == g.sp.row ? "plevel on" : "plevel"} onclick={(ElementEvent e) => { g.sp.row = row; replayRow(g, id); }}>
+      {name}<span>{time}</span></div>);
+  }
+  return <div class="pover"><div class="pcard">
+    <h1>Replays</h1>
+    {ids.len() == 0 ? <p>Your best runs are kept as you play: finish a level, and its best run is here to watch.</p>
+                    : <div class="preplays">{rows.toArray()}</div>}
+    {g.sp.note != "" ? <p class="pnote">{g.sp.note}</p> : <span/>}
+    <p class="pgo"><b>Enter</b> watches · <b>X</b> saves it as a file · <b>Esc</b> back</p>
+    <p class="pfaint">Watching: <b>Space</b> pauses · <b>←</b> <b>→</b> five seconds · <b>↑</b> <b>↓</b> speed · <b>,</b> <b>.</b> a step, paused · <b>R</b> races a run brought in</p>
+  </div></div>;
+}
+
+Node fullCard(Pip g, Full f) {
+  i32[] splits = f.splits.toArray();
+  i32 t = total(splits);
+  bool had = f.against.len() > 0;
+  Vec<Node> rows = Vec.create();
+  i32 at = 0;
+  for (i32 i = 0; i < splits.len(); i++) {
+    at = at + splits[i];
+    i32 d = had ? deltaAt(splits, f.against, i) : 0;
+    rows.push(<div class="psrow">
+      <span class="psname">{"\{i + 1} \{g.levels[i].name}"}{splits[i] <= g.best[i] ? <span class="pm gold"/> : <span/>}</span>
+      <span class="pstime">{clockOf(splits[i])}</span><span class="pstime">{clockOf(at)}</span>
+      {had ? <span class={d <= 0 ? "pdelta ahead" : "pdelta behind"}>{deltaOf(d)}</span> : <span class="pdelta"/>}
+    </div>);
+  }
+  string verdict = f.newBest ? (had ? "A best full run! \{deltaOf(t - total(f.against))}" : "Your first full run — the ghost to race from now on")
+                             : "Best \{clockOf(total(f.against))} · this run \{deltaOf(t - total(f.against))}";
+  return <div class="pover"><div class="pcard">
+    <h1>Every lantern, in one run</h1>
+    <p>Full run in {clockOf(t)}</p>
+    <p class={f.newBest ? "pbest" : "pfaint"}>{verdict}</p>
+    <p class="pfaint">Sum of best {clockOf(sumOfBest(g.best))}</p>
+    <div class="pfullsplits">{rows.toArray()}</div>
+    {g.sp.note != "" ? <p class="pnote">{g.sp.note}</p> : <span/>}
+    <p class="pgo">Press <b>Enter</b> for the title · <b>X</b> saves the run as a file</p>
+  </div></div>;
 }
 
 Node Game(Ui ui, Pip g) {
@@ -628,20 +1230,21 @@ Node Game(Ui ui, Pip g) {
     if (g.stage is not null) { g.stage!.focus(); }
     return () => { };
   });
-  World w = g.world;
-  string hud = g.mode == TITLE ? "" : "\{g.levels[g.index].name} · Lanterns \{w.lit}/\{w.lanterns} · \{clock(w.steps)}" + (w.deaths > 0 ? " · Falls \{w.deaths}" : "") + (g.muted ? " · Muted" : "");
   return <div class="pip" tabindex="0" ref={stage}
-              prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape a d w s z x k p m l r g 1 2 3 4 5 6 7 8 9"
+              prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape Backspace a d w s z x k p m l r g f v o t . , 1 2 3 4 5 6 7 8 9"
               onkeydown={(ElementEvent e) => { down(g, e); }}
               onkeyup={(ElementEvent e) => { up(g, e); }}
               onblur={(ElementEvent e) => {
                 g.held.clear();
                 readKeys(g);
                 if (g.mode == PLAYING) { pause(g); }
+                Watch? v = g.sp.watch;
+                if (g.mode == WATCHING && v is not null) { v!.paused = true; g.bump(); }
               }}
               onpointerdown={(ElementEvent e) => { if (g.stage is not null) { g.stage!.focus(); } }}>
     <canvas class="pscreen" ref={cv} width="320" height="180"/>
-    <div class="phud">{hud}</div>
+    {hudOf(g)}
+    {splitsOf(g)}
     {g.latency
       ? <div class="plat">
           <div><span>key → program</span><b>{g.arrive.shown()}</b></div>
@@ -673,9 +1276,30 @@ export async i32 main(Page page) {
     auto run = await page.sys.files().readFile("ghost-\{i + 1}");
     if (run.isOk() && best[i] > 0) { runs[i] = run.ok()!; }
   }
+  // The options, and the best full run — kept only if playing it again shows it is one.
+  Option[] options = defaultOptions();
+  auto chosen = await page.sys.files().readFile(OPTIONS_FILE);
+  if (chosen.isOk()) { readOptions(string.fromBytes(chosen.ok()!), options); }
+  Speed sp = Speed(options, TITLE, 0, null, Leg[](), i32[](), Vec.create(), null, null, null, "");
+  auto full = await page.sys.files().readFile(FULL);
+  if (full.isOk()) {
+    Run? r = runOf(full.ok()!);
+    if (r is not null && r!.kind == FULL_RUN) {
+      Checked c = checkRun(r!, levels);
+      if (c.ok) {
+        sp.bestFull = r!.legs;
+        sp.bestSplits = c.times;
+      }
+    }
+  }
+  match (await Desktop.of(page.sys)) {
+    Ok(d): { sp.desk = d; }
+    Err(why): { }
+  }
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
-              0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, true, false, fx, Band.create(), best,
-              reached, false, pars, runs, Vec.create(), null, 0, true, 0, null, null, quiet, 0);
+              0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, options[LATENCY].chosen == 0,
+              options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
+              null, null, quiet, 0, u8[](), sp);
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

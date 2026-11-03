@@ -171,6 +171,87 @@ const WATCH = `
     assert.match(await hud.textContent(), /^First Light · Lanterns 0\//);
     ok('and 1, paused, plays the first');
 
+    // ── Speedrunning, all opt-in ──
+    const pip = p.locator('.win', { has: p.locator('.pip') });
+    const screenAt = (x, y) => p.locator('canvas.pscreen').evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
+    // The options: keys held shown, and splits — off until chosen, and the choice kept.
+    await p.keyboard.press('Escape');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    await p.keyboard.press('o');
+    await p.locator('.pcard h1', { hasText: 'Options' }).waitFor();
+    assert.equal(await p.locator('.popt', { hasText: 'Keys held' }).locator('.pc.on').textContent(), 'Off', 'opt-in');
+    await p.locator('.popt', { hasText: 'Keys held' }).locator('.pc', { hasText: 'On' }).click();
+    await p.locator('.popt', { hasText: 'Splits' }).locator('.pc', { hasText: 'On' }).click();
+    await p.locator('.popt', { hasText: 'Splits' }).locator('.pc.on', { hasText: 'On' }).waitFor();
+    await p.keyboard.press('Escape');
+    await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    ok('the Options card turns on the keys held and the splits');
+
+    // A full run: the whole run's time at the top, the splits beside it, and a restart that keeps the time spent.
+    await p.keyboard.press('f');
+    await p.locator('.pcard').waitFor({ state: 'detached' });
+    await p.waitForFunction(() => true);
+    assert.match(await hud.textContent(), /^Full run 0:0\d\.\d .*First Light/, await hud.textContent());
+    assert.match(await p.locator('.psplits').textContent(), /1 First Light.*No full run yet.*sum of best/, await p.locator('.psplits').textContent());
+    await p.keyboard.down('ArrowRight');
+    await p.waitForFunction(() => true);
+    await p.waitForTimeout(300);
+    // Bottom left, the right key's light: lit while it is held.
+    assert.deepEqual(await screenAt(8, 163), [0x7f, 0xe0, 0x8a], 'the keys held, shown');
+    await p.waitForTimeout(900);
+    await p.keyboard.up('ArrowRight');
+    await p.waitForTimeout(200);
+    const spent = (await hud.textContent()).match(/^Full run (\S+)/)[1];
+    await p.keyboard.press('r');
+    await p.waitForTimeout(300);
+    const after = (await hud.textContent()).match(/^Full run (\S+)/)[1];
+    assert.ok(after >= spent && after !== '0:00.0', `a restart keeps the run's time: ${spent} then ${after}`);
+    if (shots) await p.screenshot({ path: path.join(shots, 'pip-full.png') });
+    ok(`a full run: its time along the top (${after} after a restart), its splits beside, the keys held below`);
+
+    // A run brought in: added to the Desktop, chosen from the Replays card through the desktop's picker, and watched.
+    await p.keyboard.press('Escape');
+    await p.keyboard.press('t');
+    await card.waitFor();
+    await p.locator('.tblaunch').click();
+    await p.locator('.lq').fill('desktop files');
+    await p.keyboard.press('Enter');
+    const files = p.locator('.win.focus .files');
+    await files.waitFor();
+    await files.locator('input[type=file]').setInputFiles(path.join(__dirname, 'first-light.piprun'));
+    await p.locator('.toast', { hasText: 'Added 1 file' }).waitFor({ timeout: 10000 });
+    await pip.locator('.tbar').click();
+    await pip.locator('.pip').focus();
+    await p.keyboard.press('v');
+    await p.locator('.pcard h1', { hasText: 'Replays' }).waitFor();
+    await p.locator('.pcard .plevel', { hasText: 'A run from a file' }).click();
+    await p.locator('.pick .prow', { hasText: 'first-light.piprun' }).click();
+    await p.locator('.pick .btn.primary').click();
+    await p.locator('.phud', { hasText: 'Replay · First Light' }).waitFor({ timeout: 10000 });
+    await p.waitForTimeout(1200);
+    assert.match(await hud.textContent(), /^Replay · First Light · 0:01\.\d \/ 0:28\.0/, await hud.textContent());
+    ok('a run brought in is checked, and watched: ' + await hud.textContent());
+    await pip.locator('.pip').focus();
+    await p.keyboard.press('ArrowUp');
+    await p.keyboard.press(' ');
+    await p.locator('.phud', { hasText: '×2 · Paused' }).waitFor();
+    const held = await hud.textContent();
+    await p.keyboard.press('ArrowRight');
+    await p.waitForFunction(() => true);
+    await p.waitForTimeout(200);
+    const seeked = await hud.textContent();
+    assert.notEqual(seeked, held, 'five seconds on');
+    assert.match(seeked, /· 0:0[6-9]\.\d \/ 0:28\.0/, seeked);
+    if (shots) await p.screenshot({ path: path.join(shots, 'pip-replay.png') });
+    ok('twice as fast, paused, and five seconds on: ' + seeked);
+    // Saved again as a file — on the Desktop — and raced.
+    await p.keyboard.press('x');
+    await p.locator('.phud', { hasText: 'Saved on the Desktop as Pip level 1 0m28.0s.piprun' }).waitFor({ timeout: 10000 });
+    await p.locator('.dicon', { hasText: 'Pip level 1 0m28.0s.piprun' }).waitFor({ timeout: 10000 });
+    await p.keyboard.press('r');
+    await p.locator('.phud', { hasText: 'racing a run brought in' }).waitFor();
+    ok('saved on the Desktop as a file, and raced as the ghost');
+
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');
     console.log('Pip behaved');

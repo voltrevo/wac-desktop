@@ -1,0 +1,76 @@
+// Pip's options: what the Options card sets, kept in the program's own folder as `options`, a line each.
+//
+// **Every speedrunning aid is opt-in**: the game as first played shows none of them. An option is a row of the card,
+// with its choices; the card steps through them, and what is chosen is written there and then.
+
+/** One row of the Options card: what it is called, its choices, and the one chosen. */
+export struct Option {
+  string key;
+  string title;
+  string[] choices;
+  i32 chosen;
+}
+
+/** The ghost on a single level: off, or your best run of it. */
+export static i32 GHOST = 0;
+/** The ghost in a full run: your best full run's run of the level, your best run of the level, or none. */
+export static i32 FULL_GHOST = 1;
+/** Which keys are held, step by step, in a corner. */
+export static i32 INPUTS = 2;
+/** In a full run: the levels done, each against your best full run, and the sum of your bests. */
+export static i32 SPLITS = 3;
+/** In a full run, between levels: straight on, or the card that says how it went. */
+export static i32 BETWEEN = 4;
+/** How long a key takes to show (`L`). */
+export static i32 LATENCY = 5;
+/** All sound (`M`). */
+export static i32 SOUND = 6;
+
+export Option[] defaultOptions() {
+  return [
+    Option("ghost", "Ghost, on a level", ["Your best run", "Off"], 0),
+    Option("full-ghost", "Ghost, in a full run", ["Your best full run", "Your best of each level", "Off"], 0),
+    Option("inputs", "Keys held, shown", ["Off", "On"], 0),
+    Option("splits", "Splits, in a full run", ["Off", "On"], 0),
+    Option("between", "Between levels, in a full run", ["Straight on", "Show the card"], 0),
+    Option("latency", "How long a key takes", ["On", "Off"], 0),
+    Option("sound", "Sound", ["On", "Off"], 0),
+  ];
+}
+
+/** `options` as the file keeps them: `key=choice`, a line each. */
+export string optionsText(Option[] options) {
+  string out = "";
+  for (i32 i = 0; i < options.len(); i++) { out = out + options[i].key + "=\{options[i].chosen}\n"; }
+  return out;
+}
+
+/** What `optionsText` wrote, onto `options`: a key it does not know, or a choice out of range, is left as it was. */
+export void readOptions(string text, Option[] options) {
+  i32 start = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    string line = text.slice(start, i);
+    start = i + 1;
+    i32 eq = line.indexOf("=");
+    if (eq < 0) { continue; }
+    string key = line.slice(0, eq);
+    u8[] v = line.slice(eq + 1, line.len()).toBytes();
+    if (v.len() == 0 || v.len() > 2) { continue; }
+    i32 n = 0;
+    bool digits = true;
+    for (i32 k = 0; k < v.len(); k++) {
+      if (v[k] < '0' || v[k] > '9') { digits = false; } else { n = n * 10 + (v[k] - '0') as i32; }
+    }
+    if (!digits) { continue; }
+    for (i32 k = 0; k < options.len(); k++) {
+      if (options[k].key == key && n < options[k].choices.len()) { options[k].chosen = n; }
+    }
+  }
+}
+
+/** The next choice of row `o`, or the one before: round, either way. */
+export void turn(Option o, i32 by) {
+  i32 n = o.choices.len();
+  o.chosen = ((o.chosen + by) % n + n) % n;
+}

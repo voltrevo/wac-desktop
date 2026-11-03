@@ -121,7 +121,15 @@ shares, so their pages can see each other's files.
   run sixty steps a second whatever the screen's rate, and nothing in them is random, so a run is its keys: the best
   run of each level comes back as a **ghost** to race (`G` hides it), and each level has a par for **gold, silver and
   bronze**. Enter, P or Esc pauses, and the pause card lists the levels reached: the arrows, a number or a click
-  plays another. Its music is its first tune, kept as it sounds — a plucked pulse lead over a triangle
+  plays another. **For speedrunning, all opt-in** (**O**, Options, from the title or the pause card, kept in its
+  folder): a **full run** (**F**) plays every level in order on one clock — R starts a level again and the time spent
+  stays spent — with the whole run's time along the top and how far ahead or behind the best full run it was at the
+  last level finished, splits beside it, and the sum of the best of every level; the ghost in a full run is the best
+  full run's, or each level's best, or none. **Keys held** can be shown, step by step, in the corner. **Replays**
+  (**V**) plays back any best run — paused, faster or slower, five seconds or a step at a time — saves one as a file
+  on the Desktop, and takes one from a file to watch and race. A run is its keys (`pip/runs.wac`): every run kept or
+  brought in is played again first, and only one that reaches the door, and stops there, is taken.
+  `tools/pip_route.wac` finds a route across a level by trying keys, for the tests. Its music is its first tune, kept as it sounds — a plucked pulse lead over a triangle
   bass and ticks of noise — played for each kind of place: slower for the title and the dark, up a tone and faster in
   the towers, in the major in the wind and for the finale (`pip/music.wac`, written down as a tracker would). Each
   song is layers started for one moment: lanterns gently bring in a second voice, high plucks and a quicker tick as

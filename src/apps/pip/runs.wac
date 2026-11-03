@@ -1,0 +1,200 @@
+// Runs: what a run is when it is kept, sent to someone, or checked — and the sums a full run is timed by.
+//
+// **A run is its keys.** The rules step sixty times a second and nothing in them is random (`world.wac`), so a byte a
+// step (`keyByte`: left 1, right 2, jump held 4, jump pressed 8) is the whole run: played again, it does exactly what
+// it did. A level started again within a run is the byte `RESTART`, which takes no step.
+//
+// **A run file** is `PIPRUN`, a version, its kind — one level, or the full game — then each level played: its number,
+// how many bytes, and the bytes. **Nothing is taken on trust**: a run is played again from its keys before it is kept
+// or watched (`checkRun`), and only one that reaches the door — and stops there — is a run.
+
+import { Vec } from "core";
+import { Keys, World, load, step } from "./world.wac";
+import { Level } from "./levels.wac";
+
+/** A level started again, within a run's keys: no step. */
+export static u8 RESTART = 255 as u8;
+export static i32 LEVEL_RUN = 0;
+export static i32 FULL_RUN = 1;
+
+/** The keys of a step as a byte: left 1, right 2, jump held 4, jump pressed 8. */
+export u8 keyByte(Keys k) {
+  return ((k.left ? 1 : 0) | (k.right ? 2 : 0) | (k.jump ? 4 : 0) | (k.jumped ? 8 : 0)) as@ u8;
+}
+
+export Keys keysOf(u8 b) { return Keys((b & (1 as u8)) != (0 as u8), (b & (2 as u8)) != (0 as u8), (b & (4 as u8)) != (0 as u8), (b & (8 as u8)) != (0 as u8)); }
+
+/** One level of a run: which, and its keys — `RESTART` among them where it was started again. */
+export struct Leg {
+  i32 level;
+  u8[] keys;
+}
+
+export struct Run {
+  i32 kind;
+  Leg[] legs;
+}
+
+/** Bytes `from` to `to` of `b`, copied. */
+u8[] part(u8[] b, i32 from, i32 to) {
+  u8[] out = u8[].filled(to - from, 0 as u8);
+  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
+  return out;
+}
+
+/** How many steps `keys` took: a byte each, but for the restarts. */
+export i32 stepsIn(u8[] keys) {
+  i32 n = 0;
+  for (i32 i = 0; i < keys.len(); i++) { if (keys[i] != RESTART) { n++; } }
+  return n;
+}
+
+/** The keys after the last restart: the attempt that reached the door — a ghost to race. */
+export u8[] lastAttempt(u8[] keys) {
+  i32 from = 0;
+  for (i32 i = 0; i < keys.len(); i++) { if (keys[i] == RESTART) { from = i + 1; } }
+  return part(keys, from, keys.len());
+}
+
+// ── files ───────────────────────────────────────────────────────────────────
+
+static string MAGIC = "PIPRUN";
+
+void putU32(Vec<u8> out, i32 v) { for (i32 s = 0; s < 32; s = s + 8) { out.push(((v >> s) & 255) as@ u8); } }
+
+i32 getU32(u8[] b, i32 at) {
+  return (b[at] as i32) | ((b[at + 1] as i32) << 8) | ((b[at + 2] as i32) << 16) | ((b[at + 3] as i32) << 24);
+}
+
+/** `r` as a run file. */
+export u8[] runBytes(Run r) {
+  Vec<u8> out = Vec.create();
+  u8[] m = MAGIC.toBytes();
+  for (i32 i = 0; i < m.len(); i++) { out.push(m[i]); }
+  out.push(1 as u8);
+  out.push(r.kind as@ u8);
+  out.push(r.legs.len() as@ u8);
+  for (i32 i = 0; i < r.legs.len(); i++) {
+    out.push(r.legs[i].level as@ u8);
+    putU32(out, r.legs[i].keys.len());
+    for (i32 k = 0; k < r.legs[i].keys.len(); k++) { out.push(r.legs[i].keys[k]); }
+  }
+  return out.toArray();
+}
+
+/** A run file read back; null for anything that is not one, or is cut short. */
+export Run? runOf(u8[] b) {
+  u8[] m = MAGIC.toBytes();
+  if (b.len() < m.len() + 3) { return null; }
+  for (i32 i = 0; i < m.len(); i++) { if (b[i] != m[i]) { return null; } }
+  if (b[m.len()] != (1 as u8)) { return null; }
+  i32 kind = b[m.len() + 1] as i32;
+  if (kind != LEVEL_RUN && kind != FULL_RUN) { return null; }
+  i32 n = b[m.len() + 2] as i32;
+  i32 at = m.len() + 3;
+  Leg[] legs = Leg[].filled(n, Leg(0, u8[]()));
+  for (i32 i = 0; i < n; i++) {
+    if (at + 5 > b.len()) { return null; }
+    i32 level = b[at] as i32;
+    i32 len = getU32(b, at + 1);
+    at = at + 5;
+    if (len < 0 || at + len > b.len()) { return null; }
+    legs[i] = Leg(level, part(b, at, at + len));
+    at = at + len;
+  }
+  if (at != b.len()) { return null; }
+  return Run(kind, legs);
+}
+
+// ── checking ────────────────────────────────────────────────────────────────
+
+/** What playing a run again found: whether it is one, why not, and each level's time in steps. */
+export struct Checked {
+  bool ok;
+  string why;
+  i32[] times;
+}
+
+/**
+ * `r` played again from its keys, level by level, on `levels`: a run if every level reaches the door on its last key
+ * — not before, and not never. A full run is every level in order, from the first.
+ */
+export Checked checkRun(Run r, Level[] levels) {
+  i32[] times = i32[].filled(r.legs.len(), 0);
+  if (r.legs.len() == 0) { return Checked(false, "it has no levels", times); }
+  if (r.kind == FULL_RUN && r.legs.len() != levels.len()) {
+    return Checked(false, "a full run is all \{levels.len()} levels, and this is \{r.legs.len()}", times);
+  }
+  if (r.kind == LEVEL_RUN && r.legs.len() != 1) { return Checked(false, "a level's run is one level", times); }
+  for (i32 i = 0; i < r.legs.len(); i++) {
+    Leg leg = r.legs[i];
+    if (leg.level < 0 || leg.level >= levels.len()) { return Checked(false, "there is no level \{leg.level + 1}", times); }
+    if (r.kind == FULL_RUN && leg.level != i) { return Checked(false, "a full run plays the levels in order", times); }
+    World w = load(levels[leg.level]);
+    for (i32 k = 0; k < leg.keys.len(); k++) {
+      u8 b = leg.keys[k];
+      if (b == RESTART) {
+        w = load(levels[leg.level]);
+        continue;
+      }
+      if (b > (15 as u8)) { return Checked(false, "level \{leg.level + 1} has a key no one can press", times); }
+      if (w.won) { return Checked(false, "level \{leg.level + 1} goes on past the door", times); }
+      step(w, keysOf(b));
+    }
+    if (!w.won) { return Checked(false, "level \{leg.level + 1} never reaches the door", times); }
+    times[i] = stepsIn(leg.keys);
+  }
+  return Checked(true, "", times);
+}
+
+// ── sums ────────────────────────────────────────────────────────────────────
+
+/** Each level's time added up: the time of the run, or of the levels so far. */
+export i32 total(i32[] times) {
+  i32 t = 0;
+  for (i32 i = 0; i < times.len(); i++) { t = t + times[i]; }
+  return t;
+}
+
+/** The best of every level, added up — what a full run could be at best — or 0 while a level has no best yet. */
+export i32 sumOfBest(i32[] best) {
+  i32 t = 0;
+  for (i32 i = 0; i < best.len(); i++) {
+    if (best[i] <= 0) { return 0; }
+    t = t + best[i];
+  }
+  return t;
+}
+
+/**
+ * **Ahead or behind**, in steps, at the last level finished: this run's time to the end of level `done` (0-based)
+ * against the best full run's to the end of the same level. Negative is ahead. 0 with nothing to compare.
+ */
+export i32 deltaAt(i32[] splits, i32[] bestSplits, i32 done) {
+  if (done < 0 || done >= splits.len() || done >= bestSplits.len()) { return 0; }
+  i32 mine = 0;
+  i32 theirs = 0;
+  for (i32 i = 0; i <= done; i++) {
+    mine = mine + splits[i];
+    theirs = theirs + bestSplits[i];
+  }
+  return mine - theirs;
+}
+
+/** Steps as a time: `1:02.4`, or `1:02:03.4` past an hour. */
+export string clockOf(i32 steps) {
+  i32 tenths = steps * 10 / 60;
+  i32 secs = tenths / 10;
+  i32 mins = secs / 60;
+  string mm = mins >= 60 ? "\{mins / 60}:\{mins % 60 < 10 ? "0" : ""}\{mins % 60}" : "\{mins}";
+  return mm + ":\{secs % 60 < 10 ? "0" : ""}\{secs % 60}.\{tenths % 10}";
+}
+
+/** A difference in steps as `+1.2` or `−0:03.4`: the sign always, minutes only when it needs them. */
+export string deltaOf(i32 steps) {
+  i32 a = steps < 0 ? 0 - steps : steps;
+  i32 tenths = a * 10 / 60;
+  i32 secs = tenths / 10;
+  string body = secs >= 60 ? "\{secs / 60}:\{secs % 60 < 10 ? "0" : ""}\{secs % 60}.\{tenths % 10}" : "\{secs}.\{tenths % 10}";
+  return (steps < 0 ? "−" : "+") + body;
+}
