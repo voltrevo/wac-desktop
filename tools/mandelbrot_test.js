@@ -7,20 +7,24 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const { deep, onCanvas } = require('./canvas.js');
 const root = path.join(__dirname, '..', 'dist');
 const shots = process.env.SHOTS || '';
 
-// The picture, read from the canvas wherever it is — inside the window's shadow root.
-const READ = `(() => {
-  const find = (n) => { for (const e of n.querySelectorAll('*')) { if (e.classList?.contains('mcanvas')) return e;
-    if (e.shadowRoot) { const f = find(e.shadowRoot); if (f) return f; } } return null; };
-  const c = find(document);
-  if (!c || !c.width) return null;
+// The picture, read from the canvas wherever it is — inside the window's shadow root, drawn in the program's worker
+// (`canvas.js`) — and how the page shows it: its transform, which is the page's.
+const CANVAS = deep('.mcanvas');
+const SUMMARY = `(c) => {
+  if (!c.width) return null;
   const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
   const at = (fx, fy) => { const i = (Math.floor(fy * (c.height - 1)) * c.width + Math.floor(fx * (c.width - 1))) * 4; return [d[i], d[i + 1], d[i + 2]]; };
   let sum = 0; for (let i = 0; i < d.length; i += 997) sum = (sum * 31 + d[i]) % 1000000007;
-  return { w: c.width, h: c.height, centre: at(0.5, 0.5), corner: at(0.02, 0.02), sum, transform: getComputedStyle(c).transform };
-})()`;
+  return { w: c.width, h: c.height, centre: at(0.5, 0.5), corner: at(0.02, 0.02), sum }; }`;
+const read = async (p) => {
+  const picture = await onCanvas(p, CANVAS, SUMMARY);
+  if (picture === null) return null;
+  return { ...picture, transform: await p.evaluate(`getComputedStyle((${CANVAS})()).transform`) };
+};
 
 (async () => {
   const server = http.createServer((req, res) => {
@@ -49,7 +53,7 @@ const READ = `(() => {
           if (e.shadowRoot) { const f = find(e.shadowRoot); if (f) return f; } } return null; };
         return /Drawn in/.test(find(document)?.textContent ?? '');
       }, null, { timeout: 60000 });
-      return await p.evaluate(READ);
+      return await read(p);
     };
     const launch = async () => {
       await p.locator('.tblaunch').click();
@@ -72,7 +76,7 @@ const READ = `(() => {
     await p.mouse.move(cx, cy);
     await p.mouse.down();
     await p.mouse.move(cx + 60, cy + 10, { steps: 6 });
-    const during = await p.evaluate(READ);
+    const during = await read(p);
     assert.match(during.transform, /matrix\(1, 0, 0, 1, 6\d/, `dragging moves the picture by its transform first: ${during.transform}`);
     await p.mouse.up();
     const dragged = await drawn();
@@ -91,13 +95,10 @@ const READ = `(() => {
     await stage.focus();
     const t0 = Date.now();
     await p.keyboard.press('c');
-    await p.waitForFunction((before) => {
-      const find = (n) => { for (const e of n.querySelectorAll('*')) { if (e.classList?.contains('mcanvas')) return e;
-        if (e.shadowRoot) { const f = find(e.shadowRoot); if (f) return f; } } return null; };
-      const c = find(document); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let sum = 0; for (let i = 0; i < d.length; i += 997) sum = (sum * 31 + d[i]) % 1000000007;
-      return sum !== before;
-    }, zoomed.sum, { timeout: 10000 });
+    for (let i = 0; (await onCanvas(p, CANVAS, SUMMARY))?.sum === zoomed.sum; i++) {
+      assert(i < 200, 'the picture changed');
+      await p.waitForTimeout(50);
+    }
     ok(`"c" colours it again in ${Date.now() - t0} ms, nothing worked out`);
     if (shots) await p.screenshot({ path: path.join(shots, 'mandelbrot-2.png') });
 

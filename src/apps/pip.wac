@@ -84,7 +84,8 @@ struct Pip {
   Meter arrive;
   Meter toScreen;
   Meter toSound;
-  f64 fps;
+  /** The time between pictures, averaged: the frames a second the latency corner shows. */
+  f64 drawMs;
   bool latency;
   bool muted;
   /** The effects by cue, the tune, and the tune playing. */
@@ -691,7 +692,9 @@ void frame(Pip g, f64 dt, f64 now) {
   if (ticks == 0) { return; }
   i32 before = g.frame;
   g.frame = g.frame + ticks;
-  if (g.drawnAt > 0.0 && now > g.drawnAt) { g.fps = g.fps * 0.9 + (1000.0 / (now - g.drawnAt)) * 0.1; }
+  // The time between pictures averaged, then turned into a rate: a rate averaged reads high when frames come unevenly
+  // — two a millisecond apart count as a thousand a second.
+  if (g.drawnAt > 0.0 && now > g.drawnAt) { g.drawMs = g.drawMs * 0.9 + (now - g.drawnAt) * 0.1; }
   g.drawnAt = now;
   if (g.mode == PLAYING) {
     World w = g.world;
@@ -1432,7 +1435,7 @@ Node Game(Ui ui, Pip g) {
           <div><span>key → program</span><b>{g.arrive.shown()}</b></div>
           <div><span>key → on screen, by</span><b>{g.toScreen.shown()}</b></div>
           <div><span>key → jump sound sent</span><b>{g.toSound.shown()}</b></div>
-          <div><span>frames</span><b>{"\{fixed(g.fps, 0)} a second"}</b></div>
+          <div><span>frames</span><b>{"\{fixed(1000.0 / g.drawMs, 0)} a second"}</b></div>
         </div>
       : <span/>}
     {touchControls(g)}
@@ -1480,7 +1483,7 @@ export async i32 main(Page page) {
     Err(why): { }
   }
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
-              0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, options[LATENCY].chosen == 0,
+              0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), STEP_MS, options[LATENCY].chosen == 0,
               options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
               null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1));
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);

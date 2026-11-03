@@ -148,7 +148,9 @@ shares, so their pages can see each other's files.
   they are lit, the open door adds an arpeggio, and a racing tick plays while Pip is ahead of its ghost. `wac task pip:music` renders the songs
   as WAV files. **It is
   made to feel latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to
-  send its jump's sound, measured from the browser's own stamp on the key. Best times and runs are kept in its folder.
+  send its jump's sound, measured from the browser's own stamp on the key, and the frames a second. Its picture is
+  drawn in its own worker (web's surfaces), not passed through the desktop's, so in a window it keeps the frame rate
+  it has on a page of its own. Best times and runs are kept in its folder.
   Its artwork is drawn directly on a 320 × 180 pixel grid: a 16 × 20 teal-hooded courier, moss-edged earth and weathered
   stone, brass lanterns, and moonlit fir trees at two parallax depths. `wac run --allow-read --allow-write
   tools/pip_art.wac /tmp/pip-art` renders five fixed-frame scenes as PPM images for art review.

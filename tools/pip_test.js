@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const { deep, onCanvas, PIXEL } = require('./canvas.js');
 const root = path.join(__dirname, '..', 'dist');
 const shots = process.env.SHOTS || '';
 
@@ -173,7 +174,7 @@ const WATCH = `
 
     // ── Speedrunning, all opt-in ──
     const pip = p.locator('.win', { has: p.locator('.pip') });
-    const screenAt = (x, y) => p.locator('canvas.pscreen').evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
+    const screenAt = async (x, y) => (await onCanvas(p, deep('canvas.pscreen'), PIXEL, [x, y])).slice(0, 3);
     // The options: keys held shown, and splits — off until chosen, and the choice kept.
     await p.keyboard.press('Escape');
     await p.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
@@ -279,7 +280,7 @@ const WATCH = `
 
     const cdp = await ph.context().newCDPSession(ph);
     const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y, id]) => ({ x, y, id })) });
-    const light = (x, y) => ph.locator('canvas.pscreen').evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
+    const light = async (x, y) => (await onCanvas(ph, deep('canvas.pscreen'), PIXEL, [x, y])).slice(0, 3);
     const RIGHT = [0x7f, 0xe0, 0x8a], JUMP = [0xff, 0xd4, 0x5c], OFF = [0x2a, 0x2e, 0x50];
     const lit = async (x, y, want, why) => {
       for (let i = 0; i < 60; i++) { if (JSON.stringify(await light(x, y)) === JSON.stringify(want)) return; await ph.waitForTimeout(50); }

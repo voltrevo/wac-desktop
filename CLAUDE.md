@@ -26,7 +26,7 @@ good deal of it has landed upstream.
 
 ## Building and testing here
 
-wac is pinned to one commit, `84955c78c`, `web` (wac-web) to `82a20ac` and the wac IDE (`ide`) to `0202f8d`, in `wac.json5` and `wac.lock`; the `wac` command
+wac is pinned to one commit, `84955c78c`, `web` (wac-web) to `8d8d6d6` and the wac IDE (`ide`) to `9777128`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:stackfall && wac task test:stackfall-audio && wac task test:mandelbrot && wac task test:paint && wac task test:pip && wac task test:settings && wac task test:phone && wac task test:drops
@@ -66,6 +66,9 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 - **`(1 << n) as f64` with an untyped literal compiles to invalid wasm** (wac `84955c78c`): the build says "rejected
   page.wasm", and the engine names the function. Give the literal a type (`i32 one = 1; one << n`). To find which
   function: `node -e "WebAssembly.compile(require('fs').readFileSync('dist/apps/<app>/page.wasm')).catch(e => console.log(e.message))"`.
+- **A local named like a parameter of the same function breaks the build** (wac `84955c78c`): locals are typed by
+  name, so `PageServer? s` in a loop of a function taking `Start s` left `s.given.paths.len()` elsewhere in it untyped,
+  and the build said only "cannot emit dist/page.wac — a call to `.len` … not in the program". Give it its own name.
 - A component re-renders only when its attributes change. Window contents are components handed
   `fsRev`, `rev` and, for Files, `drop` and `clipN`, so that dragging a window does not redraw what is
   in it. Something a window must react to has to arrive as one of those. A skipped component is redrawn before an event
@@ -96,7 +99,9 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   desktop's site (`builtin.wac`, `src/apps/`), served over http only — the owner's choice: from a file there are
   none. The wac IDE is one of them too, pinned as `ide`. Each program's page is a shadow root of its window
   (`program.wac`, web's `Element.shadow`), so stylesheets do not cross between programs and the desktop; a browser
-  test reads inside one through Playwright's selectors, or `__deep` (`tools/desk_test.js`). Next there: a program
+  test reads inside one through Playwright's selectors, or `__deep` (`tools/desk_test.js`). A canvas a program draws
+  is drawn in the program's own worker (web's surfaces; `PageServer.forChild` in `program.wac`), so a test reads its
+  pixels with `tools/canvas.js`, not the page's `getContext`, which throws. Next there: a program
   describing itself — name, icon, file types, what it will ask for — so the question
   can come before it runs.
 - Ideas suggested and not yet chosen: writing archives (Compress, download a folder as a zip, back up

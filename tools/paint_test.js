@@ -11,15 +11,15 @@ const path = require('node:path');
 const http = require('node:http');
 const os = require('node:os');
 const zlib = require('node:zlib');
+const { deep, onCanvas, PIXEL } = require('./canvas.js');
 const root = path.join(__dirname, '..', 'dist');
 const shots = process.env.SHOTS || '';
 
-// The canvas, wherever it is — inside a window's shadow root — read at picture pixel (x, y), or its size.
-const FIND = `const find = (n) => { for (const e of n.querySelectorAll('*')) { if (e.classList?.contains('pcanvas')) return e;
-  if (e.shadowRoot) { const f = find(e.shadowRoot); if (f) return f; } } return null; };`;
-const pixel = (p, x, y) => p.evaluate(`(() => { ${FIND} const c = find(document); if (!c || !c.width) return null;
-  return Array.from(c.getContext('2d').getImageData(${x}, ${y}, 1, 1).data); })()`);
-const size = (p) => p.evaluate(`(() => { ${FIND} const c = find(document); return c ? [c.width, c.height] : null; })()`);
+// The canvas, wherever it is — inside a window's shadow root, drawn in the program's worker (`canvas.js`) — read at
+// picture pixel (x, y), or its size.
+const CANVAS = deep('.pcanvas');
+const pixel = (p, x, y) => onCanvas(p, CANVAS, `(c, xy) => c.width ? (${PIXEL})(c, xy) : null`, [x, y]);
+const size = (p) => onCanvas(p, CANVAS, `(c) => [c.width, c.height]`);
 
 // A PNG `w` by `h` of one colour, interlaced or not being nothing to the picture: made here, so a drop has a file.
 const solidPng = (w, h, [r, g, b]) => {
@@ -94,9 +94,8 @@ const solidPng = (w, h, [r, g, b]) => {
     await settle();
     const ink = [0x1e, 0x1e, 0x2e, 255];
     await until('the stroke is drawn', async () => JSON.stringify(await pixel(p, 200, 100)) === JSON.stringify(ink));
-    const edge = await p.evaluate(`(() => { ${FIND} const c = find(document);
-      const d = c.getContext('2d').getImageData(0, 0, 3, 600).data; const rows = [];
-      for (let y = 0; y < 600; y++) if (d[y * 12] === 0x1e && d[y * 12 + 3] === 255) rows.push(y); return rows; })()`);
+    const edge = await onCanvas(p, CANVAS, `(c) => { const d = c.getContext('2d').getImageData(0, 0, 3, 600).data;
+      const rows = []; for (let y = 0; y < 600; y++) if (d[y * 12] === 0x1e && d[y * 12 + 3] === 255) rows.push(y); return rows; }`);
     assert(edge.length >= 6, `the stroke reached the left edge on its way out: rows ${edge}`);
     assert.deepEqual(await pixel(p, 100, 180), ink, 'and carried on once back over the picture');
     assert.deepEqual(await pixel(p, 200, 108), [255, 255, 255, 255], "a pencil of size 6 is no wider than that");
@@ -241,9 +240,9 @@ const solidPng = (w, h, [r, g, b]) => {
     if (shots) await p.screenshot({ path: path.join(shots, 'paint-3.png') });
 
     // Text: typed where the picture was clicked, in the colour drawn with, and undone in one step.
-    const inkIn = (x0, y0, x1, y1) => p.evaluate(`(() => { ${FIND} const c = find(document);
-      const d = c.getContext('2d').getImageData(${x0}, ${y0}, ${x1 - x0}, ${y1 - y0}).data; let n = 0;
-      for (let i = 0; i < d.length; i += 4) if (d[i] < 40 && d[i + 1] < 40 && d[i + 2] < 40 && d[i + 3] === 255) n++; return n; })()`);
+    const inkIn = (x0, y0, x1, y1) => onCanvas(p, CANVAS, `(c, [x0, y0, x1, y1]) => {
+      const d = c.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data; let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 40 && d[i + 1] < 40 && d[i + 2] < 40 && d[i + 3] === 255) n++; return n; }`, [x0, y0, x1, y1]);
     await p.keyboard.press('t');
     await p.locator('.pswatch[title^="#000000"]').click();
     const [tx, ty] = await at(100, 420);

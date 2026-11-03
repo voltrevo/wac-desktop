@@ -100,6 +100,11 @@ export async void launch(Desk d, Page page, Start s, fn<void()> bumpDesk) {
   }
   Child child = started.ok()!;
   r.child = child;
+  // A window the program opened before its spawn was answered: its server learns the child now (`drawn`).
+  for (i32 i = 0; i < MAX_WINDOWS; i++) {
+    PageServer? open = r.servers.get(i);
+    if (open is not null) { open!.forChild(child.handle); }
+  }
   if (r.done) {
     child.stop();
     return;
@@ -187,6 +192,10 @@ void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void
   r.servers.set(slice, server);
   // As loud as Settings says, from its first sound (`settings.wac`).
   server.louder(loudnessOf(d.prefs), 0);
+  // **A canvas the program asks for as its own is drawn in the program's worker** (`PageServer.forChild`): its pixels
+  // go straight from the program to the screen, not through this desktop's worker a frame behind — which held Pip
+  // under sixty frames a second on a phone. A window opened before the spawn was answered learns it in `launch`.
+  if (r.child is not null) { server.forChild(r.child!.handle); }
   if (r.start.takesFiles) { d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); })); }
   Vec<Pending> later = Vec.create();
   Vec<Pending> now = r.waiting;
