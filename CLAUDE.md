@@ -32,7 +32,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:browser
 
 - **`test:browser` is the ten browser tests below, side by side** (`tools/par.sh`, at up to four at once): each serves
-  `dist/` read-only on a port of its own, so none waits on another. It is about 135s, which is `test:desk` alone — the
+  `dist/` read-only on a port of its own, so none waits on another. It is about 50s, which is `test:desk` alone — the
   rest finish inside it — where running them in a row was 212s. Each `test:<name>` still runs one by itself. The
   build's twelve page builds and `tools/wacbin.py` run side by side too, for the same reason: each writes only its own
   output directory, and `site.wac`, which indexes them all, runs after.
@@ -60,7 +60,9 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   `wac` runs there is usually in that driver or in a `.wait()` the command makes — a page cannot wait, and
   aborts a program that asks it to. `wac run` was one such; `packages/wac` awaits it now.
 - **The page's program runs in a worker**, so the DOM updates a moment after an event. A browser test
-  must wait (`settle()`) before reading what changed.
+  must wait before reading what changed — for the change itself (`until()` in `tools/desk_test.js`), not a fixed
+  time, which is slow when the machine is quiet and short when it is loaded. A fixed wait is only for something that
+  must *not* happen, and says so.
 - **A trap cannot be caught.** The decoders now return errors, but this project's own parsing can still
   trap on a lying header; the `trying` field plus a timer (the "watchdog") reports that instead of
   hanging.
