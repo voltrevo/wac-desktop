@@ -16,13 +16,12 @@ export static i32 OVER = 11;
 export static i32 START = 12;
 
 i32 frames(f64 seconds) { return (seconds * (RATE as f64)) as~ i32; }
-f64 abs(f64 x) { return x < 0.0 ? 0.0 - x : x; }
 
 /** A smooth periodic sine approximation, without a dependency on a maths library. */
 f64 wave(f64 phase) {
   f64 x = 2.0 * (phase - phase.floor()) - 1.0;
-  f64 y = 4.0 * x * (1.0 - abs(x));
-  return y + 0.225 * (y * abs(y) - y);
+  f64 y = 4.0 * x * (1.0 - x.abs());
+  return y + 0.225 * (y * y.abs() - y);
 }
 f64 hz(i32 semis) {
   f64 f = 440.0;

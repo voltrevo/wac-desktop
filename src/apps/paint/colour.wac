@@ -1,0 +1,131 @@
+// Colours as Paint's colour picker handles them: a number `0xRRGGBB` and an opacity beside it, written as `#rrggbb`
+// or `#rrggbbaa`, and turned to and from hue, saturation and value — the square and the strip the picker shows.
+
+/** A colour as hue (0 to 360), saturation and value (each 0 to 1). */
+export struct Hsv {
+  f64 h;
+  f64 s;
+  f64 v;
+}
+
+export i32 red(i32 v) { return (v >> 16) & 255; }
+export i32 green(i32 v) { return (v >> 8) & 255; }
+export i32 blue(i32 v) { return v & 255; }
+export i32 rgb(i32 r, i32 g, i32 b) { return (r << 16) | (g << 8) | b; }
+
+/** `0xRRGGBB` as hue, saturation and value. A grey has hue 0. */
+export Hsv toHsv(i32 c) {
+  f64 r = (red(c) as f64) / 255.0;
+  f64 g = (green(c) as f64) / 255.0;
+  f64 b = (blue(c) as f64) / 255.0;
+  f64 hi = r.max(g).max(b);
+  f64 lo = r.min(g).min(b);
+  f64 d = hi - lo;
+  f64 h = 0.0;
+  if (d > 0.0) {
+    if (hi == r) { h = 60.0 * ((g - b) / d); }
+    else if (hi == g) { h = 60.0 * ((b - r) / d + 2.0); }
+    else { h = 60.0 * ((r - g) / d + 4.0); }
+    if (h < 0.0) { h = h + 360.0; }
+  }
+  return Hsv(h, hi > 0.0 ? d / hi : 0.0, hi);
+}
+
+/** Hue, saturation and value as `0xRRGGBB`. */
+export i32 fromHsv(f64 h, f64 s, f64 v) {
+  f64 hh = h - 360.0 * (h / 360.0).floor();
+  f64 c = v * s;
+  f64 x = c * (1.0 - ((hh / 60.0) - 2.0 * ((hh / 60.0) / 2.0).floor() - 1.0).abs());
+  f64 m = v - c;
+  f64 r = 0.0;
+  f64 g = 0.0;
+  f64 b = 0.0;
+  if (hh < 60.0) { r = c; g = x; }
+  else if (hh < 120.0) { r = x; g = c; }
+  else if (hh < 180.0) { g = c; b = x; }
+  else if (hh < 240.0) { g = x; b = c; }
+  else if (hh < 300.0) { r = x; b = c; }
+  else { r = c; b = x; }
+  return rgb(byte(r + m), byte(g + m), byte(b + m));
+}
+
+i32 byte(f64 f) {
+  i32 v = (f * 255.0).round() as~ i32;
+  return v < 0 ? 0 : (v > 255 ? 255 : v);
+}
+
+i32 digit(u8 c) {
+  i32 v = c as i32;
+  if (v >= 48 && v <= 57) { return v - 48; }
+  if (v >= 97 && v <= 102) { return v - 87; }
+  if (v >= 65 && v <= 70) { return v - 55; }
+  return 0 - 1;
+}
+
+/**
+ * A colour written `#rrggbb` or `#rrggbbaa` — the `#` may be left out — as `[0xRRGGBB, alpha]`; empty when it is
+ * not one. Without an alpha, it is opaque.
+ */
+export i32[] parseColour(string s) {
+  u8[] b = s.toBytes();
+  i32 at = b.len() > 0 && b[0] == '#' ? 1 : 0;
+  i32 n = b.len() - at;
+  if (n != 6 && n != 8) { return i32[](); }
+  i32[] out = [0, 255];
+  i32 v = 0;
+  for (i32 i = 0; i < n; i++) {
+    i32 d = digit(b[at + i]);
+    if (d < 0) { return i32[](); }
+    v = v * 16 + d;
+    if (i == 5) {
+      out[0] = v;
+      v = 0;
+    }
+  }
+  if (n == 8) { out[1] = v; }
+  return out;
+}
+
+/** `0xRRGGBB` as `#rrggbb`, and `#rrggbbaa` when `alpha` is not opaque. */
+export string hexOf(i32 c, i32 alpha) {
+  string digits = "0123456789abcdef";
+  string out = "#";
+  i32 v = alpha == 255 ? c : (c << 8) | alpha;
+  for (i32 k = (alpha == 255 ? 5 : 7); k >= 0; k--) {
+    i32 d = (v >> (k * 4)) & 15;
+    out = out + digits.slice(d, d + 1);
+  }
+  return out;
+}
+
+/** A colour as CSS writes it, opacity and all. */
+export string css(i32 c, i32 alpha) {
+  if (alpha == 255) { return hexOf(c, 255); }
+  return "rgb(\{red(c)} \{green(c)} \{blue(c)} / \{alpha * 100 / 255}%)";
+}
+
+/** The code points of `s`, read as UTF-8; a byte that does not begin one is taken as U+FFFD. */
+export i32[] codePoints(string s) {
+  u8[] b = s.toBytes();
+  i32[] out = i32[].filled(b.len(), 0);
+  i32 n = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i] as i32;
+    i32 more = c < 0x80 ? 0 : (c >= 0xF0 ? 3 : (c >= 0xE0 ? 2 : (c >= 0xC0 ? 1 : 0 - 1)));
+    if (more < 0 || i + more >= b.len()) {
+      out[n] = 0xFFFD;
+      n++;
+      i++;
+      continue;
+    }
+    i32 cp = more == 0 ? c : (c & (0x3F >> more));
+    for (i32 k = 1; k <= more; k++) { cp = (cp << 6) | ((b[i + k] as i32) & 0x3F); }
+    out[n] = cp;
+    n++;
+    i = i + 1 + more;
+  }
+  i32[] cut = i32[].filled(n, 0);
+  for (i32 k = 0; k < n; k++) { cut[k] = out[k]; }
+  return cut;
+}

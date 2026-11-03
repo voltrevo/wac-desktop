@@ -7,12 +7,17 @@
 // **A press anywhere in the window keeps drawing.** Pointer events are heard by the frame around the canvas, in its
 // own pixels, so a stroke can leave the picture and come back; while one is under way a layer covering the window is
 // put in the frame, so the pointer is still over it wherever it goes. (A page cannot capture the pointer, and a
-// listener hears only what is over it.)
+// listener hears only what is over it.) The colour picker's square is dragged the same way.
+//
+// **Some things stay unfinished until they are put down**: a selection being moved, a picture pasted, and text being
+// typed are each a stroke under way, drawn again from the picture as it was at every change, and made one step to
+// undo when they are put down — by Enter, by another tool, or by anything else that changes the picture (`settle`).
 //
 // **A program of the desktop's** (`src/desk/builtin.wac`): started from the site, handed the picture it was opened on
 // to change, and anything dropped on its window. Open asks the desktop's picker for another; a new picture is saved
-// on the Desktop under a free name like the one typed (`Desktop.newFile`). The tool, the sizes and the colours are
-// kept in its own folder. Opened as a page on its own, it opens what is dropped on it and saves by downloading.
+// on the Desktop under a free name like the one typed (`Desktop.newFile`). The tool, the sizes, the colours and the
+// colours lately chosen are kept in its own folder, and so is what was copied — `clipboard.png` — so every Paint
+// window pastes it. Opened as a page on its own, it opens what is dropped on it and saves by downloading.
 
 import { Vec } from "core";
 import { Desktop, Element, ElementEvent, Listen, MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT, Node, Page, Picked, Ref, Ui,
@@ -20,28 +25,37 @@ import { Desktop, Element, ElementEvent, Listen, MOD_ALT, MOD_CTRL, MOD_META, MO
 import { icon } from "../preview.wac";
 import { css } from "../style.wac";
 import { MOST_PIXELS, Picture, decodePng, encodePng } from "../png.wac";
-import { Doc, ERASE, PAINT, Rect } from "./paint/image.wac";
+import { Doc, ERASE, PAINT, Rect, textWidth } from "./paint/image.wac";
+import { Hsv, blue, codePoints, fromHsv, green, hexOf, parseColour, red, toHsv } from "./paint/colour.wac";
 import { paintCss } from "./paint/style.wac";
 
-/** Where the tool, the sizes and the colours are kept, in the program's own folder. */
+/** Where the tool, the sizes and the colours are kept, and what was copied, in the program's own folder. */
 static string KEPT = "settings";
+static string CLIPBOARD = "clipboard.png";
 /** The zooms the buttons and keys step through. */
 static f64[] ZOOMS = [0.0625, 0.125, 0.25, 0.333, 0.5, 0.667, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0];
 /** The largest picture New, Canvas size and Scale make, each way. */
 static i32 MOST_SIDE = 8192;
+/** The colour picker's square, in CSS pixels, and how many colours lately chosen it offers. */
+static f64 SV_W = 220.0;
+static f64 SV_H = 150.0;
+static i32 RECENT = 14;
 
 /** A tool: its name, its icon, its key, and what it is called. */
 struct Tool {
   string name;
+  string ic;
   string key;
   string title;
 }
 
 Tool[] tools() {
-  return [Tool("pencil", "p", "Pencil — hard edges, a pixel at a time"), Tool("brush", "b", "Brush — soft edges"),
-          Tool("eraser", "e", "Eraser — to transparent"), Tool("line", "l", "Line — Shift for every 45°"),
-          Tool("rect", "r", "Rectangle — Shift for a square"), Tool("ellipse", "o", "Ellipse — Shift for a circle"),
-          Tool("bucket", "f", "Fill — the area of one colour"), Tool("picker", "i", "Pick a colour from the picture")];
+  return [Tool("select", "select", "s", "Select — drag inside to move, with Alt to copy"),
+          Tool("pencil", "pencil", "p", "Pencil — hard edges, a pixel at a time"), Tool("brush", "brush", "b", "Brush — soft edges"),
+          Tool("eraser", "eraser", "e", "Eraser — to transparent"), Tool("line", "line", "l", "Line — Shift for every 45°"),
+          Tool("rect", "rect", "r", "Rectangle — Shift for a square"), Tool("ellipse", "ellipse", "o", "Ellipse — Shift for a circle"),
+          Tool("bucket", "bucket", "f", "Fill — the area of one colour"), Tool("text", "type", "t", "Text"),
+          Tool("picker", "picker", "i", "Pick a colour from the picture")];
 }
 
 /** The colours offered, a palette of its own. */
@@ -59,16 +73,21 @@ export struct Painter {
   string path;
   string name;
   string tool;
-  /** The tool before the colour picker, which picking goes back to. */
+  /** The tool before the colour picker, which picking goes back to; and which colour picking sets, `""` for Alt's say. */
   string before;
+  string pickInto;
   i32 size;
   bool smooth;
   bool filled;
   /** How different a colour the fill spreads to, in percent. */
   i32 tolerance;
-  /** The colour drawn with, and the second colour — drawn with when Alt is held, and new canvas around a picture. */
+  /** The colour drawn with and the second colour — drawn with when Alt is held — each with its opacity, 0 to 255. */
   i32 fg;
+  i32 fgA;
   i32 bg;
+  i32 bgA;
+  /** Colours lately chosen in the picker, as `hexOf` writes them, the latest first. */
+  Vec<string> recent;
   f64 zoom;
   /** Whether to fit the picture to the window when the window's size is next known. */
   bool fitting;
@@ -85,11 +104,53 @@ export struct Painter {
   /** Where the pointer is over the picture, for the status; -1 when it is not. */
   i32 overX;
   i32 overY;
-  /** An open dialog — "new", "size", "scale", "save", "discard", "keys" — and its fields. */
+  /** The selection, empty for none; whether one is being dragged out, and whether the pointer has moved since. */
+  Rect sel;
+  bool selecting;
+  bool selMoved;
+  /**
+   * A floating selection — lifted from `hole`, or pasted, with no hole — being moved: its pixels, where its corner is,
+   * and where in it the pointer took hold.
+   */
+  bool floating;
+  Picture flt;
+  Rect hole;
+  i32 fltX;
+  i32 fltY;
+  bool moving;
+  i32 grabX;
+  i32 grabY;
+  /** Text being typed: where its corner is, what it says, its size — the font's pixel at this many — and boldness. */
+  bool typing;
+  i32 tx;
+  i32 ty;
+  string words;
+  i32 textScale;
+  bool bold;
+  /** What was copied, when it could not be kept in the program's folder. */
+  Picture? clip;
+  /** The colour picker: which colour it is open on (`""` when it is not), that colour as hue, saturation and value, its
+   * opacity, what its hex field says, the colour when it opened, and whether its square is being dragged. */
+  string picking;
+  Hsv hsv;
+  i32 pickA;
+  string pickHex;
+  /** What the hex field is drawn with: changed by the square, the strips and the recent colours, not by typing. */
+  string pickShown;
+  i32 openedC;
+  i32 openedA;
+  bool svDrag;
+  /**
+   * An open dialog — "new", "size", "scale", "save", "discard", "keys" — and its fields: as typed, and as they were
+   * when it opened, which is what the fields are drawn with (a field drawn with what is typed so far is set back).
+   */
   string dialog;
   string fieldW;
   string fieldH;
   string fieldName;
+  string openedW;
+  string openedH;
+  string openedName;
   bool fieldClear;
   /** What a "discard" dialog goes on to do once the person agrees. */
   fn<void()> then;
@@ -110,40 +171,18 @@ export struct Painter {
 void unseen() { }
 
 Painter create(Page page, Doc doc) {
-  return Painter(page, null, doc, "", "Untitled.png", "brush", "brush", 6, true, false, 12, 0x1e1e2e, 0xffffff, 1.0, true,
-                 0.0, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, 0 - 1, 0 - 1, "", "", "", "", false, unseen, "", false, "", "",
-                 false, null, 0 - 1, 0 - 1, "", unseen);
+  return Painter {
+    page: page, desk: null, doc: doc, path: "", name: "Untitled.png", tool: "brush", before: "brush", pickInto: "",
+    size: 6, smooth: true, filled: false, tolerance: 12, fg: 0x1e1e2e, fgA: 255, bg: 0xffffff, bgA: 255,
+    recent: Vec.create(), zoom: 1.0, fitting: true, viewW: 0.0, viewH: 0.0, down: false, downAt: 0.0, startX: 0.0,
+    startY: 0.0, lastX: 0.0, lastY: 0.0, overX: 0 - 1, overY: 0 - 1, sel: Rect.none(), selecting: false,
+    selMoved: false, floating: false, flt: Picture(0, 0, u8[]()), hole: Rect.none(), fltX: 0, fltY: 0, moving: false,
+    grabX: 0, grabY: 0, typing: false, tx: 0, ty: 0, words: "", textScale: 2, bold: false, clip: null, picking: "",
+    hsv: Hsv(0.0, 0.0, 0.0), pickA: 255, pickHex: "", pickShown: "", openedC: 0, openedA: 255, svDrag: false,
+    dialog: "", fieldW: "", fieldH: "", fieldName: "", openedW: "", openedH: "", openedName: "", fieldClear: false, then: unseen, note: "", saving: false, written: "", wanted: "",
+    writing: false, canvas: null, sentW: 0 - 1, sentH: 0 - 1, shownTitle: "", bump: unseen
+  };
 }
-
-// ── Colours ─────────────────────────────────────────────────────────────────
-
-/** `#rrggbb` as a number, or `fallback` when it is not one. */
-export i32 parseHex(string s, i32 fallback) {
-  u8[] b = s.toBytes();
-  if (b.len() != 7 || b[0] != '#') { return fallback; }
-  i32 v = 0;
-  for (i32 i = 1; i < 7; i++) {
-    i32 c = b[i] as i32;
-    i32 d = c >= 48 && c <= 57 ? c - 48 : (c >= 97 && c <= 102 ? c - 87 : (c >= 65 && c <= 70 ? c - 55 : 0 - 1));
-    if (d < 0) { return fallback; }
-    v = v * 16 + d;
-  }
-  return v;
-}
-
-export string hex(i32 v) {
-  string digits = "0123456789abcdef";
-  string out = "#";
-  for (i32 k = 5; k >= 0; k--) {
-    i32 d = (v >> (k * 4)) & 15;
-    out = out + digits.slice(d, d + 1);
-  }
-  return out;
-}
-
-i32 red(i32 v) { return (v >> 16) & 255; }
-i32 green(i32 v) { return (v >> 8) & 255; }
-i32 blue(i32 v) { return v & 255; }
 
 // ── Showing the picture ─────────────────────────────────────────────────────
 
@@ -203,6 +242,40 @@ void fit(Painter m) {
 string percent(f64 z) {
   f64 p = (z * 100.0).round();
   return "\{p as~ i32}%";
+}
+
+// ── Putting things down ─────────────────────────────────────────────────────
+
+/** The floating selection put down where it is: one step to undo. The selection stays around where it landed. */
+void dropFloat(Painter m) {
+  if (!m.floating) { return; }
+  m.doc.end();
+  m.floating = false;
+  m.moving = false;
+  m.sel = m.doc.clip(Rect(m.fltX, m.fltY, m.fltX + m.flt.w, m.fltY + m.flt.h));
+  m.hole = Rect.none();
+  m.flt = Picture(0, 0, u8[]());
+}
+
+/** The text typed put down: one step to undo, or nothing when nothing was typed. */
+void dropText(Painter m) {
+  if (!m.typing) { return; }
+  m.typing = false;
+  m.doc.end();
+  m.words = "";
+}
+
+/**
+ * **Everything unfinished put down**, before anything else changes the picture or the tool: the text typed and a
+ * floating selection. The selection itself goes too, unless `keepSel`.
+ */
+void settle(Painter m, bool keepSel) {
+  dropText(m);
+  dropFloat(m);
+  m.selecting = false;
+  if (!keepSel) { m.sel = Rect.none(); }
+  if (m.doc.active) { m.doc.end(); }
+  changed(m);
 }
 
 // ── Strokes ─────────────────────────────────────────────────────────────────
@@ -279,34 +352,60 @@ void freehand(Painter m, f64 x, f64 y) {
   m.lastY = y;
 }
 
+bool inside(Rect r, i32 x, i32 y) { return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1; }
+
+/** The rectangle of the floating selection, or of the text being typed. */
+Rect floatRect(Painter m) { return Rect(m.fltX, m.fltY, m.fltX + m.flt.w, m.fltY + m.flt.h); }
+
+Rect textRect(Painter m) {
+  i32 w = textWidth(codePoints(m.words), m.textScale);
+  i32 thick = m.bold ? (m.textScale + 1) / 2 : 0;
+  return Rect(m.tx, m.ty, m.tx + (w > 0 ? w : 8 * m.textScale) + thick, m.ty + 16 * m.textScale);
+}
+
 void pressed(Painter m, f64 x, f64 y, i32 mods, f64 at) {
-  if (m.dialog != "") { return; }
+  if (m.dialog != "" || m.picking != "") { return; }
   m.note = "";
   Doc d = m.doc;
-  if (d.active) { finish(m); }
-  i32 colour = (mods & MOD_ALT) != 0 ? m.bg : m.fg;
-  if (m.tool == "picker") {
-    i32[] c = d.at(x.floor() as~ i32, y.floor() as~ i32);
-    if (c[3] > 0) {
-      i32 v = (c[0] << 16) | (c[1] << 8) | c[2];
-      if ((mods & MOD_ALT) != 0) { m.bg = v; } else { m.fg = v; }
-      keepSettings(m);
-    }
-    m.tool = m.before;
-    m.bump();
-    return;
-  }
-  d.begin(m.tool == "eraser" ? ERASE : PAINT, red(colour), green(colour), blue(colour));
-  if (m.tool == "bucket") {
-    d.fill(x.floor() as~ i32, y.floor() as~ i32, m.tolerance * 255 / 100);
-    d.end();
-    changed(m);
-    return;
-  }
+  i32 ix = x.floor() as~ i32;
+  i32 iy = y.floor() as~ i32;
   m.down = true;
   m.downAt = at;
   m.startX = x;
   m.startY = y;
+  if (m.tool == "select") {
+    pressSelect(m, ix, iy, mods);
+    return;
+  }
+  if (m.tool == "text") {
+    pressText(m, ix, iy);
+    return;
+  }
+  settle(m, false);
+  bool second = (mods & MOD_ALT) != 0;
+  if (m.tool == "picker") {
+    m.down = false;
+    i32[] c = d.at(ix, iy);
+    if (c[3] > 0) {
+      i32 v = (c[0] << 16) | (c[1] << 8) | c[2];
+      if (m.pickInto == "bg" || (m.pickInto == "" && second)) { m.bg = v; m.bgA = c[3]; } else { m.fg = v; m.fgA = c[3]; }
+      keepSettings(m);
+    }
+    m.pickInto = "";
+    m.tool = m.before;
+    m.bump();
+    return;
+  }
+  i32 colour = second ? m.bg : m.fg;
+  i32 alpha = second ? m.bgA : m.fgA;
+  d.begin(m.tool == "eraser" ? ERASE : PAINT, red(colour), green(colour), blue(colour), alpha);
+  if (m.tool == "bucket") {
+    m.down = false;
+    d.fill(ix, iy, m.tolerance * 255 / 100);
+    d.end();
+    changed(m);
+    return;
+  }
   m.lastX = x;
   m.lastY = y;
   if (m.tool == "line" || m.tool == "rect" || m.tool == "ellipse") { shape(m, x, y, (mods & MOD_SHIFT) != 0); }
@@ -317,20 +416,334 @@ void pressed(Painter m, f64 x, f64 y, i32 mods, f64 at) {
 void dragged(Painter m, f64 x, f64 y, i32 mods) {
   m.overX = x >= 0.0 && x < (m.doc.w as f64) && y >= 0.0 && y < (m.doc.h as f64) ? x.floor() as~ i32 : 0 - 1;
   m.overY = m.overX >= 0 ? y.floor() as~ i32 : 0 - 1;
-  if (!m.down || !m.doc.active) {
+  if (!m.down) {
     m.bump();
     return;
   }
-  if (m.tool == "line" || m.tool == "rect" || m.tool == "ellipse") { shape(m, x, y, (mods & MOD_SHIFT) != 0); }
-  else { freehand(m, x, y); }
+  i32 ix = x.floor() as~ i32;
+  i32 iy = y.floor() as~ i32;
+  if (m.tool == "select") { dragSelect(m, ix, iy, (mods & MOD_SHIFT) != 0); }
+  else if (m.tool == "text") {
+    if (m.moving && m.typing) {
+      m.tx = ix - m.grabX;
+      m.ty = iy - m.grabY;
+      drawText(m);
+    }
+  }
+  else if (m.doc.active) {
+    if (m.tool == "line" || m.tool == "rect" || m.tool == "ellipse") { shape(m, x, y, (mods & MOD_SHIFT) != 0); }
+    else { freehand(m, x, y); }
+  }
   flush(m);
   m.bump();
 }
 
-void finish(Painter m) {
+void released(Painter m) {
+  if (!m.down) { return; }
   m.down = false;
+  if (m.tool == "select") {
+    m.moving = false;
+    // A click that did not drag a selection out lets go of the one there was.
+    if (m.selecting && !m.selMoved) { m.sel = Rect.none(); }
+    m.selecting = false;
+    m.bump();
+    return;
+  }
+  if (m.tool == "text") {
+    m.moving = false;
+    m.bump();
+    return;
+  }
   m.doc.end();
   changed(m);
+}
+
+// ── Selecting, copying and pasting ──────────────────────────────────────────
+
+/** The selection lifted off the picture to float — or, when `copy`, a copy of it, leaving the picture as it was. */
+void lift(Painter m, bool copy) {
+  m.flt = m.doc.copyRect(m.sel);
+  m.hole = copy ? Rect.none() : m.sel;
+  m.fltX = m.sel.x0;
+  m.fltY = m.sel.y0;
+  m.floating = true;
+  m.doc.begin(PAINT, 0, 0, 0, 255);
+  m.doc.float(m.hole, m.flt, m.fltX, m.fltY);
+}
+
+void pressSelect(Painter m, i32 x, i32 y, i32 mods) {
+  if (m.floating && inside(floatRect(m), x, y)) {
+    m.moving = true;
+  } else if (!m.floating && !m.sel.empty() && inside(m.sel, x, y)) {
+    lift(m, (mods & MOD_ALT) != 0);
+    m.moving = true;
+    changed(m);
+  } else {
+    dropFloat(m);
+    m.sel = Rect.none();
+    m.selecting = true;
+    m.selMoved = false;
+    changed(m);
+    return;
+  }
+  m.grabX = x - m.fltX;
+  m.grabY = y - m.fltY;
+}
+
+void dragSelect(Painter m, i32 x, i32 y, bool shift) {
+  if (m.moving && m.floating) {
+    m.fltX = x - m.grabX;
+    m.fltY = y - m.grabY;
+    m.doc.float(m.hole, m.flt, m.fltX, m.fltY);
+    return;
+  }
+  if (!m.selecting) { return; }
+  i32 x0 = m.startX.floor() as~ i32;
+  i32 y0 = m.startY.floor() as~ i32;
+  if (x == x0 && y == y0 && !m.selMoved) { return; }
+  m.selMoved = true;
+  i32 x1 = x;
+  i32 y1 = y;
+  if (shift) {
+    i32[] c = constrainSquare(x0, y0, x1, y1);
+    x1 = c[0];
+    y1 = c[1];
+  }
+  m.sel = m.doc.clip(Rect(x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1, (x0 > x1 ? x0 : x1) + 1, (y0 > y1 ? y0 : y1) + 1));
+}
+
+/** Where the floating selection is, moved by (`dx`, `dy`) — lifted first, if it is only a selection. */
+void nudge(Painter m, i32 dx, i32 dy) {
+  if (!m.floating) {
+    if (m.sel.empty()) { return; }
+    lift(m, false);
+  }
+  m.fltX = m.fltX + dx;
+  m.fltY = m.fltY + dy;
+  m.doc.float(m.hole, m.flt, m.fltX, m.fltY);
+  changed(m);
+}
+
+/** What is selected, as a picture of its own: the floating selection, or the picture's pixels under the selection. */
+Picture selected(Painter m) { return m.floating ? m.flt : m.doc.copyRect(m.sel); }
+
+async void copy(Painter m) {
+  if (!m.floating && m.sel.empty()) {
+    m.note = "Select something to copy";
+    m.bump();
+    return;
+  }
+  Picture p = selected(m);
+  m.clip = p;
+  m.note = "Copied \{p.w} × \{p.h}";
+  m.bump();
+  // Kept in the program's folder, so every Paint window — and this one after a reload — pastes it.
+  await m.page.sys.files().writeFile(CLIPBOARD, encodePng(p.w, p.h, p.rgba));
+}
+
+/** What is selected taken away to transparent; a floating selection, dropped. */
+void wipe(Painter m) {
+  if (m.floating) {
+    m.doc.float(m.hole, Picture(0, 0, u8[]()), 0, 0);
+    m.doc.end();
+    m.floating = false;
+    m.moving = false;
+  } else if (!m.sel.empty()) {
+    m.doc.begin(ERASE, 0, 0, 0, 255);
+    m.doc.rect(m.sel.x0, m.sel.y0, m.sel.x1 - 1, m.sel.y1 - 1, 1, true);
+    m.doc.end();
+  } else {
+    return;
+  }
+  m.sel = Rect.none();
+  changed(m);
+}
+
+async void cut(Painter m) {
+  if (!m.floating && m.sel.empty()) { return; }
+  await copy(m);
+  wipe(m);
+}
+
+/** What was copied, floating over the picture at the selection's corner — or the picture's — to be moved and put down. */
+async void paste(Painter m) {
+  Picture? got = m.clip;
+  auto kept = await m.page.sys.files().readFile(CLIPBOARD);
+  if (kept.isOk()) {
+    match (decodePng(kept.ok()!)) {
+      Ok(p): { got = p; }
+      Err(why): { }
+    }
+  }
+  if (got is null || got!.w == 0) {
+    m.note = "Nothing to paste: copy part of a picture first";
+    m.bump();
+    return;
+  }
+  i32 x = m.sel.empty() ? 0 : m.sel.x0;
+  i32 y = m.sel.empty() ? 0 : m.sel.y0;
+  settle(m, false);
+  m.tool = "select";
+  m.flt = got!;
+  m.hole = Rect.none();
+  m.fltX = x;
+  m.fltY = y;
+  m.floating = true;
+  m.doc.begin(PAINT, 0, 0, 0, 255);
+  m.doc.float(m.hole, m.flt, x, y);
+  m.sel = floatRect(m);
+  m.note = got!.w > m.doc.w || got!.h > m.doc.h ? "Pasted: larger than the picture — Canvas size makes room" : "";
+  changed(m);
+}
+
+void selectAll(Painter m) {
+  settle(m, false);
+  m.tool = "select";
+  m.sel = Rect(0, 0, m.doc.w, m.doc.h);
+  changed(m);
+}
+
+void crop(Painter m) {
+  settle(m, true);
+  if (m.sel.empty()) {
+    m.note = "Select the part to keep first";
+    m.bump();
+    return;
+  }
+  m.doc.crop(m.sel);
+  m.sel = Rect.none();
+  if (m.fitting) { m.zoom = fitZoom(m); }
+  changed(m);
+}
+
+// ── Text ────────────────────────────────────────────────────────────────────
+
+/** The text typed, drawn again where it is, in the colour drawn with. */
+void drawText(Painter m) {
+  Doc d = m.doc;
+  d.cr = red(m.fg);
+  d.cg = green(m.fg);
+  d.cb = blue(m.fg);
+  d.ca = m.fgA;
+  d.clearStroke();
+  if (m.words != "") { d.text(codePoints(m.words), m.tx, m.ty, m.textScale, m.bold); }
+}
+
+void pressText(Painter m, i32 x, i32 y) {
+  if (m.typing && inside(textRect(m), x, y)) {
+    m.moving = true;
+    m.grabX = x - m.tx;
+    m.grabY = y - m.ty;
+    return;
+  }
+  settle(m, false);
+  m.down = false;
+  m.typing = true;
+  m.tx = x;
+  m.ty = y;
+  m.words = "";
+  m.doc.begin(PAINT, red(m.fg), green(m.fg), blue(m.fg), m.fgA);
+  changed(m);
+}
+
+void typed(Painter m, string words) {
+  m.words = words;
+  if (!m.typing) { return; }
+  drawText(m);
+  changed(m);
+}
+
+/** The text being typed dropped, leaving the picture as it was. */
+void cancelText(Painter m) {
+  if (!m.typing) { return; }
+  m.typing = false;
+  m.words = "";
+  m.doc.cancel();
+  changed(m);
+}
+
+// ── The colour picker ───────────────────────────────────────────────────────
+
+/** The colour picker opened on the colour drawn with, `"fg"`, or the second, `"bg"`. */
+void openPicker(Painter m, string which) {
+  i32 c = which == "fg" ? m.fg : m.bg;
+  i32 a = which == "fg" ? m.fgA : m.bgA;
+  m.picking = which;
+  m.hsv = toHsv(c);
+  m.pickA = a;
+  m.pickHex = hexOf(c, a);
+  m.pickShown = m.pickHex;
+  m.openedC = c;
+  m.openedA = a;
+  m.bump();
+}
+
+/** The colour the picker is on, made `c` at opacity `a`. */
+void setPicked(Painter m, i32 c, i32 a, bool fromHex) {
+  if (m.picking == "fg") {
+    m.fg = c;
+    m.fgA = a;
+  } else {
+    m.bg = c;
+    m.bgA = a;
+  }
+  if (!fromHex) {
+    m.pickHex = hexOf(c, a);
+    m.pickShown = m.pickHex;
+  }
+  if (m.typing) {
+    drawText(m);
+    flush(m);
+  }
+  keepSettings(m);
+  m.bump();
+}
+
+void fromPicker(Painter m) { setPicked(m, fromHsv(m.hsv.h, m.hsv.s, m.hsv.v), m.pickA, false); }
+
+/** The square: saturation across, value up, from where the pointer is over it, in its CSS pixels. */
+void pickAt(Painter m, i32 x, i32 y) {
+  m.hsv.s = ((x as f64) / SV_W).max(0.0).min(1.0);
+  m.hsv.v = 1.0 - ((y as f64) / SV_H).max(0.0).min(1.0);
+  fromPicker(m);
+}
+
+/** A colour typed in the hex field, taken when it reads as one; the hue kept when it is a grey. */
+void pickHex(Painter m, string s) {
+  m.pickHex = s;
+  i32[] c = parseColour(s);
+  if (c.len() == 0) {
+    m.bump();
+    return;
+  }
+  Hsv h = toHsv(c[0]);
+  if (h.s == 0.0 || h.v == 0.0) { h.h = m.hsv.h; }
+  m.hsv = h;
+  m.pickA = c[1];
+  setPicked(m, c[0], c[1], true);
+}
+
+/** The picker closed, the colour chosen remembered among the recent ones when it changed. */
+void closePicker(Painter m) {
+  if (m.picking == "") { return; }
+  i32 c = m.picking == "fg" ? m.fg : m.bg;
+  i32 a = m.picking == "fg" ? m.fgA : m.bgA;
+  if (c != m.openedC || a != m.openedA) { remember(m, hexOf(c, a)); }
+  m.picking = "";
+  m.svDrag = false;
+  keepSettings(m);
+  m.bump();
+}
+
+void remember(Painter m, string colour) {
+  for (i32 i = 0; i < m.recent.len(); i++) {
+    if (m.recent.get(i) == colour) {
+      m.recent.remove(i);
+      break;
+    }
+  }
+  m.recent.insert(0, colour);
+  while (m.recent.len() > RECENT) { m.recent.pop(); }
 }
 
 // ── Opening and saving ──────────────────────────────────────────────────────
@@ -348,6 +761,12 @@ void adopt(Painter m, Doc doc, string path, string name) {
   m.path = path;
   m.name = name;
   m.down = false;
+  m.typing = false;
+  m.words = "";
+  m.floating = false;
+  m.moving = false;
+  m.selecting = false;
+  m.sel = Rect.none();
   m.overX = 0 - 1;
   m.overY = 0 - 1;
   m.sentW = 0 - 1;
@@ -380,6 +799,7 @@ async void openPath(Painter m, string path) {
 
 /** Do `then` now, or once the person has agreed to lose the changes not saved. */
 void unlessUnsaved(Painter m, fn<void()> then) {
+  settle(m, true);
   if (!m.doc.modified()) {
     then();
     return;
@@ -402,7 +822,7 @@ async void pickAndOpen(Painter m) {
 }
 
 void newPicture(Painter m, i32 w, i32 h, bool clear) {
-  Doc d = clear ? Doc.blank(w, h, 0, 0, 0, 0) : Doc.blank(w, h, red(m.bg), green(m.bg), blue(m.bg), 255);
+  Doc d = clear ? Doc.blank(w, h, 0, 0, 0, 0) : Doc.blank(w, h, red(m.bg), green(m.bg), blue(m.bg), m.bgA);
   adopt(m, d, "", "Untitled.png");
 }
 
@@ -417,7 +837,8 @@ export string pngName(string typed) {
 
 /** Save to the picture's file — a new picture first asks for a name — or, on a page of its own, download it. */
 async void save(Painter m) {
-  if (m.doc.active || m.saving) { return; }
+  if (m.saving) { return; }
+  settle(m, true);
   if (m.desk is null) {
     m.page.download(m.name, encodePng(m.doc.w, m.doc.h, m.doc.rgba));
     m.doc.saved();
@@ -427,6 +848,7 @@ async void save(Painter m) {
   }
   if (m.path == "") {
     m.fieldName = m.name;
+    m.openedName = m.name;
     m.dialog = "save";
     m.bump();
     return;
@@ -487,12 +909,16 @@ async void receive(Painter m) {
 // ── Settings ────────────────────────────────────────────────────────────────
 
 string settingsText(Painter m) {
-  return "\{m.tool} \{m.size} \{m.smooth ? "1" : "0"} \{m.filled ? "1" : "0"} \{m.tolerance} \{hex(m.fg)} \{hex(m.bg)}\n";
+  string recent = "";
+  for (i32 i = 0; i < m.recent.len(); i++) { recent = recent + (i > 0 ? " " : "") + m.recent.get(i); }
+  return "\{m.tool} \{m.size} \{m.smooth ? "1" : "0"} \{m.filled ? "1" : "0"} \{m.tolerance} \{hexOf(m.fg, m.fgA)} "
+         + "\{hexOf(m.bg, m.bgA)} \{m.textScale} \{m.bold ? "1" : "0"}\n" + recent + "\n";
 }
 
-/** Settings as `settingsText` wrote them, onto `m`; whatever does not read as one is left as it was. */
+/** Settings as `settingsText` wrote them — or an older one, shorter — onto `m`; whatever does not read is left. */
 export void restore(Painter m, string text) {
-  string[] f = words(text);
+  string[] lines = split(text, "\n");
+  string[] f = words(lines.len() > 0 ? lines[0] : "");
   if (f.len() < 7) { return; }
   Tool[] ts = tools();
   for (i32 i = 0; i < ts.len(); i++) {
@@ -507,8 +933,19 @@ export void restore(Painter m, string text) {
   m.filled = f[3] == "1";
   i32 tol = number(f[4], m.tolerance);
   m.tolerance = tol < 0 ? 0 : (tol > 100 ? 100 : tol);
-  m.fg = parseHex(f[5], m.fg);
-  m.bg = parseHex(f[6], m.bg);
+  i32[] fg = parseColour(f[5]);
+  if (fg.len() == 2) { m.fg = fg[0]; m.fgA = fg[1]; }
+  i32[] bg = parseColour(f[6]);
+  if (bg.len() == 2) { m.bg = bg[0]; m.bgA = bg[1]; }
+  if (f.len() >= 9) {
+    i32 s = number(f[7], m.textScale);
+    m.textScale = s < 1 ? 1 : (s > 8 ? 8 : s);
+    m.bold = f[8] == "1";
+  }
+  if (lines.len() > 1) {
+    string[] r = words(lines[1]);
+    for (i32 i = 0; i < r.len() && m.recent.len() < RECENT; i++) { if (parseColour(r[i]).len() == 2) { m.recent.push(r[i]); } }
+  }
 }
 
 /** `s` without the spaces and line ends around it. */
@@ -529,6 +966,21 @@ string cased(string s, bool upper) {
     if (!upper && b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; }
   }
   return string.fromBytes(b);
+}
+
+/** `s` in the pieces between each `sep`. */
+string[] split(string s, string sep) {
+  Vec<string> out = Vec.create();
+  string rest = s;
+  while (true) {
+    i32 k = rest.indexOf(sep);
+    if (k < 0) {
+      out.push(rest);
+      return out.toArray();
+    }
+    out.push(rest.slice(0, k));
+    rest = rest.slice(k + sep.len(), rest.len());
+  }
 }
 
 /** The words of `s`, split at spaces and line ends. */
@@ -573,6 +1025,8 @@ async void keepSettings(Painter m) {
 // ── Keys ────────────────────────────────────────────────────────────────────
 
 void choose(Painter m, string tool) {
+  if (tool == m.tool) { return; }
+  settle(m, tool == "select");
   if (tool == "picker" && m.tool != "picker") { m.before = m.tool; }
   m.tool = tool;
   keepSettings(m);
@@ -580,32 +1034,57 @@ void choose(Painter m, string tool) {
 }
 
 void resize(Painter m, i32 by) {
-  i32 s = m.size + by;
-  m.size = s < 1 ? 1 : (s > 100 ? 100 : s);
+  if (m.tool == "text") {
+    i32 s = m.textScale + (by > 0 ? 1 : 0 - 1);
+    m.textScale = s < 1 ? 1 : (s > 8 ? 8 : s);
+    if (m.typing) { drawText(m); flush(m); }
+  } else {
+    i32 s = m.size + by;
+    m.size = s < 1 ? 1 : (s > 100 ? 100 : s);
+  }
   keepSettings(m);
   m.bump();
 }
 
+/** The last step undone — anything unfinished put down first, and so undone first. */
 void undo(Painter m) {
+  settle(m, false);
   if (m.doc.undo()) { changed(m); }
 }
 
 void redo(Painter m) {
+  settle(m, false);
   if (m.doc.redo()) { changed(m); }
 }
 
 void swapColours(Painter m) {
   i32 t = m.fg;
+  i32 ta = m.fgA;
   m.fg = m.bg;
+  m.fgA = m.bgA;
   m.bg = t;
+  m.bgA = ta;
+  if (m.typing) { drawText(m); flush(m); }
   keepSettings(m);
   m.bump();
+}
+
+/** A whole-picture change, everything unfinished and the selection put down first. */
+void whole(Painter m, fn<void()> change) {
+  settle(m, false);
+  change();
+  if (m.fitting) { m.zoom = fitZoom(m); }
+  changed(m);
 }
 
 /** What a key does; false for one that does nothing here. */
 bool onKey(Painter m, string k, i32 mods) {
   bool ctrl = (mods & MOD_CTRL) != 0 || (mods & MOD_META) != 0;
   bool shift = (mods & MOD_SHIFT) != 0;
+  if (m.picking != "") {
+    if (k == "Escape" || k == "Enter") { closePicker(m); return true; }
+    return false;
+  }
   if (m.dialog != "") {
     if (k == "Escape") {
       m.dialog = "";
@@ -614,18 +1093,36 @@ bool onKey(Painter m, string k, i32 mods) {
     }
     return false;
   }
+  // Typing goes to the text field, which says what Enter and Escape do; the rest is its own.
+  if (m.typing) { return false; }
   if (ctrl) {
     if ((k == "z" || k == "Z") && !shift) { undo(m); }
     else if (k == "y" || k == "Y" || ((k == "z" || k == "Z") && shift)) { redo(m); }
     else if (k == "s" || k == "S") { save(m); }
     else if (k == "o" || k == "O") { unlessUnsaved(m, () => { pickAndOpen(m); }); }
+    else if (k == "c" || k == "C") { copy(m); }
+    else if (k == "x" || k == "X") { cut(m); }
+    else if (k == "v" || k == "V") { paste(m); }
+    else if (k == "a" || k == "A") { selectAll(m); }
     else { return false; }
     return true;
   }
-  if (k == "Escape" && m.doc.active) {
-    m.doc.cancel();
-    m.down = false;
-    changed(m);
+  if (k == "Escape" || k == "Enter") {
+    if (m.doc.active && !m.floating) {
+      m.doc.cancel();
+      m.down = false;
+    }
+    // Enter puts a floating selection down and keeps it selected; Escape lets go of it.
+    settle(m, k == "Enter" && m.tool == "select");
+    return true;
+  }
+  if ((k == "Delete" || k == "Backspace") && (m.floating || !m.sel.empty())) {
+    wipe(m);
+    return true;
+  }
+  if (m.tool == "select" && (k == "ArrowLeft" || k == "ArrowRight" || k == "ArrowUp" || k == "ArrowDown")) {
+    i32 step = shift ? 10 : 1;
+    nudge(m, k == "ArrowLeft" ? 0 - step : (k == "ArrowRight" ? step : 0), k == "ArrowUp" ? 0 - step : (k == "ArrowDown" ? step : 0));
     return true;
   }
   Tool[] ts = tools();
@@ -658,7 +1155,7 @@ bool onKey(Painter m, string k, i32 mods) {
 
 Node ToolButton(Ui ui, Painter m, Tool t, i32 rev) {
   return <button class={m.tool == t.name ? "ptool on" : "ptool"} title={t.title + " (" + cased(t.key, true) + ")"}
-                 onclick={(ElementEvent e) => { choose(m, t.name); }}>{icon(t.name, "")}</button>;
+                 onclick={(ElementEvent e) => { choose(m, t.name); }}>{icon(t.ic, "")}</button>;
 }
 
 Node Action(Ui ui, string ic, string title, bool enabled, fn<void()> run) {
@@ -667,10 +1164,17 @@ Node Action(Ui ui, string ic, string title, bool enabled, fn<void()> run) {
     : <button class="pbtn" title={title} disabled="">{icon(ic, "sm")}</button>;
 }
 
+/** A button in the options bar, with its icon and its word. */
+Node Labelled(Ui ui, string ic, string label, string title, bool enabled, fn<void()> run) {
+  return enabled
+    ? <button class="pchip pact-btn" title={title} onclick={(ElementEvent e) => { run(); }}>{icon(ic, "sm")}<span>{label}</span></button>
+    : <button class="pchip pact-btn" title={title} disabled="">{icon(ic, "sm")}<span>{label}</span></button>;
+}
+
 /** What the tool in hand can be changed by. */
-Node Options(Ui ui, Painter m, i32 rev) {
+Node Options(Ui ui, Painter m, i32 rev, Ref field) {
   string t = m.tool;
-  bool sized = t != "bucket" && t != "picker";
+  bool sized = t != "bucket" && t != "picker" && t != "select" && t != "text";
   Vec<Node> parts = Vec.create();
   if (sized) {
     parts.push(<span class="plabel">Size</span>);
@@ -695,6 +1199,46 @@ Node Options(Ui ui, Painter m, i32 rev) {
                       oninput={(ElementEvent e) => { m.tolerance = number(e.value, m.tolerance); keepSettings(m); m.bump(); }}/>);
     parts.push(<span class="pval">{"\{m.tolerance}%"}</span>);
   }
+  if (t == "select") {
+    bool some = m.floating || !m.sel.empty();
+    parts.push(<Labelled ic="copy" label="Copy" title="Copy (Ctrl+C)" enabled={some} run={() => { copy(m); }}/>);
+    parts.push(<Labelled ic="cut" label="Cut" title="Cut (Ctrl+X)" enabled={some} run={() => { cut(m); }}/>);
+    parts.push(<Labelled ic="paste" label="Paste" title="Paste (Ctrl+V)" enabled={true} run={() => { paste(m); }}/>);
+    parts.push(<Labelled ic="trash" label="Delete" title="Delete (Del)" enabled={some} run={() => { wipe(m); }}/>);
+    parts.push(<Labelled ic="crop" label="Crop" title="Keep only what is selected" enabled={some} run={() => { crop(m); }}/>);
+    parts.push(<Labelled ic="select" label="All" title="Select all (Ctrl+A)" enabled={true} run={() => { selectAll(m); }}/>);
+    if (some) {
+      Rect r = m.floating ? floatRect(m) : m.sel;
+      parts.push(<span class="pval">{"\{r.w()} × \{r.h()}"}</span>);
+    }
+  }
+  if (t == "text") {
+    parts.push(<span class="plabel">Size</span>);
+    parts.push(<input class="prange pshort" type="range" min="1" max="8" step="1" value={"\{m.textScale}"} title="Size ([ and ])"
+                      oninput={(ElementEvent e) => {
+                        m.textScale = number(e.value, m.textScale);
+                        if (m.typing) { drawText(m); flush(m); }
+                        keepSettings(m);
+                        m.bump();
+                      }}/>);
+    parts.push(<span class="pval">{"\{16 * m.textScale} px"}</span>);
+    parts.push(<button class={m.bold ? "pchip on" : "pchip"} title="Bold"
+                       onclick={(ElementEvent e) => {
+                         m.bold = !m.bold;
+                         if (m.typing) { drawText(m); flush(m); }
+                         keepSettings(m);
+                         m.bump();
+                       }}><b>B</b></button>);
+    parts.push(m.typing
+      // Drawn empty and never with what is typed, and made again for each place text is put.
+      ? <input class="ptextin" ref={field} key={"text \{m.tx},\{m.ty}"} value="" placeholder="Type, then Enter" spellcheck="false" prevent="Enter Escape"
+               oninput={(ElementEvent e) => { typed(m, e.value); }}
+               onkeydown={(ElementEvent e) => {
+                 if (e.value == "Enter") { settle(m, false); }
+                 else if (e.value == "Escape") { cancelText(m); }
+               }}/>
+      : <span class="phint">Click the picture where the text goes</span>);
+  }
   if (t == "picker") { parts.push(<span class="phint">Click the picture to take its colour; with Alt, as the second colour</span>); }
   if (t == "brush" || t == "pencil" || t == "line" || t == "rect" || t == "ellipse" || t == "bucket") {
     parts.push(<span class="phint">Alt draws with the second colour</span>);
@@ -702,10 +1246,29 @@ Node Options(Ui ui, Painter m, i32 rev) {
   return <div class="popts">{parts.toArray()}</div>;
 }
 
+/** A colour shown over a checkerboard, so its opacity shows too. */
+string chip(i32 c, i32 a) {
+  string col = colourCss(c, a);
+  return "background:linear-gradient(\{col},\{col}),repeating-conic-gradient(#c8ccd4 0% 25%,#fff 0% 50%) 0 0/8px 8px";
+}
+
+string colourCss(i32 c, i32 a) {
+  return a == 255 ? hexOf(c, 255) : "rgb(\{red(c)} \{green(c)} \{blue(c)} / \{fixed3((a as f64) / 255.0)})";
+}
+
+string fixed3(f64 v) {
+  i32 k = (v * 1000.0).round() as~ i32;
+  string frac = "\{k % 1000}";
+  while (frac.len() < 3) { frac = "0" + frac; }
+  return "\{k / 1000}.\{frac}";
+}
+
 Node Swatch(Ui ui, Painter m, string colour) {
-  return <button class="pswatch" style={"background:" + colour} title={colour + " — Shift-click for the second colour"}
+  i32[] c = parseColour(colour);
+  return <button class="pswatch" style={chip(c[0], c[1])} title={colour + " — Shift-click for the second colour"}
                  onclick={(ElementEvent e) => {
-                   if ((e.mods & MOD_SHIFT) != 0) { m.bg = parseHex(colour, m.bg); } else { m.fg = parseHex(colour, m.fg); }
+                   if ((e.mods & MOD_SHIFT) != 0) { m.bg = c[0]; m.bgA = c[1]; } else { m.fg = c[0]; m.fgA = c[1]; }
+                   if (m.typing) { drawText(m); flush(m); }
                    keepSettings(m);
                    m.bump();
                  }}/>;
@@ -717,22 +1280,85 @@ Node Colours(Ui ui, Painter m, i32 rev) {
   for (i32 i = 0; i < ps.len(); i++) { swatches.push(<Swatch m={m} colour={ps[i]}/>); }
   return <div class="pcolours">
     <div class="pwell">
-      <input class="pcolor pfg" type="color" value={hex(m.fg)} title="The colour drawn with"
-             oninput={(ElementEvent e) => { m.fg = parseHex(e.value, m.fg); keepSettings(m); m.bump(); }}/>
-      <input class="pcolor pbg" type="color" value={hex(m.bg)} title="The second colour"
-             oninput={(ElementEvent e) => { m.bg = parseHex(e.value, m.bg); keepSettings(m); m.bump(); }}/>
+      <button class="pcolor pfg" style={chip(m.fg, m.fgA)} title={"The colour drawn with, " + hexOf(m.fg, m.fgA) + " — click to choose"}
+              onclick={(ElementEvent e) => { openPicker(m, "fg"); }}/>
+      <button class="pcolor pbg" style={chip(m.bg, m.bgA)} title={"The second colour, " + hexOf(m.bg, m.bgA) + " — click to choose"}
+              onclick={(ElementEvent e) => { openPicker(m, "bg"); }}/>
       <button class="pswap" title="Swap the colours (X)" onclick={(ElementEvent e) => { swapColours(m); }}>{icon("swap", "sm")}</button>
     </div>
     <div class="ppalette">{swatches.toArray()}</div>
   </div>;
 }
 
+/**
+ * **The colour picker**: a square of saturation across and value up for the hue chosen below it, a strip of opacity,
+ * the colour as hex to read or type, the colour before and after, the colours lately chosen, and a way to take one
+ * from the picture. Every change is the colour at once.
+ */
+Node Picker(Ui ui, Painter m, i32 rev) {
+  Hsv h = m.hsv;
+  i32 now = fromHsv(h.h, h.s, h.v);
+  string hue = hexOf(fromHsv(h.h, 1.0, 1.0), 255);
+  Vec<Node> recent = Vec.create();
+  for (i32 i = 0; i < m.recent.len(); i++) {
+    string r = m.recent.get(i);
+    i32[] c = parseColour(r);
+    recent.push(<button class="pswatch" style={chip(c[0], c[1])} title={r}
+                        onclick={(ElementEvent e) => {
+                          Hsv got = toHsv(c[0]);
+                          if (got.s == 0.0 || got.v == 0.0) { got.h = m.hsv.h; }
+                          m.hsv = got;
+                          m.pickA = c[1];
+                          setPicked(m, c[0], c[1], false);
+                        }}/>);
+  }
+  return <div class="ppickshade" onpointerdown={(ElementEvent e) => { }}>
+    <div class="ppickaway" onclick={(ElementEvent e) => { closePicker(m); }}/>
+    <div class="ppicker">
+      <div class="ppickhead"><span>{m.picking == "fg" ? "Colour drawn with" : "Second colour"}</span>
+        <button class="pbtn" title="Done (Enter)" onclick={(ElementEvent e) => { closePicker(m); }}>{icon("check", "sm")}</button></div>
+      <div class="psv" style={"background-color:" + hue}
+           onpointerdown={(ElementEvent e) => { m.svDrag = true; pickAt(m, e.x, e.y); }}
+           onpointermove={(ElementEvent e) => { if (m.svDrag) { pickAt(m, e.x, e.y); } }}
+           onpointerup={(ElementEvent e) => { m.svDrag = false; m.bump(); }}>
+        <span class="psvdot" style={"left:\{fixed3(h.s * SV_W)}px;top:\{fixed3((1.0 - h.v) * SV_H)}px;background:" + hexOf(now, 255)}/>
+        {m.svDrag ? <div class="pcover"/> : <span/>}
+      </div>
+      <input class="phue" type="range" min="0" max="359" step="1" value={"\{h.h.round() as~ i32}"} title="Hue"
+             oninput={(ElementEvent e) => { m.hsv.h = number(e.value, 0) as f64; fromPicker(m); }}/>
+      <input class="palpha" type="range" min="0" max="255" step="1" value={"\{m.pickA}"} title="Opacity"
+             style={"--c:" + hexOf(now, 255)}
+             oninput={(ElementEvent e) => { m.pickA = number(e.value, m.pickA); fromPicker(m); }}/>
+      <div class="ppickrow">
+        <span class="pbefore" title="Before" style={chip(m.openedC, m.openedA)}
+              onclick={(ElementEvent e) => {
+                pickHex(m, hexOf(m.openedC, m.openedA));
+                m.pickShown = m.pickHex;
+                m.bump();
+              }}/>
+        <span class="pafter" title="Now" style={chip(now, m.pickA)}/>
+        <input class="phex" value={m.pickShown} spellcheck="false" title="As hex: #rrggbb, or #rrggbbaa with opacity"
+               oninput={(ElementEvent e) => { pickHex(m, e.value); }}/>
+        <span class="pval">{"\{m.pickA * 100 / 255}%"}</span>
+      </div>
+      {recent.len() > 0 ? <div class="precent">{recent.toArray()}</div> : <span/>}
+      <button class="pchip pact-btn pfrom" title="Click the picture to take a colour from it"
+              onclick={(ElementEvent e) => {
+                string into = m.picking;
+                closePicker(m);
+                choose(m, "picker");
+                m.pickInto = into;
+              }}>{icon("picker", "sm")}<span>From the picture</span></button>
+    </div>
+  </div>;
+}
+
 /** A dialog's width and height fields. */
 Node SizeFields(Ui ui, Painter m, i32 rev) {
   return <div class="pfields">
-    <span>Width</span><input class="pnum pw" type="number" min="1" max={"\{MOST_SIDE}"} value={m.fieldW}
+    <span>Width</span><input class="pnum pw" type="number" min="1" max={"\{MOST_SIDE}"} value={m.openedW}
                              oninput={(ElementEvent e) => { m.fieldW = e.value; }}/>
-    <span>Height</span><input class="pnum ph" type="number" min="1" max={"\{MOST_SIDE}"} value={m.fieldH}
+    <span>Height</span><input class="pnum ph" type="number" min="1" max={"\{MOST_SIDE}"} value={m.openedH}
                               oninput={(ElementEvent e) => { m.fieldH = e.value; }}/>
   </div>;
 }
@@ -784,10 +1410,10 @@ Node Dialog(Ui ui, Painter m, i32 rev) {
           i32[] s = typedSize(m);
           if (s.len() == 0) { return; }
           m.dialog = "";
-          if (scaling) { m.doc.scale(s[0], s[1]); }
-          else { m.doc.canvasSize(s[0], s[1], red(m.bg), green(m.bg), blue(m.bg), 255); }
-          if (m.fitting) { m.zoom = fitZoom(m); }
-          changed(m);
+          whole(m, () => {
+            if (scaling) { m.doc.scale(s[0], s[1]); }
+            else { m.doc.canvasSize(s[0], s[1], red(m.bg), green(m.bg), blue(m.bg), m.bgA); }
+          });
         }}>{scaling ? "Scale" : "Resize"}</button>
       </div>
     </div>;
@@ -795,7 +1421,7 @@ Node Dialog(Ui ui, Painter m, i32 rev) {
     body = <div class="pcard">
       <h2>Save picture</h2>
       <p class="pfaint">It is saved on the Desktop, as a PNG.</p>
-      <div class="pfields"><span>Name</span><input class="pname" value={m.fieldName} autofocus="" prevent="Enter"
+      <div class="pfields"><span>Name</span><input class="pname" value={m.openedName} autofocus="" prevent="Enter"
         oninput={(ElementEvent e) => { m.fieldName = e.value; }}
         onkeydown={(ElementEvent e) => { if (e.value == "Enter") { saveAs(m, m.fieldName); } }}/></div>
       <div class="pact">
@@ -823,18 +1449,35 @@ Node Dialog(Ui ui, Painter m, i32 rev) {
     body = <div class="pcard" onclick={(ElementEvent e) => { close(); }}>
       <h2>Paint</h2>
       <div class="pkeys">
-        <span>Tools</span><span><b>P</b>encil, <b>B</b>rush, <b>E</b>raser, <b>L</b>ine, <b>R</b>ectangle, ellipse (<b>O</b>), <b>F</b>ill, p<b>I</b>ck a colour</span>
+        <span>Tools</span><span><b>S</b>elect, <b>P</b>encil, <b>B</b>rush, <b>E</b>raser, <b>L</b>ine, <b>R</b>ectangle, ellipse (<b>O</b>), <b>F</b>ill, <b>T</b>ext, p<b>I</b>ck a colour</span>
         <span>Size</span><span><b>[</b> and <b>]</b></span>
-        <span>Straight, square</span><span>hold <b>Shift</b> while drawing a line, rectangle or ellipse</span>
+        <span>Straight, square</span><span>hold <b>Shift</b> while drawing a line, rectangle, ellipse or selection</span>
         <span>Second colour</span><span>hold <b>Alt</b> while drawing; Shift-click a swatch to choose it; <b>X</b> swaps</span>
+        <span>Choose a colour</span><span>click the colour drawn with, or the second colour, below</span>
+        <span>Select</span><span><b>Ctrl+A</b> all; drag inside to move, with <b>Alt</b> to copy; arrows nudge, with <b>Shift</b> by 10</span>
+        <span>Copy, cut, paste</span><span><b>Ctrl+C</b>, <b>Ctrl+X</b>, <b>Ctrl+V</b>; <b>Del</b> clears; <b>Enter</b> puts down</span>
         <span>Undo, redo</span><span><b>Ctrl+Z</b>, and <b>Ctrl+Y</b> or <b>Ctrl+Shift+Z</b></span>
         <span>Zoom</span><span><b>+</b> and <b>−</b>; <b>0</b> fits, <b>1</b> is actual size</span>
         <span>Save, open</span><span><b>Ctrl+S</b>, <b>Ctrl+O</b>, or drop a PNG on the window</span>
-        <span>Stop a shape</span><span><b>Esc</b> while drawing</span>
+        <span>Stop</span><span><b>Esc</b> stops a shape, drops text being typed, and puts a selection down</span>
       </div>
     </div>;
   }
   return <div class="pmodal" onpointerdown={(ElementEvent e) => { }}>{body}</div>;
+}
+
+/** A dialog with a width and a height opened on the picture's own. */
+void opening(Painter m, Doc d) {
+  m.fieldW = "\{d.w}";
+  m.fieldH = "\{d.h}";
+  m.openedW = m.fieldW;
+  m.openedH = m.fieldH;
+}
+
+/** A rectangle of the picture as a box over it, in the frame's CSS pixels. */
+string boxCss(Rect r, f64 z) {
+  return "left:\{fixed3((r.x0 as f64) * z)}px;top:\{fixed3((r.y0 as f64) * z)}px;width:\{fixed3((r.w() as f64) * z)}px;"
+         + "height:\{fixed3((r.h() as f64) * z)}px";
 }
 
 Node App(Ui ui, Painter m) {
@@ -847,6 +1490,7 @@ Node App(Ui ui, Painter m) {
   Ref cv = ui.ref();
   Ref scroller = ui.ref();
   Ref frame = ui.ref();
+  Ref field = ui.ref();
   ui.effect("", () => {
     m.canvas = cv.element();
     m.sentW = 0 - 1;
@@ -863,10 +1507,18 @@ Node App(Ui ui, Painter m) {
     // A stroke whose button was let go outside the window is finished when the pointer leaves it.
     if (frame.element() is not null) {
       frame.element()!.on("pointerleave", Listen.none(), (ElementEvent e) => {
-        if (m.down && m.page.now() - m.downAt > 150.0) { finish(m); }
+        if (m.down && m.page.now() - m.downAt > 150.0) { released(m); }
       });
     }
     if (root.element() is not null) { root.element()!.focus(); }
+    return () => { };
+  });
+  // Text placed on the picture is typed into the field at once; and once a dialog, the colour picker or the text
+  // closes, the keys are the window's again — the field that had them is gone.
+  bool idle = !m.typing && m.picking == "" && m.dialog == "";
+  ui.effect(m.typing ? "typing \{m.tx},\{m.ty}" : (idle ? "idle" : "open \{m.picking}\{m.dialog}"), () => {
+    if (m.typing && field.element() is not null) { field.element()!.focus(); }
+    else if (idle && root.element() is not null) { root.element()!.focus(); }
     return () => { };
   });
   Doc d = m.doc;
@@ -879,31 +1531,32 @@ Node App(Ui ui, Painter m) {
   Tool[] ts = tools();
   Vec<Node> toolButtons = Vec.create();
   for (i32 i = 0; i < ts.len(); i++) { toolButtons.push(<ToolButton m={m} t={ts[i]} rev={rev}/>); }
+  Rect box = m.floating ? floatRect(m) : m.sel;
+  Node selBox = !box.empty() && m.tool == "select"
+    ? <div class={m.floating ? "psel floating" : "psel"} style={boxCss(box, z)}/> : <span/>;
+  Node textBox = m.typing ? <div class="ptextbox" style={boxCss(textRect(m), z)}/> : <span/>;
+  // What is prevented is decided once, for every field in the window too: copying, cutting, pasting and the arrows
+  // are left to do what they do in a field, and do nothing in the browser's way elsewhere.
   return <div class="paint" tabindex="0" ref={root}
-              prevent="Ctrl+z Ctrl+y Ctrl+Shift+z Ctrl+s Ctrl+o Meta+z Meta+y Meta+Shift+z Meta+s Meta+o"
+              prevent="Ctrl+z Ctrl+y Ctrl+Shift+z Ctrl+s Ctrl+o Ctrl+a Meta+z Meta+y Meta+Shift+z Meta+s Meta+o Meta+a"
               onkeydown={(ElementEvent e) => { onKey(m, e.value, e.mods); }}>
     <div class="ptop">
       <button class="btn pnew" title="New picture" onclick={(ElementEvent e) => {
-        m.fieldW = "\{d.w}";
-        m.fieldH = "\{d.h}";
+        opening(m, d);
         m.dialog = "new";
         m.bump();
       }}>{icon("plus", "sm")}<span class="label">New</span></button>
       <button class="btn popen" title="Open a PNG (Ctrl+O)" onclick={(ElementEvent e) => { unlessUnsaved(m, () => { pickAndOpen(m); }); }}>{icon("open", "sm")}<span class="label">Open</span></button>
       <button class="btn psave" title="Save (Ctrl+S)" onclick={(ElementEvent e) => { save(m); }}>{icon(m.desk is null ? "download" : "save", "sm")}<span class="label">{m.desk is null ? "Download" : "Save"}</span></button>
       <span class="psep"/>
-      <Action ic="undo" title="Undo (Ctrl+Z)" enabled={d.canUndo()} run={() => { undo(m); }}/>
+      <Action ic="undo" title="Undo (Ctrl+Z)" enabled={d.canUndo() || d.active} run={() => { undo(m); }}/>
       <Action ic="redo" title="Redo (Ctrl+Y)" enabled={d.canRedo()} run={() => { redo(m); }}/>
       <span class="psep"/>
-      <Action ic="fliph" title="Flip left to right" enabled={true} run={() => { d.flip(true); changed(m); }}/>
-      <Action ic="flipv" title="Flip top to bottom" enabled={true} run={() => { d.flip(false); changed(m); }}/>
-      <Action ic="turn" title="Turn a quarter clockwise" enabled={true} run={() => {
-        d.turn(true);
-        if (m.fitting) { m.zoom = fitZoom(m); }
-        changed(m);
-      }}/>
-      <Action ic="resize" title="Canvas size" enabled={true} run={() => { m.fieldW = "\{d.w}"; m.fieldH = "\{d.h}"; m.dialog = "size"; m.bump(); }}/>
-      <Action ic="scale" title="Scale picture" enabled={true} run={() => { m.fieldW = "\{d.w}"; m.fieldH = "\{d.h}"; m.dialog = "scale"; m.bump(); }}/>
+      <Action ic="fliph" title="Flip left to right" enabled={true} run={() => { whole(m, () => { m.doc.flip(true); }); }}/>
+      <Action ic="flipv" title="Flip top to bottom" enabled={true} run={() => { whole(m, () => { m.doc.flip(false); }); }}/>
+      <Action ic="turn" title="Turn a quarter clockwise" enabled={true} run={() => { whole(m, () => { m.doc.turn(true); }); }}/>
+      <Action ic="resize" title="Canvas size" enabled={true} run={() => { opening(m, d); m.dialog = "size"; m.bump(); }}/>
+      <Action ic="scale" title="Scale picture" enabled={true} run={() => { opening(m, d); m.dialog = "scale"; m.bump(); }}/>
       <span class="pgrow"/>
       <Action ic="min" title="Zoom out (−)" enabled={true} run={() => { zoomStep(m, 0 - 1); }}/>
       <button class="pzoom" title="Fit the window (0); actual size is 1" onclick={(ElementEvent e) => {
@@ -912,19 +1565,21 @@ Node App(Ui ui, Painter m) {
       <Action ic="plus" title="Zoom in (+)" enabled={true} run={() => { zoomStep(m, 1); }}/>
       <button class="pbtn" title="Keys (?)" onclick={(ElementEvent e) => { m.dialog = "keys"; m.bump(); }}>?</button>
     </div>
-    <Options m={m} rev={rev}/>
+    <Options m={m} rev={rev} field={field}/>
     <div class="pbody">
       <div class="ptools">{toolButtons.toArray()}</div>
       <div class="pscroll" ref={scroller}>
         <div class="pstage">
           <div class={"pframe t-" + m.tool} ref={frame} style={"width:\{shownW}px;height:\{shownH}px"}
                onpointerdown={(ElementEvent e) => {
-                 if (root.element() is not null) { root.element()!.focus(); }
+                 if (!m.typing && root.element() is not null) { root.element()!.focus(); }
                  pressed(m, (e.x as f64) / m.zoom, (e.y as f64) / m.zoom, e.mods, m.page.now());
                }}
                onpointermove={(ElementEvent e) => { dragged(m, (e.x as f64) / m.zoom, (e.y as f64) / m.zoom, e.mods); }}
-               onpointerup={(ElementEvent e) => { if (m.down) { finish(m); } }}>
+               onpointerup={(ElementEvent e) => { released(m); }}>
             <canvas class="pcanvas" ref={cv} style={pixelated}/>
+            {selBox}
+            {textBox}
             {m.down ? <div class="pcover"/> : <span/>}
           </div>
         </div>
@@ -938,6 +1593,7 @@ Node App(Ui ui, Painter m) {
         <span class="psum">{summary}</span>
       </div>
     </div>
+    {m.picking != "" ? <Picker m={m} rev={rev}/> : <span/>}
     {m.dialog != "" ? <Dialog m={m} rev={rev}/> : <span/>}
   </div>;
 }

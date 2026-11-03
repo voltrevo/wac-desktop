@@ -1,0 +1,41 @@
+// Art state follows the real rules: a hop telegraphs before it happens, and a watched ghost stops animating its chase.
+import { Level } from "../src/apps/pip/levels.wac";
+import { Keys, load, step } from "../src/apps/pip/world.wac";
+import { enemyPose } from "../src/apps/pip/enemies.wac";
+
+Level room(bool ghost) {
+  return Level("animation", false, [
+    "........................", "........................", "........................", "........................",
+    "........................", "........................", "........................", "........................",
+    ghost ? ".P........g............." : ".P........h.............",
+    "########################", "########################", "########################"]);
+}
+
+export string test_frog_art_telegraphs_and_completes_a_real_hop() {
+  auto w = load(room(false));
+  bool[] seen = bool[].filled(5, false);
+  for (i32 i = 0; i < 130; i++) {
+    step(w, Keys.none());
+    i32 pose = enemyPose(w.foes.get(0), w.steps);
+    if (pose < 5) { seen[pose] = true; }
+  }
+  for (i32 i = 0; i < 5; i++) { if (!seen[i]) { return "hop never showed pose \{i}"; } }
+  return "";
+}
+
+export string test_ghost_looks_frozen_only_when_the_rules_actually_freeze_it() {
+  auto w = load(room(true));
+  auto ghost = w.foes.get(0);
+  f64 first = ghost.x;
+  for (i32 i = 0; i < 20; i++) {
+    step(w, Keys.none());
+    if (enemyPose(ghost, w.steps) != 0 || ghost.x != first) { return "watched ghost drifted or played a chase pose"; }
+  }
+  w.hero.facing = -1;
+  step(w, Keys.none());
+  if (enemyPose(ghost, w.steps) == 0 || ghost.x >= first) { return "unwatched ghost did not begin pursuing"; }
+  w.hero.facing = 1;
+  step(w, Keys.none());
+  if (enemyPose(ghost, w.steps) != 0) { return "ghost kept playing a chase pose when watched again"; }
+  return "";
+}

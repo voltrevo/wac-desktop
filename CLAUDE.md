@@ -19,6 +19,9 @@ good deal of it has landed upstream.
 - **Ask before a big direction change.** Features have been chosen together, from short lists of
   options with a recommendation.
 - **Icons are SVG `data:` URLs used as CSS masks** (`src/style.wac`), by the owner's choice.
+- **No vendored code, but one file**: Paint's font, `src/apps/paint/font16.wac`, copied from wac's `packages/raster`
+  because `from "wac"` does not reach it (`docs/wac-proposal.md`, item 11). When wac exports it, import it and delete
+  the copy.
 - Comments explain *why*, in full sentences, as the existing ones do. Match the surrounding style.
 
 ## Building and testing here
@@ -32,7 +35,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   they are on git.voltrevo.com first: **run `sh tools/use-mirror.sh` once per machine**, so `git` fetches GitHub's
   URLs from there. `wac update`'s own fetcher does not follow it, so **`tools/fill-cache.sh`, not `wac update`**.
 - `test:desk`, `test:stackfall`, `test:stackfall-audio`, `test:mandelbrot`, `test:paint`, `test:pip`, `test:settings` and `test:drops` drive Chromium with Playwright against `dist/`, so **build first**.
-  All of them pass at the latest commit (108 unit tests, 112 desktop checks, 18 drop cases, 9 Paint steps). The build makes the
+  All of them pass at the latest commit (120 unit tests, 112 desktop checks, 18 drop cases, 12 Paint steps). The build makes the
   desktop, each of its apps (`src/apps/`, and the Archive Explorer) and the `wac` command for the site
   (`tools/wacbin.py`), then `site.wac`; `test:desk` serves `dist/` as a site, builds the programs in `samples/` and
   runs them, so it needs `wac` on `PATH`.
@@ -57,7 +60,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   hanging.
 - `f64` has `floor`, `ceil`, `round`, `trunc`, and — since wac `9ccf257c7`, which the pin includes — `sqrt`, `abs`,
   `min`, `max` and `copySign`, one instruction each; `log`, `exp`, `pow` and the rest are `import { math } from "core"`.
-  `src/apps/maths.wac` predates both. String escapes are the usual few — `"\1"` is an error. A string has few methods:
+  The apps use them; `src/apps/maths.wac` is only decimals now. String escapes are the usual few — `"\1"` is an error. A string has few methods:
   `len`, `slice`, `indexOf`, `toBytes` — no `trim`, `split` or case changes.
 - `import { json.parse } from "wac"` binds `parse`, not `json.parse`.
 - **`(1 << n) as f64` with an untyped literal compiles to invalid wasm** (wac `84955c78c`): the build says "rejected
@@ -67,7 +70,8 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
   `fsRev`, `rev` and, for Files, `drop` and `clipN`, so that dragging a window does not redraw what is
   in it. Something a window must react to has to arrive as one of those. A skipped component is redrawn before an event
   is handed to it, so a text field must not be drawn with the text as typed so far: it is set back a key behind, and
-  loses what was typed between (`src/apps/mdedit.wac` draws it with the text as loaded).
+  loses what was typed between (`src/apps/mdedit.wac` draws it with the text as loaded; Paint's text, hex and
+  dialog fields with what they held when they opened).
 - **Colours are `light-dark()` tokens on `:root` only** (`src/style.wac`): a program's window is a shadow root that
   inherits them and the `color-scheme` from the desktop, which is how Settings' light, dark and accent reach it.
   Declaring them on `:host` again would cut a window off from Settings. The same holds inside an app: Paint hands each

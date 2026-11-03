@@ -15,7 +15,7 @@
 // ahead of the ghost of the best run (6). The game plays every layer from one moment and turns each up when it is
 // earned, so they never drift apart (`Sound.playAt`, `Voice.fade`).
 
-import { Vec } from "core";
+import { Vec, math } from "core";
 import { RATE, noteOf } from "./chip.wac";
 
 export static i32 PULSE = 0;
@@ -274,21 +274,7 @@ export Song songNamed(string name) {
 // ── Playing it ──────────────────────────────────────────────────────────────
 
 /** The frequency `semis` from A4. */
-f64 freqOf(f64 semis) {
-  // 2^(semis/12), by halving and doubling into range and a short series for what is left.
-  f64 f = 440.0;
-  f64 s = semis;
-  while (s >= 12.0) { f = f * 2.0; s = s - 12.0; }
-  while (s < 0.0) { f = f / 2.0; s = s + 12.0; }
-  f64 x = s * 0.057762265046662105;
-  f64 term = 1.0;
-  f64 sum = 1.0;
-  for (i32 n = 1; n < 14; n++) {
-    term = term * x / (n as f64);
-    sum = sum + term;
-  }
-  return f * sum;
-}
+f64 freqOf(f64 semis) { return 440.0 * math.pow(2.0, semis / 12.0); }
 
 /** Where sample `i` lands in `out`: round to the start when the song loops, or nowhere past its end. */
 i32 placed(i32 i, i32 n, bool loops) { return loops ? i % n : (i < n ? i : 0 - 1); }

@@ -15,6 +15,7 @@
 
 import { Vec } from "core";
 import { Picture } from "../../png.wac";
+import { glyphIndex, glyphRow, glyphWidth } from "./font16.wac";
 
 /** What a stroke does with its colour: lays it over the picture, or takes the picture away to transparent. */
 export static i32 PAINT = 0;
@@ -83,6 +84,8 @@ export struct Doc {
   i32 cr;
   i32 cg;
   i32 cb;
+  /** How opaque the colour is, 0 to 255: full coverage lays it down this opaque. */
+  i32 ca;
   /** The picture when the stroke began, and how much of each pixel the stroke covers. */
   u8[] before;
   u8[] cov;
@@ -110,7 +113,7 @@ export struct Doc {
 
   /** A picture to paint on: `p`'s pixels themselves, not a copy. */
   Doc of(Picture p) {
-    return Doc(p.w, p.h, p.rgba, Vec.create(), Vec.create(), 0 as i64, false, PAINT, 0, 0, 0, u8[].filled(p.w * p.h * 4, 0 as u8),
+    return Doc(p.w, p.h, p.rgba, Vec.create(), Vec.create(), 0 as i64, false, PAINT, 0, 0, 0, 255, u8[].filled(p.w * p.h * 4, 0 as u8),
                u8[].filled(p.w * p.h, 0 as u8), Rect.none(), Rect(0, 0, p.w, p.h), 0, false);
   }
 
@@ -146,14 +149,18 @@ export struct Doc {
 
   // ── Strokes ──────────────────────────────────────────────────────────────
 
-  /** Begin a stroke laying down colour `r`, `g`, `b` — or, when `mode` is `ERASE`, taking the picture away. */
-  void begin(this, i32 mode, i32 r, i32 g, i32 b) {
+  /**
+   * Begin a stroke laying down colour `r`, `g`, `b` at opacity `a` — or, when `mode` is `ERASE`, taking the picture
+   * away.
+   */
+  void begin(this, i32 mode, i32 r, i32 g, i32 b, i32 a) {
     if (this.active) { this.end(); }
     this.active = true;
     this.mode = mode;
     this.cr = r;
     this.cg = g;
     this.cb = b;
+    this.ca = a;
     this.before.copyFrom(this.rgba, 0, 0, this.rgba.len());
     this.touched = Rect.none();
   }
@@ -172,13 +179,27 @@ export struct Doc {
       this.rgba[o + 3] = ((da * (255 - c) + 127) / 255) as@ u8;
       return;
     }
-    // The colour over what was there, at coverage `c`: alpha `c + da (1 − c)`, each channel weighted by its alpha.
-    i32 back = da * (255 - c);
-    i32 oa = c * 255 + back;
-    if (oa == 0) { return; }
-    this.rgba[o] = ((this.cr * c * 255 + (this.before[o] as i32) * back + oa / 2) / oa) as@ u8;
-    this.rgba[o + 1] = ((this.cg * c * 255 + (this.before[o + 1] as i32) * back + oa / 2) / oa) as@ u8;
-    this.rgba[o + 2] = ((this.cb * c * 255 + (this.before[o + 2] as i32) * back + oa / 2) / oa) as@ u8;
+    this.blend(o, this.cr, this.cg, this.cb, (c * this.ca + 127) / 255, this.before[o] as i32, this.before[o + 1] as i32,
+               this.before[o + 2] as i32, da);
+  }
+
+  /**
+   * The colour `sr`, `sg`, `sb` at opacity `sa` over `dr`, `dg`, `db` at `da`, written at byte `o` of the picture:
+   * alpha `sa + da (1 − sa)`, each channel weighted by its alpha.
+   */
+  void blend(this, i32 o, i32 sr, i32 sg, i32 sb, i32 sa, i32 dr, i32 dg, i32 db, i32 da) {
+    i32 back = da * (255 - sa);
+    i32 oa = sa * 255 + back;
+    if (oa == 0) {
+      this.rgba[o] = 0 as u8;
+      this.rgba[o + 1] = 0 as u8;
+      this.rgba[o + 2] = 0 as u8;
+      this.rgba[o + 3] = 0 as u8;
+      return;
+    }
+    this.rgba[o] = ((sr * sa * 255 + dr * back + oa / 2) / oa) as@ u8;
+    this.rgba[o + 1] = ((sg * sa * 255 + dg * back + oa / 2) / oa) as@ u8;
+    this.rgba[o + 2] = ((sb * sa * 255 + db * back + oa / 2) / oa) as@ u8;
     this.rgba[o + 3] = ((oa + 127) / 255) as@ u8;
   }
 
@@ -369,6 +390,86 @@ export struct Doc {
            && within(this.before[o + 2] as i32, b, tol) && within(pa, a, tol);
   }
 
+  // ── Selections ───────────────────────────────────────────────────────────
+
+  /** The pixels of `r`, as a picture of their own: a copy. */
+  Picture copyRect(this, Rect r) {
+    Rect c = this.clip(r);
+    if (c.empty()) { return Picture(0, 0, u8[]()); }
+    return Picture(c.w(), c.h(), this.region(c));
+  }
+
+  /**
+   * **A floating selection**, drawn as part of the stroke under way: `hole` — where it was lifted from, empty for one
+   * pasted — made transparent, and `f` laid over the picture with its corner at (`fx`, `fy`). Drawn again from the
+   * picture as it was each time, so the selection can be moved as often as it likes and lands once, as one step.
+   */
+  void float(this, Rect hole, Picture f, i32 fx, i32 fy) {
+    this.clearStroke();
+    Rect h = this.clip(hole);
+    for (i32 y = h.y0; y < h.y1; y++) {
+      for (i32 x = h.x0; x < h.x1; x++) {
+        i32 o = (y * this.w + x) * 4;
+        this.rgba[o] = 0 as u8;
+        this.rgba[o + 1] = 0 as u8;
+        this.rgba[o + 2] = 0 as u8;
+        this.rgba[o + 3] = 0 as u8;
+      }
+    }
+    this.drew(h);
+    Rect at = this.clip(Rect(fx, fy, fx + f.w, fy + f.h));
+    for (i32 y = at.y0; y < at.y1; y++) {
+      for (i32 x = at.x0; x < at.x1; x++) {
+        i32 s = ((y - fy) * f.w + (x - fx)) * 4;
+        i32 o = (y * this.w + x) * 4;
+        bool holed = x >= h.x0 && x < h.x1 && y >= h.y0 && y < h.y1;
+        this.blend(o, f.rgba[s] as i32, f.rgba[s + 1] as i32, f.rgba[s + 2] as i32, f.rgba[s + 3] as i32,
+                   holed ? 0 : this.before[o] as i32, holed ? 0 : this.before[o + 1] as i32,
+                   holed ? 0 : this.before[o + 2] as i32, holed ? 0 : this.before[o + 3] as i32);
+      }
+    }
+    this.drew(at);
+  }
+
+  /** The picture cut down to `r`, kept to undo. */
+  void crop(this, Rect r) {
+    Rect c = this.clip(r);
+    if (c.empty()) { return; }
+    this.replace(c.w(), c.h(), this.region(c));
+  }
+
+  // ── Text ─────────────────────────────────────────────────────────────────
+
+  /**
+   * `text` — code points — drawn in the stroke's colour with its top left at (`x`, `y`), in unscii-16, each of the
+   * font's pixels `scale` of the picture's square; `bold` draws each a further step to the right. A character the
+   * font lacks is drawn as `?`. Where it was drawn.
+   */
+  Rect text(this, i32[] text, i32 x, i32 y, i32 scale, bool bold) {
+    i32 at = x;
+    i32 thick = bold ? (scale + 1) / 2 : 0;
+    for (i32 i = 0; i < text.len(); i++) {
+      i32 g = glyph(text[i]);
+      i32 gw = glyphWidth(g);
+      for (i32 row = 0; row < 16; row++) {
+        i32 bits = glyphRow(g, row);
+        for (i32 col = 0; col < gw; col++) {
+          if (((bits >> (gw - 1 - col)) & 1) == 0) { continue; }
+          i32 px = at + col * scale;
+          i32 py = y + row * scale;
+          Rect cell = this.clip(Rect(px, py, px + scale + thick, py + scale));
+          for (i32 yy = cell.y0; yy < cell.y1; yy++) {
+            for (i32 xx = cell.x0; xx < cell.x1; xx++) { this.cover(xx, yy, 255); }
+          }
+        }
+      }
+      at = at + gw * scale;
+    }
+    Rect drawn = Rect(x, y, at + thick, y + 16 * scale);
+    this.drew(this.clip(drawn));
+    return drawn;
+  }
+
   // ── Changes to the whole picture ─────────────────────────────────────────
 
   /** The picture made `rgba`, `w` by `h`, kept to undo. */
@@ -553,3 +654,16 @@ bool within(i32 a, i32 b, i32 tol) { return a - b <= tol && b - a <= tol; }
 
 i32 min(i32 a, i32 b) { return a < b ? a : b; }
 i32 max(i32 a, i32 b) { return a > b ? a : b; }
+
+/** The font's glyph for code point `cp`, or its `?` when it has none. */
+i32 glyph(i32 cp) {
+  i32 g = glyphIndex(cp);
+  return g >= 0 ? g : glyphIndex(63);
+}
+
+/** How wide `text` is drawn at `scale`, in the picture's pixels, before any boldness. */
+export i32 textWidth(i32[] text, i32 scale) {
+  i32 w = 0;
+  for (i32 i = 0; i < text.len(); i++) { w = w + glyphWidth(glyph(text[i])) * scale; }
+  return w;
+}

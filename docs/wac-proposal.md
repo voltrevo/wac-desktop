@@ -7,7 +7,7 @@ repository. It is a page with windows, Files, a Viewer, an Editor, and a Termina
 **Status at the commits the project pins (2026-11-02: wac `6f3ee4093`, `web` `d63440e`):** items 1 to 5 and 7 are
 merged, and so are 8 and 9 — the two wac fixes programs in windows needed. The page package is `web`, a repository
 of its own since 2026-10-29; what this list says of wac's `packages/web` is that repository now. The project has no
-patches and no vendored code — it imports wac's packages as `import { json.parse } from "wac"`. From item 6,
+patches and no vendored code but Paint's font (item 11) — it imports wac's packages as `import { json.parse } from "wac"`. From item 6,
 modifier keys in `prevent`, decoders that return errors, and the LICENSE are merged too.
 Still open: the reader's time zone, reproducible names (`0368c`), `wac update` through a mirror, the box
 gaps, and item 10, a compiler limit.
@@ -171,6 +171,14 @@ answer settles now.
 every smaller page that used it built. `web` takes a `TicketBase` instead (`ed87134`). No small reproduction yet:
 it needs a module the size of the desktop's.
 
+## 11. `raster`'s font through `from "wac"` (open)
+
+Paint's text tool draws with unscii-16, the bitmap font wac already carries as `packages/raster/src/font16.wac`
+(`glyphIndex`, `glyphWidth`, `glyphRow`). `lib.wac` does not export `raster`, and `packages/raster` has no
+`wac.json5` to import it by `subdir`, so the desktop copies that one generated file into
+`src/apps/paint/font16.wac` — the only vendored code it has. **Ask:** `export * as raster from …` in `lib.wac` (or a
+`wac.json5` in `packages/raster`), so Paint can `import { raster.glyphIndex } from "wac"` and the copy can go.
+
 ## Summary
 
 | # | What | Where | State |
@@ -189,3 +197,4 @@ it needs a module the size of the desktop's.
 | 8 | `Sys` tests beside a `"wac"` import | `wac test` | merged (`3792c730d`) |
 | 9 | A provided capability answered as it settles | `std` | merged (`ec212ae8a`) |
 | 10 | A generic taking a lambda, in a large module | `wacc` | open; worked around in `web` |
+| 11 | `raster`'s font through `from "wac"` | repo root | open; `font16.wac` copied into Paint meanwhile |

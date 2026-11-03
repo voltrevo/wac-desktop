@@ -42,16 +42,8 @@ struct Reader {
 u8 peek(Reader r) { return r.i < r.b.len() ? r.b[r.i] : (0 as u8); }
 bool digitOrDot(u8 c) { return (c >= '0' && c <= '9') || c == '.'; }
 
-f64 root(f64 x) {
-  if (x == 0.0) { return 0.0; }
-  f64 g = x > 1.0 ? x : 1.0;
-  for (i32 k = 0; k < 2000; k++) {
-    f64 next = (g + x / g) / 2.0;
-    if (next == g) { break; }
-    g = next;
-  }
-  return g;
-}
+/** The square root: a float's own, correctly rounded, since wac `9ccf257c7`. */
+f64 root(f64 x) { return x.sqrt(); }
 
 f64 number(Reader r) {
   f64 v = 0.0;

@@ -6,8 +6,9 @@
 // under it, and so does Pip.
 
 import { Vec } from "core";
-import { BAT, CRAWLER, FROG, Foe, GHOST, HERO_H, HERO_W, Mover, TILE, World, tileAt } from "./world.wac";
+import { BEETLE, CRAWLER, FROG, Foe, GHOST, HERO_H, HERO_W, Mover, TILE, World, tileAt } from "./world.wac";
 
+import { enemyPalette, enemyPose, enemyRows } from "./enemies.wac";
 import { pipPose, pipSprite } from "./sprites.wac";
 
 export static i32 SCREEN_W = 320;
@@ -145,52 +146,30 @@ void seeThrough(Screen s, string[] rows, i32 x, i32 y, bool flip, f64 alpha) {
   }
 }
 
-/** A bat, wings up or down. */
-string[] bat(bool up) {
-  if (up) {
-    return ["v.........v.", "vv.......vv.", "vVv.ooo.vVv.", ".vVvoVVovVv.", "..vVVrVrVv..", "...oVVVVo...",
-            "....oVVo....", ".....oo.....", "............", "............", "............", "............"];
+/** Enemy palettes are independent of Pip's. Their original 12 × 12 rule boxes and ground contact stay unchanged. */
+void drawEnemy(Screen s, Foe f, i32 steps, f64 heroX) {
+  i32 x = (f.x as~ i32) - s.camX - 2;
+  i32 y = (f.y as~ i32) - s.camY - (f.kind == FROG || f.kind == BEETLE ? 3 : 2);
+  if (x >= SCREEN_W || y >= SCREEN_H || x + 16 <= 0 || y + 16 <= 0) { return; }
+  string[] rows = enemyRows(f.kind, enemyPose(f, steps), f.dir);
+  i32[] colours = enemyPalette(f.kind);
+  bool flip = f.kind == GHOST ? f.x > heroX : (f.kind != CRAWLER && f.vx < 0.0);
+  for (i32 dy = 0; dy < 16; dy++) {
+    u8[] row = rows[dy].toBytes();
+    for (i32 dx = 0; dx < 16; dx++) {
+      u8 ch = row[flip ? 15 - dx : dx];
+      if (ch == '.') { continue; }
+      i32 px = x + dx; i32 py = y + dy;
+      if (px < 0 || py < 0 || px >= SCREEN_W || py >= SCREEN_H) { continue; }
+      i32 colour = colours[(ch - '0') as i32];
+      if (f.kind == GHOST) {
+        i32 at = (py * SCREEN_W + px) * 4;
+        i32 under = ((s.px[at] as i32) << 16) | ((s.px[at + 1] as i32) << 8) | (s.px[at + 2] as i32);
+        colour = mix(under, colour, 0.7);
+      }
+      dot(s, px, py, colour);
+    }
   }
-  return ["............", "............", "....ooo.....", "...oVVVo....", "..vVVrVrVv..", ".vVVVVVVVVv.",
-          "vVv.oVVo.vVv", "vv...oo...vv", "v..........v", "............", "............", "............"];
-}
-
-/** A ghost: a sheet with eyes, its hem rippling. */
-string[] ghost(bool ripple) {
-  return ["....WWWW....", "..WWWWWWWW..", ".WWWWWWWWWW.", ".WWkkWWkkWW.", ".WWkkWWkkWW.", ".WWWWWWWWWW.",
-          ".WWWWkkWWWW.", ".WWWWWWWWWW.", ".WWWWWWWWWW.", ".WWWWWWWWWW.", ripple ? ".W.WW.WW.WW." : ".WW.WW.WW.W.",
-          "............"];
-}
-
-/** A crawler: an orange shell all spikes, its feet on whatever it walks on. */
-string[] crawler(bool step) {
-  return ["..Y..Y..Y...", "..OYOOYOOY..", ".OOOOOOOOOO.", "YOOkOOOOkOOY", ".OOOOOOOOOO.", "YOOOOOOOOOOY",
-          ".OOOOOOOOOO.", "YOOOOOOOOOOY", ".OOOOOOOOOO.", "..OYOOYOOY..", step ? ".o.o.o.o.o.." : "..o.o.o.o.o.",
-          "............"];
-}
-
-string[] beetle(bool step) {
-  return ["............",
-          "....oooo....",
-          "..ooRrrRoo..",
-          ".oRrrrrrrRo.",
-          ".oRrwrrwrRo.",
-          "oRRrrrrrrRRo",
-          "oRrrrRRrrrRo",
-          "oRRRRRRRRRRo",
-          ".oooooooooo.",
-          step ? ".o.o....o.o." : "..o.o..o.o..",
-          "............",
-          "............"];
-}
-
-string[] frog(bool up) {
-  if (up) {
-    return [".oo......oo.", "ogwo....owgo", "oggGooooGggo", ".oggggggggo.", "oggwwwwwwggo", "oGggggggggGo",
-            ".oGggggggGo.", "..oGGooGGo..", ".oGo....oGo.", "oGo......oGo", "............", "............"];
-  }
-  return ["............", "............", ".oo......oo.", "ogwo....owgo", "oggGooooGggo", ".oggggggggo.",
-          "oggwwwwwwggo", "oGggggggggGo", "oGGggggggGGo", "oGGoooooGGGo", "oo.......ooo", "............"];
 }
 
 /** Whether Pip is in tile (`tx`, `ty`). */
@@ -507,13 +486,7 @@ export void drawWorld(Screen s, World w, World? best, i32 frame) {
   for (i32 i = 0; i < w.foes.len(); i++) {
     Foe f = w.foes.get(i);
     if (!f.alive) { continue; }
-    i32 fx = (f.x as~ i32) - s.camX;
-    i32 fy = (f.y as~ i32) - s.camY;
-    if (f.kind == FROG) { sprite(s, frog(!f.ground), fx, fy, f.vx < 0.0); }
-    else if (f.kind == BAT) { sprite(s, bat(f.timer == 0 || (frame / 5) % 2 == 0), fx, fy, false); }
-    else if (f.kind == GHOST) { seeThrough(s, ghost((frame / 10) % 2 == 0), fx, fy + ((frame / 20) % 2), f.x > w.hero.x, 0.7); }
-    else if (f.kind == CRAWLER) { sprite(s, crawler((frame / 8) % 2 == 0), fx, fy, false); }
-    else { sprite(s, beetle((frame / 8) % 2 == 0), fx, fy, f.vx > 0.0); }
+    drawEnemy(s, f, w.steps, w.hero.x);
   }
   // Six-pixel headroom and three-pixel side margins keep the original 10 × 14 collision box centred under Pip.
   i32 hx = (w.hero.x as~ i32) - 3 - s.camX;

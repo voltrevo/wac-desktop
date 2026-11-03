@@ -1,83 +1,8 @@
-// The few functions of a real number the desktop's apps need — logarithms, powers, a decimal read and written — which
-// wac's core leaves out: it has a float's rounding and its bits, and these are built from them.
+// Numbers as people read and write them — a decimal read, and written with commas, to so many places, or as a power
+// of ten — for the desktop's apps.
 //
-// **Accurate to about fifteen digits**, which is what an `f64` holds: each is reduced to a small range by powers of
-// two, where a short series converges, and scaled back. Nothing here traps; a logarithm of zero or less is negative
-// infinity, as IEEE 754 has it.
-
-static f64 LN2 = 0.6931471805599453;
-
-/** `2^k`, for `k` a float's exponent can hold: made from its bits. */
-f64 twoTo(i32 k) {
-  if (k > 1023) { return 1.0 / 0.0; }
-  if (k < 0 - 1022) { return 0.0; }
-  return f64.fromBits((((k + 1023) as i64) as@ u64) << 52);
-}
-
-/** The natural logarithm of `x`. */
-export f64 ln(f64 x) {
-  if (x != x) { return x; }
-  if (x <= 0.0) { return x == 0.0 ? 0.0 - 1.0 / 0.0 : 0.0 / 0.0; }
-  if (x == 1.0 / 0.0) { return x; }
-  // x = m × 2^e with m in [1, 2), from its bits; a subnormal is scaled up first.
-  f64 scaled = x;
-  i32 extra = 0;
-  if (x < 2.2250738585072014e-308) {
-    scaled = x * 18014398509481984.0;
-    extra = 0 - 54;
-  }
-  u64 bits = f64.toBits(scaled);
-  i32 e = (((bits >> 52) & (2047 as u64)) as@ i32) - 1023 + extra;
-  f64 m = f64.fromBits((bits & (4503599627370495 as u64)) | (4607182418800017408 as u64));
-  // m near 1 converges fastest: [0.707, 1.414).
-  if (m > 1.4142135623730951) {
-    m = m / 2.0;
-    e++;
-  }
-  // ln m = 2 atanh s, s = (m - 1) / (m + 1), |s| < 0.172: each term a thirtieth of the last.
-  f64 s = (m - 1.0) / (m + 1.0);
-  f64 s2 = s * s;
-  f64 term = s;
-  f64 sum = 0.0;
-  for (i32 k = 1; k < 40; k = k + 2) {
-    sum = sum + term / (k as f64);
-    term = term * s2;
-  }
-  return 2.0 * sum + (e as f64) * LN2;
-}
-
-/** `e^x`. */
-export f64 exp(f64 x) {
-  if (x != x) { return x; }
-  if (x > 709.8) { return 1.0 / 0.0; }
-  if (x < 0.0 - 745.2) { return 0.0; }
-  // x = k ln 2 + r, |r| ≤ ln 2 / 2; e^r by its series, e^x = 2^k e^r.
-  f64 kf = (x / LN2).round();
-  f64 r = x - kf * LN2;
-  f64 term = 1.0;
-  f64 sum = 1.0;
-  for (i32 n = 1; n < 20; n++) {
-    term = term * r / (n as f64);
-    sum = sum + term;
-  }
-  i32 k = kf as~ i32;
-  // Two steps, so a result near the smallest float is not lost to a 2^k that alone is too small.
-  return sum * twoTo(k / 2) * twoTo(k - k / 2);
-}
-
-/** `x^y`, for `x` > 0; `0^y` is 0 for `y` > 0. */
-export f64 pow(f64 x, f64 y) {
-  if (x == 0.0) { return y > 0.0 ? 0.0 : 1.0 / 0.0; }
-  return exp(y * ln(x));
-}
-
-/** The square root of `x` ≥ 0, by Newton's method from a guess halfway in exponent. */
-export f64 sqrt(f64 x) {
-  if (x <= 0.0 || x != x || x == 1.0 / 0.0) { return x == 0.0 || x == 1.0 / 0.0 ? x : 0.0 / 0.0; }
-  f64 g = exp(ln(x) / 2.0);
-  for (i32 k = 0; k < 3; k++) { g = (g + x / g) / 2.0; }
-  return g;
-}
+// **Not the functions of a real number**, which are core's: `import { math } from "core"` for `math.log`, `math.exp`
+// and `math.pow`, and a float's own `sqrt` and `abs`. This file had its own until core did (wac `9ccf257c7`).
 
 /** A decimal as a person or a browser writes one — `-0.25`, `3`, `1.5e-7` — or `fallback` when `s` is not one. */
 export f64 parseNumber(string s, f64 fallback) {

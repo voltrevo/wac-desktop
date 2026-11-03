@@ -49,8 +49,8 @@ export string paintCss() {
     .pcolours { display: flex; align-items: center; gap: 12px; }
     .pwell { position: relative; width: 52px; height: 44px; flex: none; }
     .pcolor { position: absolute; width: 30px; height: 30px; padding: 0; border: 2px solid var(--surface); border-radius: 7px;
-              box-shadow: 0 0 0 1px var(--line-strong); cursor: pointer; background: none; }
-    .pcolor::-webkit-color-swatch-wrapper { padding: 0; } .pcolor::-webkit-color-swatch { border: 0; border-radius: 4px; }
+              box-shadow: 0 0 0 1px var(--line-strong); cursor: pointer; }
+    .pcolor:hover { box-shadow: 0 0 0 1px var(--accent); }
     .pfg { left: 0; top: 0; z-index: 1; } .pbg { left: 18px; top: 14px; }
     .pswap { position: absolute; right: -8px; top: -6px; width: 18px; height: 18px; padding: 0; border: 0; background: none;
              color: var(--muted); cursor: pointer; display: flex; } .pswap .ic { width: 13px; height: 13px; }
@@ -61,6 +61,45 @@ export string paintCss() {
                font-variant-numeric: tabular-nums; min-width: 0; white-space: nowrap; }
     .pnote { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
     .ppos { min-width: 70px; text-align: right; }
+    /* The selection: marching ants, as two dashed borders a dash apart; a floating one is moved by dragging inside it. */
+    .psel { position: absolute; pointer-events: none; outline: 1px dashed #000; box-shadow: 0 0 0 1px #fff;
+            outline-offset: 0; animation: pants .6s steps(2) infinite; }
+    .psel.floating { outline-color: var(--accent); }
+    .pframe.t-select { cursor: crosshair; }
+    @keyframes pants { 50% { outline-color: #fff; box-shadow: 0 0 0 1px #000; } }
+    .ptextbox { position: absolute; pointer-events: none; outline: 1px dashed var(--accent); outline-offset: 2px; }
+    .pframe.t-text { cursor: text; }
+    .ptextin { height: 28px; width: min(320px, 40%); padding: 0 10px; border-radius: 7px; border: 1px solid var(--accent);
+               background: var(--surface); color: var(--text); font: inherit; }
+    .pshort { width: 90px; }
+    .pact-btn { display: inline-flex; align-items: center; gap: 5px; }
+    .pact-btn[disabled] { opacity: .4; cursor: default; }
+    .pact-btn .ic { width: 13px; height: 13px; }
+    /* The colour picker, over the bottom left, above a layer that closes it when clicked. */
+    .ppickshade { position: absolute; inset: 0; z-index: 9; }
+    .ppickaway { position: absolute; inset: 0; }
+    .ppicker { position: absolute; left: 10px; bottom: 64px; width: 244px; padding: 10px 12px 12px; border-radius: 12px;
+               background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+               display: flex; flex-direction: column; gap: 9px; }
+    .ppickhead { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .psv { position: relative; width: 220px; height: 150px; border-radius: 6px; cursor: crosshair; touch-action: none;
+           background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent); }
+    .psvdot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 99px;
+              border: 2px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .5); pointer-events: none; }
+    .phue, .palpha { width: 220px; margin: 0; height: 14px; border-radius: 7px; -webkit-appearance: none; appearance: none; }
+    .phue { background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+    .palpha { background: linear-gradient(to right, transparent, var(--c)),
+                          repeating-conic-gradient(#c8ccd4 0% 25%, #fff 0% 50%) 0 0 / 8px 8px; }
+    .phue::-webkit-slider-thumb, .palpha::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px;
+              border-radius: 99px; background: #fff; border: 0; box-shadow: 0 0 0 1px rgb(0 0 0 / .45), 0 1px 3px rgb(0 0 0 / .3); }
+    .ppickrow { display: flex; align-items: center; gap: 8px; }
+    .pbefore, .pafter { width: 26px; height: 26px; border-radius: 6px; box-shadow: 0 0 0 1px var(--line-strong); flex: none; }
+    .pbefore { cursor: pointer; }
+    .phex { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-strong);
+            background: var(--surface-2); color: var(--text); font: 12.5px ui-monospace, monospace; }
+    .precent { display: grid; grid-template-columns: repeat(7, 26px); gap: 4px; }
+    .precent .pswatch { width: 26px; height: 20px; }
+    .pfrom { align-self: flex-start; }
     .pmodal { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
               background: rgb(0 0 0 / .35); }
     .pcard { width: min(440px, calc(100% - 40px)); max-height: calc(100% - 40px); overflow-y: auto; padding: 18px 20px;
