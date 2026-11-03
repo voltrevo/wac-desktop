@@ -31,7 +31,7 @@ should be built from the wac commit (see README). Change a pin's refs and the lo
 
     sh tools/fill-cache.sh && wac task build && wac task test && wac task test:browser
 
-- **`test:browser` is the nine browser tests below, side by side** (`tools/par.sh`, at up to four at once): each serves
+- **`test:browser` is the ten browser tests below, side by side** (`tools/par.sh`, at up to four at once): each serves
   `dist/` read-only on a port of its own, so none waits on another. It is about 135s, which is `test:desk` alone — the
   rest finish inside it — where running them in a row was 212s. Each `test:<name>` still runs one by itself. The
   build's twelve page builds and `tools/wacbin.py` run side by side too, for the same reason: each writes only its own
