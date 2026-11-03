@@ -132,6 +132,9 @@ shares, so their pages can see each other's files.
   Pip has eighteen whole-body animation frames (`sprites.wac`): breathing and blinking, a six-frame run, rising
   and tucked jumps, an apex, two falling poses, landing squash and recovery, wall sliding and recoil when hurt.
   Pose selection follows simulation time; landing animation is cosmetic and never delays a jump.
+  The five enemy types have their own 16 × 16 artwork and palettes (`enemies.wac`), with 23 frames covering
+  walking, a frog's crouch and hop, bat roosting and wing strokes, a ghost freezing or pursuing, and a spiny
+  crawler whose picture turns to match its floor, wall or ceiling. The original 12 × 12 enemy rule boxes remain.
 
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;
