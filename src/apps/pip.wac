@@ -14,7 +14,7 @@
 // **A fixed step**: the rules run sixty times a second whatever the screen's rate (`pip/world.wac`); each frame runs
 // as many steps as time has passed, then draws. The sounds are made once, at the start (`pip/chip.wac`).
 
-import { Vec } from "core";
+import { Ticket, Vec } from "core";
 import { Desktop, Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html.b, html.button, html.canvas, html.div,
          html.h1, html.p, html.span, html.style } from "web";
 import { css } from "../style.wac";
@@ -113,6 +113,9 @@ struct Pip {
   fn<void()> bump;
   /** Paused: the level the arrows have chosen, which Enter plays — the one being played until they move. */
   i32 pick;
+  /** Time not yet stepped, carried to the next frame (`paced`); and when a picture was last drawn, for the counter. */
+  Pace pace;
+  f64 drawnAt;
   /** The ghost's keys on the level being played: whichever the options say (`ghostFor`). */
   u8[] ghostRun;
   Speed sp;
@@ -656,15 +659,44 @@ void up(Pip g, ElementEvent e) {
   readKeys(g);
 }
 
+/** Time not yet stepped, carried from one screen frame to the next (`paced`). */
+export struct Pace {
+  f64 owed;
+}
+
+/**
+ * **How many sixtieths of a second to step for a frame `dt` milliseconds after the last**: the time owed is carried
+ * from one frame to the next, so the game runs sixty steps a second whatever the screen's rate. Rounded a frame at a
+ * time and the rest dropped, a phone drawing 45 frames a second took 45 steps — the game itself at three-quarters
+ * speed — and one refreshing 120 times a second stepped as rounding fell. A little early counts, so a screen at sixty
+ * whose frames come a hair apart steps one each, not none and then two. Far behind — the window hidden, the device
+ * asleep — it picks up from now rather than racing to catch up.
+ */
+export i32 paced(Pace p, f64 dt) {
+  p.owed = p.owed + (dt > 250.0 ? STEP_MS : dt);
+  i32 ticks = 0;
+  while (p.owed >= STEP_MS * 0.9 && ticks < 5) {
+    p.owed = p.owed - STEP_MS;
+    ticks++;
+  }
+  if (ticks == 5) { p.owed = 0.0; }
+  return ticks;
+}
+
 /** Steps for the time that has passed, then the picture: one frame. */
 void frame(Pip g, f64 dt, f64 now) {
-  g.frame++;
+  i32 ticks = paced(g.pace, dt);
+  // **No step, nothing new to show**: the picture as it is stays, and a screen refreshing 120 times a second costs
+  // what one refreshing sixty does.
+  if (ticks == 0) { return; }
+  i32 before = g.frame;
+  g.frame = g.frame + ticks;
+  if (g.drawnAt > 0.0 && now > g.drawnAt) { g.fps = g.fps * 0.9 + (1000.0 / (now - g.drawnAt)) * 0.1; }
+  g.drawnAt = now;
   if (g.mode == PLAYING) {
     World w = g.world;
-    f64 owed = dt > 250.0 ? STEP_MS : dt;
     i32 steps = 0;
-    while (owed >= STEP_MS * 0.5 && steps < 5) {
-      owed = owed - STEP_MS;
+    while (steps < ticks) {
       steps++;
       f64 key = g.pressedAt;
       g.pressedAt = 0.0 - 1.0;
@@ -718,7 +750,7 @@ void frame(Pip g, f64 dt, f64 now) {
       }
     }
   }
-  if (g.mode == WATCHING) { watching(g, dt); }
+  if (g.mode == WATCHING) { watching(g, (ticks as f64) * STEP_MS); }
   tuneUp(g);
   bool inLevel = g.mode == PLAYING || g.mode == PAUSED || g.mode == CLEARED || g.mode == DONE
               || (g.mode == OPTIONS && g.sp.back == PAUSED);
@@ -729,13 +761,21 @@ void frame(Pip g, f64 dt, f64 now) {
     g.showing = g.takenAt;
     g.takenAt = 0.0 - 1.0;
   }
-  if (g.frame % 6 == 0) { g.bump(); }
+  if (g.frame / 6 != before / 6) { g.bump(); }
 }
 
+/**
+ * **One frame a screen refresh, the next asked for before this one is made.** In a window of the desktop the request
+ * for a frame travels from this program's worker through the page to the desktop's and back; asked for only once a
+ * frame was done, its journey came after the frame's work, and a frame that missed the screen's refresh waited for the
+ * next — 45 frames a second on a phone refreshing 120 times. Asked for first, the journey overlaps the work.
+ */
 async void playLoop(Pip g) {
   f64 last = g.page.now();
+  Ticket<f64> next = g.page.nextFrame();
   while (true) {
-    f64 now = await g.page.nextFrame();
+    f64 now = await next;
+    next = g.page.nextFrame();
     // The frame after the one that showed a key: it was on the screen by now.
     if (g.showing >= 0.0) {
       g.toScreen.add(now - g.showing);
@@ -743,7 +783,6 @@ async void playLoop(Pip g) {
     }
     f64 dt = now - last;
     last = now;
-    if (dt > 0.0) { g.fps = g.fps * 0.9 + (1000.0 / dt) * 0.1; }
     frame(g, dt, now);
   }
 }
@@ -1443,7 +1482,7 @@ export async i32 main(Page page) {
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
               0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, options[LATENCY].chosen == 0,
               options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
-              null, null, quiet, 0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1));
+              null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1));
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

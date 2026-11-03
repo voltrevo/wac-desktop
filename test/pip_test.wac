@@ -7,7 +7,7 @@ import { Vec } from "core";
 import { CUE_HURT, CUE_JUMP, CUE_SPRING, Foe, CUE_LANTERN, CUE_OPEN, CUE_STOMP, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } from "../src/apps/pip/world.wac";
 import { noteOf } from "../src/apps/pip/chip.wac";
 import { Screen, drawWorld, follow, snap } from "../src/apps/pip/art.wac";
-import { clock, medal, movedTo, par, restoreBest, styleOf } from "../src/apps/pip.wac";
+import { Pace, clock, medal, movedTo, paced, par, restoreBest, styleOf } from "../src/apps/pip.wac";
 import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
          runBytes, runOf, stepsIn, sumOfBest, total } from "../src/apps/pip/runs.wac";
 import { Option, defaultOptions, optionsText, readOptions, turn } from "../src/apps/pip/options.wac";
@@ -812,5 +812,40 @@ export string test_the_options_are_kept_as_chosen() {
   Option[] odd = defaultOptions();
   readOptions("inputs=7\nsplits=x\nnonsense\nwho=1\nbetween=1", odd);
   if (odd[2].chosen != 0 || odd[3].chosen != 0 || odd[4].chosen != 1) { return "not understood, not left: \{optionsText(odd)}"; }
+  return "";
+}
+
+/** Steps over a second of frames `gaps` apart, in turn: how many, and the most any one frame took. */
+i32[] stepsOver(f64[] gaps) {
+  Pace p = Pace(0.0);
+  f64 t = 0.0;
+  i32 total = 0;
+  i32 most = 0;
+  i32 i = 0;
+  while (t < 1000.0) {
+    f64 dt = gaps[i % gaps.len()];
+    t = t + dt;
+    i32 n = paced(p, dt);
+    total = total + n;
+    if (n > most) { most = n; }
+    i++;
+  }
+  return [total, most];
+}
+
+/**
+ * **Sixty steps a second, whatever the screen**: a phone drawing 45 frames a second, one refreshing 120 times, and
+ * one at sixty whose frames come a hair early or late — each runs the game at its own speed, a step a frame at sixty;
+ * and a frame after a long stall steps a few, not all it missed.
+ */
+export string test_the_game_runs_sixty_steps_a_second_whatever_the_screen() {
+  i32[] at45 = stepsOver([22.222]);
+  i32[] at120 = stepsOver([8.333]);
+  i32[] at60 = stepsOver([16.5, 16.83, 16.6, 16.73]);
+  if (at45[0] < 59 || at45[0] > 61) { return "45 frames a second took \{at45[0]} steps"; }
+  if (at120[0] < 59 || at120[0] > 61 || at120[1] != 1) { return "120 a second took \{at120[0]} steps, up to \{at120[1]} a frame"; }
+  if (at60[0] < 59 || at60[0] > 61 || at60[1] != 1) { return "60 a second took \{at60[0]} steps, up to \{at60[1]} a frame"; }
+  Pace p = Pace(0.0);
+  if (paced(p, 5000.0) > 2) { return "after a stall, it raced to catch up"; }
   return "";
 }
