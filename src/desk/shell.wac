@@ -16,6 +16,7 @@ import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropK
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { FilesApp, openPath } from "./files.wac";
 import { ProgramApp, launch } from "./program.wac";
+import { browserSaid, keptFull, leaveFull, touched } from "./full.wac";
 import { AllowedApp } from "./allowed.wac";
 import { SETTINGS, deskClasses, prefsCss, prefsOf } from "./prefs.wac";
 import { SettingsApp } from "./settings.wac";
@@ -530,7 +531,7 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
   i32 id = w.id;
   Drag? g = d.drag;
   bool moving = (g is not null) && g!.id == id && g!.moved;
-  string cls = "win" + (d.focused == id ? " focus" : "") + (w.max ? " max" : "") + (w.snap == 1 ? " snapl" : "")
+  string cls = "win" + (d.focused == id ? " focus" : "") + (d.full.win == id ? " fullwin" : "") + (w.max ? " max" : "") + (w.snap == 1 ? " snapl" : "")
              + (w.snap == 2 ? " snapr" : "") + (w.min ? " min" : "") + (moving ? " moving" : "");
   string style = "left:\{w.x}px;top:\{w.y}px;width:\{w.w}px;height:\{w.h}px;z-index:\{w.z}";
   string[] edges = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -549,7 +550,12 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
   // A click on the frame takes DOM focus as well as desktop focus, so a game in another window hears blur.
   return <div class={cls} style={style} tabindex="-1" key={"w\{id}"}
               onpointermove={dragging(drop) ? (ElementEvent e) => { hover(d, null, ""); } : null}
-              onpointerdown={(ElementEvent e) => { if (d.focused != id || d.launcher) { focus(d, id); bump(); } }}>
+              onpointerdown={(ElementEvent e) => {
+                // What lets the program in this window have full screen, for a moment (`full.wac`).
+                touched(d, id, page.now());
+                if (d.focused != id || d.launcher) { focus(d, id); bump(); }
+              }}
+              onkeydown={(ElementEvent e) => { touched(d, id, page.now()); }}>
     <div class="tbar"
          onpointerdown={(ElementEvent e) => { if (!d.phone) { startMove(d, id, w.x + 1 + e.x, w.y + 1 + e.y); bump(); } }}
          ondblclick={(ElementEvent e) => { toggleMax(d, id); bump(); }}>
@@ -566,6 +572,37 @@ Node frame(Desk d, Win w, Page page, fn<void()> bump, string drop) {
   </div>;
 }
 
+/**
+ * **The way out of full screen, the desktop's own**: a handle at the top of the screen, over the window — which draws
+ * nothing outside its body, and hears nothing that happens here — and, tapped, a bar to leave full screen, go home, or
+ * close the program. The person is told how, as full screen begins.
+ */
+Node fullHandle(Desk d, Page page, fn<void()> bump) {
+  i32 id = d.full.win;
+  Win? w = find(d, id);
+  string title = w is null ? "" : w!.title;
+  Node note = page.now() - d.full.since < 4000.0
+      ? <div class="fullnote">{"\{title} is full screen. " + (d.phone ? "Back" : "Esc") + ", or the handle at the top, leaves it."}</div>
+      : Node.Text("");
+  if (!d.full.bar) {
+    return <div class="fullout">
+      <button class="fullhandle" title="Leave full screen"
+              onclick={(ElementEvent e) => { d.full.bar = true; bump(); }}><span></span></button>
+      {note}
+    </div>;
+  }
+  return <div class="fullout">
+    <div class="fullbar">
+      <span class="fbtitle">{title}</span>
+      <button class="fbbtn fbleave" onclick={(ElementEvent e) => { leaveFull(d, page.now()); bump(); }}>{icon("restore", "sm")}Leave full screen</button>
+      <button class="fbbtn fbhome" onclick={(ElementEvent e) => { leaveFull(d, page.now()); goHome(d); bump(); }}>{icon("home", "sm")}Home</button>
+      <button class="fbbtn fbclose" onclick={(ElementEvent e) => { leaveFull(d, page.now()); close(d, id); bump(); }}>{icon("close", "sm")}Close</button>
+      <button class="fbbtn fbhide" title="Hide this bar" onclick={(ElementEvent e) => { d.full.bar = false; bump(); }}>{icon("up", "sm")}</button>
+    </div>
+    {note}
+  </div>;
+}
+
 // ── the desktop ─────────────────────────────────────────────────────────────
 
 export Node Desktop(Ui ui, Page page) {
@@ -579,6 +616,17 @@ export Node Desktop(Ui ui, Page page) {
     start(page, d, bump, () => { ready.set(true); });
     return () => { };
   });
+  // **The browser's full screen**, for the desktop's whole page, asked for as a window is given full screen
+  // (`full.wac`) and left with it; the person leaving it — Back, Escape — is heard by the page's `fullscreenchange`.
+  Ref whole = ui.ref();
+  if (d.full.screen is null) {
+    d.full.screen = (bool on) => {
+      Element? el = whole.element();
+      if (el is not null) { el!.fullScreen(on); }
+    };
+  }
+  // The note that says how to leave full screen goes after a few seconds.
+  ui.effect("\{d.full.since}", () => ui.after(4100, bump));
   // **Phone or desktop**, by the screen's size, told as it changes: narrow, or — a phone on its side — too short for windows.
   Ref sizer = ui.ref();
   ui.effect("", () => {
@@ -627,6 +675,8 @@ export Node Desktop(Ui ui, Page page) {
     });
   });
 
+  // Full screen lasts only while its window is in front: Back or Home, or the window closed, ends it.
+  keptFull(d, page.now());
   Drag? g = d.drag;
   FileDrag? f = d.fdrag;
   // Pressed is listening for where the pointer goes; dragging is once it has gone somewhere.
@@ -663,7 +713,7 @@ export Node Desktop(Ui ui, Page page) {
       d.front = front;
     }
   }
-  return <div class={"desk" + (d.phone ? " phone" : "") + deskClasses(d.prefs) + (dragging || carrying ? " dragging" : "") + (carrying ? " carrying" : "") + cursor}
+  return <div ref={whole} class={"desk" + (d.phone ? " phone" : "") + (d.full.win >= 0 ? " full" : "") + deskClasses(d.prefs) + (dragging || carrying ? " dragging" : "") + (carrying ? " carrying" : "") + cursor}
               onpointermove={pressed ? (ElementEvent e) => {
                 if (d.fdrag is not null) {
                   if (dragFilesTo(d, e.x, e.y, (e.mods & (MOD_CTRL | MOD_META)) != 0)) { bump(); }
@@ -678,7 +728,8 @@ export Node Desktop(Ui ui, Page page) {
                 }
                 endDrag(d);
                 bump();
-              } : null}>
+              } : null}
+              onfullscreenchange={(ElementEvent e) => { if (browserSaid(d, e.value == "1", page.now())) { bump(); } }}>
     <style>{css()}</style>
     <style>{deskCss() + prefsCss()}</style>
     <div class="sizer" ref={sizer}></div>
@@ -698,6 +749,7 @@ export Node Desktop(Ui ui, Page page) {
     {ghost}
     {d.phone && d.recents ? recentsOf(d, bump) : Node.Text("")}
     {d.phone ? phoneBar(d, page, bump) : taskbar(d, page, bump)}
+    {d.full.win >= 0 ? fullHandle(d, page, bump) : Node.Text("")}
     {d.picking is not null ? <Picker d={d} p={d.picking!} dir={d.picking!.dir} fsRev={d.fsRev} bumpDesk={bump}/> : Node.Text("")}
     {d.consent is not null ? <Consenting c={d.consent!}/> : Node.Text("")}
   </div>;

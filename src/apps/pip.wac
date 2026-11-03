@@ -24,7 +24,7 @@ import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } f
 import { SCREEN_H, SCREEN_W, Screen, drawInputs, drawWorld, follow, snap } from "./pip/art.wac";
 import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
          runBytes, runOf, stepsIn, sumOfBest, total } from "./pip/runs.wac";
-import { BETWEEN, FULL_GHOST, GHOST, INPUTS, LATENCY, Option, SOUND, SPLITS, SWAP, TOUCH, defaultOptions, optionsText, readOptions,
+import { BETWEEN, FULL_GHOST, GHOST, INPUTS, LATENCY, Option, SCREEN, SOUND, SPLITS, SWAP, TOUCH, defaultOptions, optionsText, readOptions,
          turn } from "./pip/options.wac";
 import { RATE, effects } from "./pip/chip.wac";
 import { LAYERS, RACE, mixed, songNamed, stems } from "./pip/music.wac";
@@ -121,6 +121,8 @@ struct Pip {
   u8[] ghostRun;
   Speed sp;
   Touch touch;
+  /** Whether the game fills the screen: as the host says (`fullscreenchange`), not as asked. */
+  bool screenFull;
 }
 
 /**
@@ -373,7 +375,17 @@ void tuneUp(Pip g) {
 
 // ── Play ────────────────────────────────────────────────────────────────────
 
+/**
+ * **Full screen, asked for or left**: the host decides — a browser only just after a tap or a key, a desktop by its own
+ * rules and with its own way out — and the game hears what it decided (`screenFull`).
+ */
+void toggleScreen(Pip g) {
+  if (g.stage is not null) { g.stage!.fullScreen(!g.screenFull); }
+}
+
 void begin(Pip g, i32 index) {
+  // As a level starts — by a key or a tap, which is when a host lets a page fill the screen — if the options say so.
+  if (g.sp.options[SCREEN].chosen == 1 && !g.screenFull && g.stage is not null) { g.stage!.fullScreen(true); }
   g.index = index;
   g.world = load(g.levels[index]);
   g.recording = Vec.create();
@@ -552,6 +564,8 @@ Node touchControls(Pip g) {
          onpointerup={(ElementEvent e) => { jumpUp(g, e); }}
          onpointercancel={(ElementEvent e) => { jumpUp(g, e); }}>Jump</div>
     <div class="ptbtns">
+      <button class="ptbtn" title={g.screenFull ? "Leave full screen" : "Full screen"} onclick={(ElementEvent e) => { toggleScreen(g); }}>
+        <span class={g.screenFull ? "pfs in" : "pfs"}></span></button>
       <button class="ptbtn" title="Pause" onclick={(ElementEvent e) => { pause(g); }}>❚❚</button>
     </div>
   </div>;
@@ -560,6 +574,10 @@ Node touchControls(Pip g) {
 void down(Pip g, ElementEvent e) {
   string k = e.value;
   g.arrive.add(g.page.now() - e.at);
+  if (k == "F" && (e.mods & 1) != 0) {
+    toggleScreen(g);
+    return;
+  }
   if (g.mode == OPTIONS) { optionsKey(g, k); return; }
   if (g.mode == REPLAYS) { replaysKey(g, k); return; }
   if (g.mode == WATCHING) { watchKey(g, k); return; }
@@ -1149,6 +1167,7 @@ Node Help(Ui ui) {
     <span>Pause</span><span><b>Enter</b>, <b>P</b> or <b>Esc</b> — and choose another level · <b>R</b> starts the level again</span>
     <span>Sound</span><span><b>M</b> · <b>L</b> shows or hides the latency · <b>G</b> your best run's ghost</span>
     <span>Speedrun</span><span><b>F</b> all the levels in one run · <b>V</b> replays · <b>O</b> options</span>
+    <span>Screen</span><span><b>Shift</b> <b>F</b> full screen, and back</span>
   </div>;
 }
 
@@ -1192,6 +1211,7 @@ Node overlay(Pip g) {
         <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> Full run</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openReplays(g); }}><b>V</b> Replays</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
+        <button class="pbtn pscreenbtn" onclick={(ElementEvent e) => { toggleScreen(g); }}><span class={g.screenFull ? "pfs in" : "pfs"}></span> {g.screenFull ? "Leave full screen" : "Full screen"}</button>
       </div>
     </div></div>;
   }
@@ -1210,6 +1230,7 @@ Node overlay(Pip g) {
         <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> {g.sp.full is not null ? "Full run again" : "Full run"}</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
         <button class="pbtn" onclick={(ElementEvent e) => { toTitle(g); }}><b>T</b> Title</button>
+        <button class="pbtn pscreenbtn" onclick={(ElementEvent e) => { toggleScreen(g); }}><span class={g.screenFull ? "pfs in" : "pfs"}></span> {g.screenFull ? "Leave full screen" : "Full screen"}</button>
       </div>
     </div></div>;
   }
@@ -1413,11 +1434,15 @@ Node Game(Ui ui, Pip g) {
   });
   i32 touchMode = g.sp.options[TOUCH].chosen;
   string cls = "pip" + (touchMode == 0 ? " touch-auto" : (touchMode == 1 ? " touch-on" : " touch-off"))
-             + (g.sp.options[SWAP].chosen == 1 ? " swap" : "");
+             + (g.sp.options[SWAP].chosen == 1 ? " swap" : "") + (g.screenFull ? " screenfull" : "");
   return <div class={cls} tabindex="0" ref={stage}
               prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape Backspace a d w s z x k p m l r g f v o t . , 1 2 3 4 5 6 7 8 9"
               onkeydown={(ElementEvent e) => { down(g, e); }}
               onkeyup={(ElementEvent e) => { up(g, e); }}
+              onfullscreenchange={(ElementEvent e) => {
+                g.screenFull = e.value == "1";
+                g.bump();
+              }}
               onblur={(ElementEvent e) => {
                 g.held.clear();
                 letGo(g);
@@ -1485,7 +1510,7 @@ export async i32 main(Page page) {
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
               0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), STEP_MS, options[LATENCY].chosen == 0,
               options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
-              null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1));
+              null, null, quiet, 0, Pace(0.0), 0.0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1), false);
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

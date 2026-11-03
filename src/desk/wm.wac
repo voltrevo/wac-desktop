@@ -155,6 +155,29 @@ export struct Desk {
   bool recents;
   /** Where the desktop was served from, to give someone else (`share.wac`); "" opened from a file. */
   string address;
+  /** The window filling the screen, if one is, and what decides whether a program may have it (`full.wac`). */
+  Full full;
+}
+
+/**
+ * **Full screen, the desktop's to give and its way out its own** (`full.wac`): which window fills the screen, the last
+ * tap or key in a window — a program is given full screen only just after one in its own window — and when it was
+ * last left, so a program cannot take it back without another.
+ */
+export struct Full {
+  /** The window filling the screen, or -1. */
+  i32 win;
+  i32 tappedWin;
+  f64 tappedAt;
+  /** When full screen began, and when it last ended — by the person or the desktop. */
+  f64 since;
+  f64 leftAt;
+  /** The bar the handle opens: the way out, and home. */
+  bool bar;
+  /** The browser's full screen asked for and not yet begun: what it says of an earlier one meanwhile is out of date. */
+  bool asking;
+  /** The browser's own full screen for the desktop's page, asked for or left — set by the desktop's view. */
+  fn<void(bool)>? screen;
 }
 
 /**
@@ -374,7 +397,7 @@ static i32 MIN_H = 200;
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
               Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create(), defaultPrefs(), false, 0 - 1,
-              false, "");
+              false, "", Full(0 - 1, 0 - 1, 0.0 - 1.0, 0.0, 0.0, false, false, null));
 }
 
 export Win? find(Desk d, i32 id) {

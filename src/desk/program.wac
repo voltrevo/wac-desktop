@@ -20,6 +20,7 @@ import { Element, Node, PAGE_CAPABILITY, PAGE_VERSION, PAGE_WINDOW, Page, PageSe
 import { Grants, grantedFiles } from "./grants.wac";
 import { desktopProvider } from "./services.wac";
 import { recall } from "./remember.wac";
+import { askedFull } from "./full.wac";
 import { loudnessOf } from "./prefs.wac";
 import { Got, leafOf } from "./vfs.wac";
 import { CLOSED_WINDOW, Desk, Hand, MAX_WINDOWS, NO_WINDOW, Pending, Running, Start, Win, close, dropHand, find, openWindowFor,
@@ -196,6 +197,9 @@ void drawn(Desk d, Running r, Win w, i32 slice, Page page, Element body, fn<void
   // go straight from the program to the screen, not through this desktop's worker a frame behind — which held Pip
   // under sixty frames a second on a phone. A window opened before the spawn was answered learns it in `launch`.
   if (r.child is not null) { server.forChild(r.child!.handle); }
+  // Full screen, asked for: the desktop's to give, and to take back (`full.wac`).
+  i32 winId = w.id;
+  server.whenFullScreen((Element asked, bool on) => { if (askedFull(d, winId, on, page.now())) { bumpDesk(); } });
   if (r.start.takesFiles) { d.hands.push(Hand(w.id, (bool ok, string name, u8[] bytes) => { server.hand(ok, name, bytes); })); }
   Vec<Pending> later = Vec.create();
   Vec<Pending> now = r.waiting;

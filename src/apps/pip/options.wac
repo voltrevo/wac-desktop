@@ -29,6 +29,8 @@ export static i32 SOUND = 6;
 export static i32 TOUCH = 7;
 /** Which side the Jump button is on: the right thumb's, or the left's. */
 export static i32 SWAP = 8;
+/** Full screen: only when asked (Shift+F, or the button), or as each level starts too. */
+export static i32 SCREEN = 9;
 
 export Option[] defaultOptions() {
   return [
@@ -41,6 +43,7 @@ export Option[] defaultOptions() {
     Option("sound", "Sound", ["On", "Off"], 0),
     Option("touch", "Touch controls", ["On a touch screen", "Always", "Never"], 0),
     Option("swap", "Jump button", ["On the right", "On the left"], 0),
+    Option("screen", "Full screen", ["When asked", "As a level starts"], 0),
   ];
 }
 

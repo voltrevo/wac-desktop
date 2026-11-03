@@ -43,6 +43,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test:pip       # Pip played, heard, measured, paused, another level chosen, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:phone     # the desktop on a phone: its home screen, Back, what is open, Files by tap — as an iPhone
+    wac task test:full      # full screen given only after a tap, and left whatever a hostile program does; Pip's
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:paint  # Paint drawn in, filled, undone, saved, reopened, dropped on, coloured, selected, pasted and typed in
     wac task test:stackfall-audio # Audio cues, mute, music, focus and saved preferences in Chromium
@@ -148,7 +149,9 @@ shares, so their pages can see each other's files.
   they are lit, the open door adds an arpeggio, and a racing tick plays while Pip is ahead of its ghost. `wac task pip:music` renders the songs
   as WAV files. **It is
   made to feel latency by**: a corner (`L`) shows how long a key took to reach the program, to be on screen, and to
-  send its jump's sound, measured from the browser's own stamp on the key, and the frames a second. Its picture is
+  send its jump's sound, measured from the browser's own stamp on the key, and the frames a second. **Full screen**
+  is its button on the title and pause cards and beside Pause on a touch screen, or Shift+F — or, chosen in Options,
+  each level as it starts. Its picture is
   drawn in its own worker (web's surfaces), not passed through the desktop's, so in a window it keeps the frame rate
   it has on a page of its own. Best times and runs are kept in its folder.
   Its artwork is drawn directly on a 320 × 180 pixel grid: a 16 × 20 teal-hooded courier, moss-edged earth and weathered
@@ -174,6 +177,16 @@ shares, so their pages can see each other's files.
   and movement, rotation, hold, drop, lock, row-clear, level-up and game-over effects use the same audio capability
   as Pip. M toggles all sound; the Music switch controls just the background loop. Both preferences are kept in
   `audio.json`. Audio starts only when play starts, and pauses or closes with the game.
+- **Full screen is the desktop's to give, and its way out is the desktop's own** (`src/desk/full.wac`). A program asks
+  (web's `Element.fullScreen`); the desktop gives it only just after a tap or a key in that program's window, and not
+  again after the person has left it without another, so a program cannot take the screen on its own or keep taking it
+  back. Given, its window fills the screen with no title bar or taskbar, and the browser's own full screen hides the
+  browser's bars where there is one — an iPhone's browser has none, and there the window fills the page. **The way
+  out cannot be blocked**: a handle at the top of the screen, which no program can draw over — what it draws stays in
+  its window's body — nor hear a tap on, opens a bar to leave full screen, go home or close the program; Escape, or the
+  phone's Back, which leaves for the home screen; and anything that puts the window away. A program that has stopped
+  answering is no obstacle, since it runs in a worker of its own. As full screen begins, the person is told how to
+  leave it. `samples/hostile.wac` tries everything a program could, and `test:full` checks the way out against it.
 - **On a phone** — narrower than 700 pixels, or a phone on its side, under 500 high and 1000 wide — the desktop is a phone's: a
   home screen of every app in its groups and what is on the Desktop, a tap starting or opening one; each app the whole
   screen, with only Close; and a taskbar of the apps, home, and what is open — listed over everything, to go back to
@@ -262,6 +275,7 @@ shares, so their pages can see each other's files.
 |---|---|
 | `src/desktop.wac` | the desktop's page |
 | `src/desk/shell.wac` | the desktop: startup, icons, window frames, taskbar and launcher, files arriving, saving the layout |
+| `src/desk/full.wac` | full screen: given only after a tap in the window, and left by the desktop's handle, Escape or Back |
 | `src/desk/wm.wac` | windows as records: focus and stacking, minimise and maximise, the drag and resize arithmetic, snapping, the layout as JSON |
 | `src/desk/vfs.wac` | the disk: std's `Files` on the browser's storage, or in memory, as the apps use it; copying, free names |
 | `src/desk/files.wac` | Files |

@@ -16,6 +16,8 @@
   "test:pip": "node tools/pip_test.js",
   "test:settings": "node tools/settings_test.js",
   "test:phone": "node tools/phone_test.js",
+  // Full screen: given only after a tap in its window, and left whatever a hostile program does (samples/hostile.wac); Pip's.
+  "test:full": "node tools/full_test.js",
   // Pip's songs as WAV files in music/, to listen to outside the game.
   "pip:music": "mkdir -p music && wac run --allow-read --allow-write tools/pip_music.wac -- music",
   "test:desk": "node tools/desk_test.js",

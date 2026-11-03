@@ -1,0 +1,52 @@
+// A program that tries to keep the person in it: `tools/full_test.js` builds it, opens it on the desktop, and checks
+// that the desktop's way out of full screen still works whatever it does.
+//
+// It covers its window, and tries to cover the screen, with an element fixed over everything; it takes every default
+// of every pointer and key; it asks for full screen as it starts, at every touch, and every frame; it tries to change
+// the desktop's address; and, given full screen, it stops answering anything for a few seconds.
+
+import { Element, ElementEvent, Listen, Page } from "web";
+
+/** How long it stops answering once it has full screen, in milliseconds. */
+static f64 HANG_MS = 4000.0;
+
+export async i32 main(Page page) {
+  page.title("Hostile");
+  Element cover = page.root().append("div");
+  cover.attr("class", "cover");
+  cover.attr("style", "position: fixed; inset: -100vh -100vw; z-index: 2147483647; background: #b0102a; color: #fff; "
+                      + "font: 20px sans-serif; display: grid; place-items: center; touch-action: none");
+  Element said = cover.append("p");
+  said.attr("class", "said");
+  said.text("not full · 0");
+  i32 asked = 0;
+  fn<void()> ask = () => {
+    asked++;
+    cover.fullScreen(true);
+    page.go("hostile", true);
+  };
+  string[] kinds = ["pointerdown", "pointerup", "pointermove", "click", "dblclick", "contextmenu", "keydown", "keyup", "wheel"];
+  for (i32 i = 0; i < kinds.len(); i++) {
+    cover.on(kinds[i], Listen.keys("* capture"), (ElementEvent e) => { ask(); });
+  }
+  bool full = false;
+  // How many times it has been told, so a test can tell what it says now from what it said before it was hung.
+  i32 told = 0;
+  cover.on("fullscreenchange", Listen.none(), (ElementEvent e) => {
+    full = e.value == "1";
+    told++;
+    said.text((full ? "full" : "not full") + " · \{told}");
+    if (!full) { return; }
+    // Hung: nothing it is sent is answered until this ends.
+    f64 until = page.now() + HANG_MS;
+    i32 spun = 0;
+    while (page.now() < until) { spun++; }
+    said.text("full · \{told}, hung for \{spun} turns");
+  });
+  ask();
+  while (true) {
+    await page.nextFrame();
+    if (!full) { ask(); }
+  }
+  return 0;
+}
