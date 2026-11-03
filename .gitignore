@@ -1,4 +1,5 @@
 dist/
 .wac-src/
+.wac-tool/
 .cache/
 music/

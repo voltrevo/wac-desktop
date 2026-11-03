@@ -2,8 +2,12 @@
 #
 # Everything the build needs is in this repository or public on GitHub — wac, wac-web and wac-ide, at the commits
 # wac.lock pins, which must be synced to GitHub before this repository is: tools/ci-build.sh clones wac, checks out
-# the commit wac.lock pins, bootstraps `wac` on Node from it and builds. The bootstrapped command is cached,
-# keyed on wac.lock, so a run after the first one skips straight to the build.
+# the commit wac.lock pins, bootstraps `wac` on Node from it and builds.
+#
+# **Two caches, so a pin moving costs only what it moved.** The bootstrapped command is keyed on the wac commit
+# alone: re-pinning wac-web or the IDE keeps it, and only a new wac bootstraps again — the slow part. The packages'
+# checkouts are keyed on all of wac.lock, and a run restores the last one it can find, so only a pin that moved is
+# fetched; the build drops checkouts no pin names, so the cache does not grow with every re-pin.
 #
 # In the repository's settings, under Pages, set the source to "GitHub Actions".
 
@@ -31,10 +35,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Which wac
+        id: wac
+        run: |
+          echo "commit=$(sed -n 's/.*"wac": {.*"commit": "\([0-9a-f]\{40\}\)".*/\1/p' wac.lock | head -n 1)" >> "$GITHUB_OUTPUT"
+      # The `wac` command, bootstrapped from the commit wac.lock pins: kept until that pin moves.
       - uses: actions/cache@v4
         with:
-          path: ~/.wac
-          key: wac-${{ runner.os }}-${{ hashFiles('wac.lock') }}
+          path: .wac-tool
+          key: wac-tool-${{ runner.os }}-node22-${{ steps.wac.outputs.commit }}
+      # The pinned packages' checkouts: the nearest earlier set when wac.lock has moved, topped up by the build.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.wac/cache
+          key: wac-packages-${{ runner.os }}-${{ hashFiles('wac.lock') }}
+          restore-keys: wac-packages-${{ runner.os }}-
       - name: Build
         run: sh tools/ci-build.sh
       - uses: actions/configure-pages@v5
