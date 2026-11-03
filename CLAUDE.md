@@ -29,7 +29,13 @@ good deal of it has landed upstream.
 wac is pinned to one commit, `84955c78c`, `web` (wac-web) to `8d8d6d6` and the wac IDE (`ide`) to `9777128`, in `wac.json5` and `wac.lock`; the `wac` command
 should be built from the wac commit (see README). Change a pin's refs and the lock together.
 
-    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:desk && wac task test:stackfall && wac task test:stackfall-audio && wac task test:mandelbrot && wac task test:paint && wac task test:pip && wac task test:settings && wac task test:phone && wac task test:drops
+    sh tools/fill-cache.sh && wac task build && wac task test && wac task test:browser
+
+- **`test:browser` is the nine browser tests below, side by side** (`tools/par.sh`, at up to four at once): each serves
+  `dist/` read-only on a port of its own, so none waits on another. It is about 135s, which is `test:desk` alone — the
+  rest finish inside it — where running them in a row was 212s. Each `test:<name>` still runs one by itself. The
+  build's twelve page builds and `tools/wacbin.py` run side by side too, for the same reason: each writes only its own
+  output directory, and `site.wac`, which indexes them all, runs after.
 
 - **Pins name GitHub** (`https://github.com/voltrevo/`), where the owner syncs the same commits. During development
   they are on git.voltrevo.com first: **run `sh tools/use-mirror.sh` once per machine**, so `git` fetches GitHub's
