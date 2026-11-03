@@ -129,6 +129,17 @@ const shots = process.env.SHOTS || '';
     assert.equal(await q.evaluate('location.hash'), '');
     ok('a desktop is a desktop, its address untouched');
 
+    // **Share**: this desktop's address, as a code to point a camera at, and as text.
+    await p.setViewportSize({ width: 390, height: 664 });
+    await p.locator('.pbbtn[title="Home"]').tap();
+    await p.locator('.ptile', { hasText: 'Share' }).tap();
+    await p.locator('.share img.sqr').waitFor();
+    assert.equal(await p.locator('.saddr').inputValue(), url, 'the address, without its # part');
+    const code = await p.locator('.share img.sqr').evaluate((i) => [i.naturalWidth, i.naturalHeight, i.complete]);
+    assert.ok(code[0] >= 29 * 8 && code[0] === code[1] && code[2], `the code, square and loaded: ${code}`);
+    if (shots) await p.screenshot({ path: path.join(shots, 'phone-share.png') });
+    ok('Share: the address, as a code and as text');
+
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');
     console.log('the phone behaved');

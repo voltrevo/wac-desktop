@@ -1,0 +1,41 @@
+// Share: this desktop, for someone else to open — its address as a QR code to point a phone's camera at, and as text.
+//
+// **The address is the site's** (web's `Site.address`): where the desktop was served from, its `#` part left out, so
+// whoever opens it starts at their own home screen. A desktop opened from a file has no address anyone else can
+// open, and says so.
+
+import { ElementEvent, Node, Page, Ui, html.br, html.button, html.div, html.img, html.input, html.p, html.span } from "web";
+import { Desk, Win } from "./wm.wac";
+import { Qr, mostBytes, qrOf, qrPixels } from "../qr.wac";
+import { encodePng } from "../png.wac";
+import { base64 } from "../bytes.wac";
+import { icon } from "../preview.wac";
+
+/** The code for `address`, as a PNG: eight pixels to a module, its light border around it. */
+u8[] codePng(Qr q) {
+  i32 scale = 8;
+  i32 side = (q.size + 8) * scale;
+  return encodePng(side, side, qrPixels(q, scale));
+}
+
+export Node ShareApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 rev) {
+  string address = d.address;
+  if (address == "") {
+    return <div class="placeholder"><div>{icon("alert", "")}
+      <div>Opened from a file, this desktop has no address for anyone else to open.<br/>Serve it over http to share it.</div></div></div>;
+  }
+  Qr? q = qrOf(address.toBytes());
+  if (q is null) {
+    return <div class="placeholder"><div>{icon("alert", "")}<div>The address is longer than a code holds ({"\{mostBytes()}"} bytes).</div></div></div>;
+  }
+  u8[] png = codePng(q!);
+  return <div class="share">
+    <p class="shead">Point a phone's camera at the code to open this desktop there.</p>
+    <img class="sqr" alt={"A QR code for " + address} src={"data:image/png;base64," + base64(png)}/>
+    <input class="saddr mono" readonly="" value={address} title="The address, to copy"/>
+    <p class="snote">Each desktop keeps its own files, in its own browser: nothing of yours goes with the address.</p>
+    <div class="sbtns">
+      <button class="btn" title="Save the code as a picture" onclick={(ElementEvent e) => { page.download("wac-desktop-qr.png", png); }}>{icon("download", "sm")}<span class="label">Save the code</span></button>
+    </div>
+  </div>;
+}

@@ -280,6 +280,12 @@ export string deskCss() {
     .rt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rclose { width: 52px; height: 56px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
     .rnone { padding: 30px 0; text-align: center; color: var(--muted); }
+    .share { height: 100%; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 20px; text-align: center; }
+    .shead { margin: 0; font-weight: 600; }
+    .sqr { width: min(300px, 80cqw); height: auto; image-rendering: pixelated; border-radius: 10px; box-shadow: var(--shadow); background: white; }
+    .saddr { width: 100%; max-width: 360px; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--sunken);
+             color: var(--text); font-size: 12.5px; text-align: center; }
+    .snote { margin: 0; max-width: 360px; font-size: 12px; color: var(--muted); }
     .rhead .btn { flex: none; height: 40px; padding: 0 14px; white-space: nowrap; }
     /* On its side, a phone's home screen has room for more to a row. */
     @media (orientation: landscape) { .desk.phone .phgrid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); } }

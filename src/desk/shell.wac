@@ -19,6 +19,7 @@ import { ProgramApp, launch } from "./program.wac";
 import { AllowedApp } from "./allowed.wac";
 import { SETTINGS, deskClasses, prefsCss, prefsOf } from "./prefs.wac";
 import { SettingsApp } from "./settings.wac";
+import { ShareApp } from "./share.wac";
 import { deskCss } from "./style.wac";
 import { startApp, startPlaced } from "./builtin.wac";
 import { Entry, Launcher, groups, launch as launchEntry, offered } from "./launcher.wac";
@@ -44,6 +45,7 @@ async void start(Page page, Desk d, fn<void()> bump, fn<void()> ready) {
   if (site.isOk()) {
     system = Files.mounted([Mount("/site", siteFiles(site.ok()!)), Mount("/", system)]);
     d.site = true;
+    d.address = site.ok()!.address;
   }
   d.fs = vfsOf(system, persistent);
   Vfs fs = d.fs;
@@ -381,6 +383,7 @@ Node WinBody(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i32 fsRev, i3
   if (w.app == "program") { return <ProgramApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "allowed") { return <AllowedApp d={d} w={w} page={page} bumpDesk={bumpDesk} fsRev={fsRev} rev={rev}/>; }
   if (w.app == "settings") { return <SettingsApp d={d} w={w} page={page} bumpDesk={bumpDesk} rev={rev}/>; }
+  if (w.app == "share") { return <ShareApp d={d} w={w} page={page} bumpDesk={bumpDesk} rev={rev}/>; }
   // The desktop's other apps are programs on its site (`builtin.wac`): a window of one is a program's.
   return <div class="placeholder"><div>{icon("alert", "")}<div>Nothing here: “{w.app}” is not one of the desktop's windows.</div></div></div>;
 }

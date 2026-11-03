@@ -25,6 +25,10 @@ export static i32 BETWEEN = 4;
 export static i32 LATENCY = 5;
 /** All sound (`M`). */
 export static i32 SOUND = 6;
+/** On-screen controls: on a touch screen, always, or never. */
+export static i32 TOUCH = 7;
+/** Which side the Jump button is on: the right thumb's, or the left's. */
+export static i32 SWAP = 8;
 
 export Option[] defaultOptions() {
   return [
@@ -35,6 +39,8 @@ export Option[] defaultOptions() {
     Option("between", "Between levels, in a full run", ["Straight on", "Show the card"], 0),
     Option("latency", "How long a key takes", ["On", "Off"], 0),
     Option("sound", "Sound", ["On", "Off"], 0),
+    Option("touch", "Touch controls", ["On a touch screen", "Always", "Never"], 0),
+    Option("swap", "Jump button", ["On the right", "On the left"], 0),
   ];
 }
 

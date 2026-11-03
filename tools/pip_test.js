@@ -2,7 +2,7 @@
 // Pip and the Lost Lanterns as a desktop program, in Chromium against dist/: found in the launcher, started from its
 // title, played with the keys, heard — every sound the page starts and stops is counted by a script added before the
 // desktop's own — measured in its latency corner, paused, muted, and silenced when its window closes.
-const { chromium } = require('playwright');
+const { chromium, devices } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -251,6 +251,69 @@ const WATCH = `
     await p.keyboard.press('r');
     await p.locator('.phud', { hasText: 'racing a run brought in' }).waitFor();
     ok('saved on the Desktop as a file, and raced as the ghost');
+
+    // ── On a phone: the controls on screen, played with two thumbs ──
+    const ph = await (await browser.newContext({ ...devices['iPhone 13'] })).newPage();
+    ph.on('pageerror', (e) => errors.push(e.message));
+    await ph.goto(`http://localhost:${server.address().port}/`);
+    await ph.waitForSelector('.desk.phone', { timeout: 30000 });
+    await ph.locator('.win.focus .md h1').first().waitFor({ timeout: 60000 });
+    await ph.locator('.pbbtn[title="Home"]').tap();
+    await ph.locator('.ptile', { hasText: 'Pip' }).tap();
+    await ph.locator('.pcard h1').waitFor({ timeout: 60000 });
+    // The title fits a phone: no keys to read, the levels two to a row, nothing cut off.
+    assert.equal(await ph.locator('.pkeys').isVisible(), false, 'the keys are no use to a thumb');
+    const fits = await ph.locator('.pcard').evaluate((c) => c.scrollWidth <= c.clientWidth + 1);
+    assert.ok(fits, 'the title card fits the phone');
+    // The keys held, shown — through the Options card's buttons.
+    await ph.locator('.pbtn', { hasText: 'Options' }).tap();
+    await ph.locator('.popt', { hasText: 'Keys held' }).locator('.pc', { hasText: 'On' }).tap();
+    await ph.locator('.pbtn', { hasText: 'Back' }).tap();
+    await ph.locator('.pbtn.go', { hasText: 'Play' }).tap();
+    await ph.locator('.ppad').waitFor();
+    const canvas = await ph.locator('canvas.pscreen').boundingBox();
+    const padBox = await ph.locator('.ppad').boundingBox();
+    const jumpBox = await ph.locator('.pjump').boundingBox();
+    assert.ok(padBox.y >= canvas.y + canvas.height - 1 && jumpBox.y >= canvas.y + canvas.height - 1, 'upright, the controls are below the picture');
+    ok('on a phone: the title fits, and upright the controls are below the picture');
+
+    const cdp = await ph.context().newCDPSession(ph);
+    const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y, id]) => ({ x, y, id })) });
+    const light = (x, y) => ph.locator('canvas.pscreen').evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)), [x, y]);
+    const RIGHT = [0x7f, 0xe0, 0x8a], JUMP = [0xff, 0xd4, 0x5c], OFF = [0x2a, 0x2e, 0x50];
+    const lit = async (x, y, want, why) => {
+      for (let i = 0; i < 60; i++) { if (JSON.stringify(await light(x, y)) === JSON.stringify(want)) return; await ph.waitForTimeout(50); }
+      assert.deepEqual(await light(x, y), want, why);
+    };
+    const px = padBox.x + padBox.width * 0.3, py = padBox.y + padBox.height / 2;
+    const jx = jumpBox.x + jumpBox.width / 2, jy = jumpBox.y + jumpBox.height / 2;
+    await touch('touchStart', [[px, py, 1]]);
+    await touch('touchMove', [[px + 30, py, 1]]);
+    await lit(8, 163, RIGHT, 'the pad slid right runs right');
+    await touch('touchStart', [[px + 30, py, 1], [jx, jy, 2]]);
+    await lit(8, 170, JUMP, 'and Jump, with the other thumb, at the same time');
+    await lit(8, 163, RIGHT, 'still running');
+    await touch('touchEnd', [[jx, jy, 2]]);
+    await lit(8, 170, OFF, 'Jump let go');
+    // Slid off the pad, up over the picture, and lifted there: the pad still hears it, and lets go.
+    await touch('touchMove', [[px + 30, canvas.y + 40, 1]]);
+    await lit(8, 163, RIGHT, 'slid off the pad, still running');
+    await touch('touchEnd', [[px + 30, canvas.y + 40, 1]]);
+    await lit(8, 163, OFF, 'lifted off the pad, let go');
+    assert.notEqual((await ph.locator('.plat').textContent()).match(/jump sound sent(\S+)/)[1], '–', 'the jump was heard, its latency measured');
+    ok('two thumbs: the pad runs, Jump jumps, both at once, and a thumb slid off still lets go');
+
+    await ph.locator('.ptbtn[title="Pause"]').tap();
+    await ph.locator('.pcard h1', { hasText: 'Paused' }).waitFor();
+    await ph.locator('.pbtn.go', { hasText: 'Go on' }).tap();
+    await ph.locator('.pcard').waitFor({ state: 'detached' });
+    await ph.setViewportSize({ width: 844, height: 390 });
+    await ph.waitForTimeout(500);
+    const wide = await ph.locator('canvas.pscreen').boundingBox();
+    const jumpWide = await ph.locator('.pjump').boundingBox();
+    assert.ok(jumpWide.y < wide.y + wide.height, 'on its side, the controls lie over the picture');
+    if (shots) await ph.screenshot({ path: path.join(shots, 'pip-touch.png') });
+    ok('the pause button and Go on; on its side, the controls over the picture');
 
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');

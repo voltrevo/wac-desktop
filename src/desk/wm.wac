@@ -153,6 +153,8 @@ export struct Desk {
   i32 front;
   /** On a phone, the list of what is open, over everything, to go to or close. */
   bool recents;
+  /** Where the desktop was served from, to give someone else (`share.wac`); "" opened from a file. */
+  string address;
 }
 
 /**
@@ -372,7 +374,7 @@ static i32 MIN_H = 200;
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
               Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create(), defaultPrefs(), false, 0 - 1,
-              false);
+              false, "");
 }
 
 export Win? find(Desk d, i32 id) {

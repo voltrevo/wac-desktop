@@ -1,0 +1,379 @@
+// QR codes: bytes — an address, usually — as the square of dark and light modules a phone's camera reads.
+//
+// **The parts of the standard a page's address needs, and no more**: bytes, as they are (byte mode); error
+// correction at level M, which survives about a fifteenth of the code smudged or covered; versions 1 to 10, the sizes
+// from 21 modules to 57, which hold up to 213 bytes at that level. Every mask is tried and the one the standard scores
+// best is kept, so the code is as easy to read as it can be.
+//
+// The steps are the standard's, in its order: the bits (mode, length, the bytes, padding), split into blocks, each
+// with its Reed–Solomon error-correction codewords, interleaved; the fixed patterns — finders, timing, alignment —
+// then the codewords in their zigzag; then the mask, and the format and version information that says which.
+
+import { Vec } from "core";
+
+/** A QR code: `size` modules a side, row by row, `true` dark. A light border four modules wide goes around it. */
+export struct Qr {
+  i32 size;
+  bool[] dark;
+}
+
+/** For each version, 1 to 10, at level M: the error-correction codewords per block, and each block's data codewords. */
+i32 ecPerBlock(i32 v) {
+  i32[] per = [10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
+  return per[v - 1];
+}
+
+i32[] blocksOf(i32 v) {
+  if (v == 1) { return [16]; }
+  if (v == 2) { return [28]; }
+  if (v == 3) { return [44]; }
+  if (v == 4) { return [32, 32]; }
+  if (v == 5) { return [43, 43]; }
+  if (v == 6) { return [27, 27, 27, 27]; }
+  if (v == 7) { return [31, 31, 31, 31]; }
+  if (v == 8) { return [38, 38, 39, 39]; }
+  if (v == 9) { return [36, 36, 36, 37, 37]; }
+  return [43, 43, 43, 43, 44];
+}
+
+/** Where a version's alignment patterns are centred, across and down. */
+i32[] alignOf(i32 v) {
+  if (v == 1) { return i32[](); }
+  if (v <= 6) { return [6, 10 + 4 * v]; }
+  if (v == 7) { return [6, 22, 38]; }
+  if (v == 8) { return [6, 24, 42]; }
+  if (v == 9) { return [6, 26, 46]; }
+  return [6, 28, 50];
+}
+
+static i32 MOST_VERSION = 10;
+
+/** How many data codewords version `v` holds. */
+i32 capacityOf(i32 v) {
+  i32[] bs = blocksOf(v);
+  i32 n = 0;
+  for (i32 i = 0; i < bs.len(); i++) { n = n + bs[i]; }
+  return n;
+}
+
+/** The longest `data`, in bytes, a QR code here can hold: version 10's. */
+export i32 mostBytes() { return capacityOf(MOST_VERSION) - 3; }
+
+// ── Reed–Solomon over GF(256), as QR codes do it: x⁸ + x⁴ + x³ + x² + 1 ──
+
+i32 gfMul(i32 a, i32 b) {
+  i32 r = 0;
+  i32 x = a;
+  i32 y = b;
+  while (y > 0) {
+    if ((y & 1) != 0) { r = r ^ x; }
+    x = x << 1;
+    if ((x & 256) != 0) { x = x ^ 0x11D; }
+    y = y >> 1;
+  }
+  return r;
+}
+
+/** The generator of `n` error-correction codewords: (x − α⁰)(x − α¹)…, its coefficients after the leading 1. */
+i32[] generator(i32 n) {
+  i32[] g = i32[].filled(n, 0);
+  g[n - 1] = 1;
+  i32 root = 1;
+  for (i32 i = 0; i < n; i++) {
+    for (i32 j = 0; j < n; j++) {
+      g[j] = gfMul(g[j], root);
+      if (j + 1 < n) { g[j] = g[j] ^ g[j + 1]; }
+    }
+    root = gfMul(root, 2);
+  }
+  return g;
+}
+
+/** The error-correction codewords of `data`: the remainder of dividing it by the generator. */
+i32[] remainder(i32[] data, i32[] g) {
+  i32[] r = i32[].filled(g.len(), 0);
+  for (i32 i = 0; i < data.len(); i++) {
+    i32 factor = data[i] ^ r[0];
+    for (i32 j = 0; j + 1 < r.len(); j++) { r[j] = r[j + 1]; }
+    r[r.len() - 1] = 0;
+    for (i32 j = 0; j < r.len(); j++) { r[j] = r[j] ^ gfMul(g[j], factor); }
+  }
+  return r;
+}
+
+// ── the codewords ──
+
+void putBits(Vec<bool> bits, i32 value, i32 n) {
+  for (i32 i = n - 1; i >= 0; i--) { bits.push(((value >> i) & 1) != 0); }
+}
+
+/** `data` as version `v`'s codewords: the bits, padded, in blocks, each with its error correction, interleaved. */
+i32[] codewords(u8[] data, i32 v) {
+  i32 cap = capacityOf(v);
+  Vec<bool> bits = Vec.create();
+  putBits(bits, 4, 4);
+  putBits(bits, data.len(), v < 10 ? 8 : 16);
+  for (i32 i = 0; i < data.len(); i++) { putBits(bits, data[i] as i32, 8); }
+  i32 room = cap * 8 - bits.len();
+  putBits(bits, 0, room < 4 ? room : 4);
+  while (bits.len() % 8 != 0) { bits.push(false); }
+  i32 pad = 0;
+  while (bits.len() < cap * 8) {
+    putBits(bits, pad % 2 == 0 ? 0xEC : 0x11, 8);
+    pad++;
+  }
+  i32[] bytes = i32[].filled(cap, 0);
+  for (i32 i = 0; i < cap; i++) {
+    i32 b = 0;
+    for (i32 k = 0; k < 8; k++) { b = (b << 1) | (bits.get(i * 8 + k) ? 1 : 0); }
+    bytes[i] = b;
+  }
+  i32[] sizes = blocksOf(v);
+  i32 ec = ecPerBlock(v);
+  i32[] g = generator(ec);
+  Vec<i32[]> blocks = Vec.create();
+  Vec<i32[]> checks = Vec.create();
+  i32 at = 0;
+  i32 longest = 0;
+  for (i32 b = 0; b < sizes.len(); b++) {
+    i32[] block = i32[].filled(sizes[b], 0);
+    for (i32 i = 0; i < sizes[b]; i++) { block[i] = bytes[at + i]; }
+    at = at + sizes[b];
+    if (sizes[b] > longest) { longest = sizes[b]; }
+    blocks.push(block);
+    checks.push(remainder(block, g));
+  }
+  Vec<i32> out = Vec.create();
+  for (i32 i = 0; i < longest; i++) {
+    for (i32 b = 0; b < blocks.len(); b++) { if (i < blocks.get(b).len()) { out.push(blocks.get(b)[i]); } }
+  }
+  for (i32 i = 0; i < ec; i++) {
+    for (i32 b = 0; b < checks.len(); b++) { out.push(checks.get(b)[i]); }
+  }
+  return out.toArray();
+}
+
+// ── the square ──
+
+struct Grid {
+  i32 size;
+  bool[] dark;
+  /** The fixed patterns, and where the format and version go: no data, and no mask. */
+  bool[] fixed;
+}
+
+void put(Grid g, i32 x, i32 y, bool dark) {
+  if (x < 0 || y < 0 || x >= g.size || y >= g.size) { return; }
+  g.dark[y * g.size + x] = dark;
+  g.fixed[y * g.size + x] = true;
+}
+
+/** A finder — the three big squares — with its light border, its top left at (`x`, `y`). */
+void finder(Grid g, i32 x, i32 y) {
+  for (i32 dy = 0 - 1; dy <= 7; dy++) {
+    for (i32 dx = 0 - 1; dx <= 7; dx++) {
+      bool inside = dx >= 0 && dx <= 6 && dy >= 0 && dy <= 6;
+      bool ring = dx == 0 || dx == 6 || dy == 0 || dy == 6;
+      bool core = dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4;
+      put(g, x + dx, y + dy, inside && (ring || core));
+    }
+  }
+}
+
+/** The format information: the error-correction level (M, 0) and the mask, twice, beside the finders. */
+void format(Grid g, i32 mask) {
+  i32 data = mask;
+  i32 rem = data;
+  for (i32 i = 0; i < 10; i++) { rem = (rem << 1) ^ ((rem >> 9) * 0x537); }
+  i32 bits = ((data << 10) | rem) ^ 0x5412;
+  i32 n = g.size;
+  for (i32 i = 0; i <= 5; i++) { put(g, 8, i, ((bits >> i) & 1) != 0); }
+  put(g, 8, 7, ((bits >> 6) & 1) != 0);
+  put(g, 8, 8, ((bits >> 7) & 1) != 0);
+  put(g, 7, 8, ((bits >> 8) & 1) != 0);
+  for (i32 i = 9; i < 15; i++) { put(g, 14 - i, 8, ((bits >> i) & 1) != 0); }
+  for (i32 i = 0; i < 8; i++) { put(g, n - 1 - i, 8, ((bits >> i) & 1) != 0); }
+  for (i32 i = 8; i < 15; i++) { put(g, 8, n - 15 + i, ((bits >> i) & 1) != 0); }
+  put(g, 8, n - 8, true);
+}
+
+/** Every fixed pattern of version `v`, and the places the format and version take. */
+Grid fixedOf(i32 v) {
+  i32 n = 17 + 4 * v;
+  Grid g = Grid(n, bool[].filled(n * n, false), bool[].filled(n * n, false));
+  for (i32 i = 0; i < n; i++) {
+    put(g, 6, i, i % 2 == 0);
+    put(g, i, 6, i % 2 == 0);
+  }
+  finder(g, 0, 0);
+  finder(g, n - 7, 0);
+  finder(g, 0, n - 7);
+  i32[] al = alignOf(v);
+  for (i32 a = 0; a < al.len(); a++) {
+    for (i32 b = 0; b < al.len(); b++) {
+      // Not over a finder.
+      if ((a == 0 && b == 0) || (a == 0 && b == al.len() - 1) || (a == al.len() - 1 && b == 0)) { continue; }
+      for (i32 dy = 0 - 2; dy <= 2; dy++) {
+        for (i32 dx = 0 - 2; dx <= 2; dx++) {
+          i32 d = dx < 0 ? 0 - dx : dx;
+          i32 e = dy < 0 ? 0 - dy : dy;
+          put(g, al[a] + dx, al[b] + dy, (d > e ? d : e) != 1);
+        }
+      }
+    }
+  }
+  format(g, 0);
+  if (v >= 7) {
+    i32 rem = v;
+    for (i32 i = 0; i < 12; i++) { rem = (rem << 1) ^ ((rem >> 11) * 0x1F25); }
+    i32 bits = (v << 12) | rem;
+    for (i32 i = 0; i < 18; i++) {
+      bool bit = ((bits >> i) & 1) != 0;
+      i32 a = n - 11 + i % 3;
+      i32 b = i / 3;
+      put(g, a, b, bit);
+      put(g, b, a, bit);
+    }
+  }
+  return g;
+}
+
+/** The codewords in their zigzag: two columns at a time from the right, up then down, around the fixed patterns. */
+void place(Grid g, i32[] words) {
+  i32 n = g.size;
+  i32 i = 0;
+  i32 total = words.len() * 8;
+  i32 right = n - 1;
+  while (right >= 1) {
+    if (right == 6) { right = 5; }
+    for (i32 vert = 0; vert < n; vert++) {
+      for (i32 j = 0; j < 2; j++) {
+        i32 x = right - j;
+        bool upward = ((right + 1) & 2) == 0;
+        i32 y = upward ? n - 1 - vert : vert;
+        if (g.fixed[y * n + x]) { continue; }
+        if (i < total) {
+          g.dark[y * n + x] = ((words[i >> 3] >> (7 - (i & 7))) & 1) != 0;
+          i++;
+        }
+      }
+    }
+    right = right - 2;
+  }
+}
+
+bool masked(i32 mask, i32 x, i32 y) {
+  if (mask == 0) { return (x + y) % 2 == 0; }
+  if (mask == 1) { return y % 2 == 0; }
+  if (mask == 2) { return x % 3 == 0; }
+  if (mask == 3) { return (x + y) % 3 == 0; }
+  if (mask == 4) { return (x / 3 + y / 2) % 2 == 0; }
+  if (mask == 5) { return x * y % 2 + x * y % 3 == 0; }
+  if (mask == 6) { return (x * y % 2 + x * y % 3) % 2 == 0; }
+  return ((x + y) % 2 + x * y % 3) % 2 == 0;
+}
+
+/** `g` with mask `mask` over everything but the fixed patterns. */
+Grid withMask(Grid g, i32 mask) {
+  i32 n = g.size;
+  Grid out = Grid(n, bool[].filled(n * n, false), g.fixed);
+  for (i32 y = 0; y < n; y++) {
+    for (i32 x = 0; x < n; x++) {
+      bool d = g.dark[y * n + x];
+      out.dark[y * n + x] = g.fixed[y * n + x] ? d : (d != masked(mask, x, y));
+    }
+  }
+  format(out, mask);
+  return out;
+}
+
+/** The module at (`x`, `y`) — across or, with `down`, down a column — as the penalty reads a line. */
+bool at(Grid g, i32 line, i32 k, bool down) { return down ? g.dark[k * g.size + line] : g.dark[line * g.size + k]; }
+
+/**
+ * **How hard `g` is to read**, by the standard's four rules: long runs of one colour, two-by-two blocks of one, what
+ * looks like a finder where there is none, and dark and light far from even.
+ */
+i32 penalty(Grid g) {
+  i32 n = g.size;
+  i32 score = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    bool down = pass == 1;
+    for (i32 line = 0; line < n; line++) {
+      i32 run = 1;
+      for (i32 k = 1; k <= n; k++) {
+        if (k < n && at(g, line, k, down) == at(g, line, k - 1, down)) { run++; continue; }
+        if (run >= 5) { score = score + 3 + (run - 5); }
+        run = 1;
+      }
+      // 1:1:3:1:1, with four light modules on one side.
+      for (i32 k = 0; k + 7 <= n; k++) {
+        bool core = at(g, line, k, down) && !at(g, line, k + 1, down) && at(g, line, k + 2, down) && at(g, line, k + 3, down)
+                 && at(g, line, k + 4, down) && !at(g, line, k + 5, down) && at(g, line, k + 6, down);
+        if (!core) { continue; }
+        bool before = true;
+        bool after = true;
+        for (i32 q = 1; q <= 4; q++) {
+          if (k - q >= 0 && at(g, line, k - q, down)) { before = false; }
+          if (k + 6 + q < n && at(g, line, k + 6 + q, down)) { after = false; }
+        }
+        if (before || after) { score = score + 40; }
+      }
+    }
+  }
+  i32 darkCount = 0;
+  for (i32 y = 0; y < n; y++) {
+    for (i32 x = 0; x < n; x++) {
+      bool d = g.dark[y * n + x];
+      if (d) { darkCount++; }
+      if (x + 1 < n && y + 1 < n && d == g.dark[y * n + x + 1] && d == g.dark[(y + 1) * n + x] && d == g.dark[(y + 1) * n + x + 1]) {
+        score = score + 3;
+      }
+    }
+  }
+  i32 total = n * n;
+  i32 off = darkCount * 20 - total * 10;
+  if (off < 0) { off = 0 - off; }
+  score = score + ((off + total - 1) / total - 1) * 10;
+  return score;
+}
+
+/** `data` as a QR code — the smallest version that holds it — or null when it is longer than `mostBytes()`. */
+export Qr? qrOf(u8[] data) {
+  i32 v = 1;
+  while (v <= MOST_VERSION && capacityOf(v) < data.len() + (v < 10 ? 2 : 3)) { v++; }
+  if (v > MOST_VERSION) { return null; }
+  Grid g = fixedOf(v);
+  place(g, codewords(data, v));
+  Grid best = withMask(g, 0);
+  i32 bestScore = penalty(best);
+  for (i32 m = 1; m < 8; m++) {
+    Grid tried = withMask(g, m);
+    i32 s = penalty(tried);
+    if (s < bestScore) {
+      best = tried;
+      bestScore = s;
+    }
+  }
+  return Qr(best.size, best.dark);
+}
+
+/** `q` as RGBA pixels, `scale` to a module, with the four-module light border a reader needs: `side` pixels a side. */
+export u8[] qrPixels(Qr q, i32 scale) {
+  i32 side = (q.size + 8) * scale;
+  u8[] px = u8[].filled(side * side * 4, 255 as u8);
+  for (i32 y = 0; y < q.size; y++) {
+    for (i32 x = 0; x < q.size; x++) {
+      if (!q.dark[y * q.size + x]) { continue; }
+      for (i32 sy = 0; sy < scale; sy++) {
+        for (i32 sx = 0; sx < scale; sx++) {
+          i32 at = (((y + 4) * scale + sy) * side + (x + 4) * scale + sx) * 4;
+          px[at] = 0 as u8;
+          px[at + 1] = 0 as u8;
+          px[at + 2] = 0 as u8;
+        }
+      }
+    }
+  }
+  return px;
+}

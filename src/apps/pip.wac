@@ -24,7 +24,7 @@ import { CUE_JUMP, CUE_OPEN, CUE_WALL_JUMP, CUE_WIN, Keys, World, load, step } f
 import { SCREEN_H, SCREEN_W, Screen, drawInputs, drawWorld, follow, snap } from "./pip/art.wac";
 import { Checked, FULL_RUN, LEVEL_RUN, Leg, RESTART, Run, checkRun, clockOf, deltaAt, deltaOf, keyByte, keysOf, lastAttempt,
          runBytes, runOf, stepsIn, sumOfBest, total } from "./pip/runs.wac";
-import { BETWEEN, FULL_GHOST, GHOST, INPUTS, LATENCY, Option, SOUND, SPLITS, defaultOptions, optionsText, readOptions,
+import { BETWEEN, FULL_GHOST, GHOST, INPUTS, LATENCY, Option, SOUND, SPLITS, SWAP, TOUCH, defaultOptions, optionsText, readOptions,
          turn } from "./pip/options.wac";
 import { RATE, effects } from "./pip/chip.wac";
 import { LAYERS, RACE, mixed, songNamed, stems } from "./pip/music.wac";
@@ -116,7 +116,30 @@ struct Pip {
   /** The ghost's keys on the level being played: whichever the options say (`ghostFor`). */
   u8[] ghostRun;
   Speed sp;
+  Touch touch;
 }
+
+/**
+ * **On-screen controls, for a touch screen**: a pad for the left thumb — touch anywhere in it and slide, left or right
+ * of where the thumb came down, to run that way, turning without lifting — and a Jump button for the right, held for
+ * a higher jump as the key is. Each keeps its own finger until it lifts (`prevent="capture"`), so the two are
+ * followed apart and a finger slid off still lets go. They are keys like any other: the ghost, a run's keys and the
+ * keys-held display cannot tell them from a keyboard's.
+ */
+struct Touch {
+  /** The pad's finger, or -1; where it came down, where it is now, and which way that runs: -1, 0 or 1. */
+  i32 pad;
+  i32 fromX;
+  i32 fromY;
+  i32 atX;
+  i32 dir;
+  /** The Jump button's finger, or -1. */
+  i32 jump;
+}
+
+/** How far from where it came down a thumb must slide to run — and how far it can be, so turning back is quick. */
+static i32 DEAD = 14;
+static i32 REACH = 46;
 
 /** The speedrunning side of the game, all of it opt-in (`pip/options.wac`). */
 struct Speed {
@@ -389,6 +412,7 @@ void pause(Pip g) {
   g.mode = PAUSED;
   g.pick = g.index;
   g.held.clear();
+  letGo(g);
   readKeys(g);
   g.bump();
 }
@@ -423,9 +447,110 @@ void readKeys(Pip g) {
     if (isRight(k)) { r = true; }
     if (isJump(k) || k == " ") { j = true; }
   }
-  g.keys.left = l;
-  g.keys.right = r;
-  g.keys.jump = j;
+  g.keys.left = l || g.touch.dir < 0;
+  g.keys.right = r || g.touch.dir > 0;
+  g.keys.jump = j || g.touch.jump >= 0;
+}
+
+/** The on-screen controls let go of: paused, the window left — as the keys are. */
+void letGo(Pip g) {
+  g.touch.pad = 0 - 1;
+  g.touch.dir = 0;
+  g.touch.jump = 0 - 1;
+}
+
+/** A thumb on the pad: where it came down is the middle, and it runs nowhere until it slides. */
+void padDown(Pip g, ElementEvent e) {
+  if (g.mode != PLAYING || g.touch.pad >= 0) { return; }
+  g.touch.pad = e.pointer;
+  g.touch.fromX = e.x;
+  g.touch.fromY = e.y;
+  g.touch.atX = e.x;
+  g.touch.dir = 0;
+  g.bump();
+}
+
+void padMove(Pip g, ElementEvent e) {
+  if (e.pointer != g.touch.pad) { return; }
+  // Past its reach, the middle follows the thumb: turning back is never more than a short slide.
+  if (e.x - g.touch.fromX > REACH) { g.touch.fromX = e.x - REACH; }
+  if (g.touch.fromX - e.x > REACH) { g.touch.fromX = e.x + REACH; }
+  g.touch.atX = e.x;
+  i32 dx = e.x - g.touch.fromX;
+  i32 dir = dx < 0 - DEAD ? 0 - 1 : (dx > DEAD ? 1 : 0);
+  if (dir != g.touch.dir) {
+    g.touch.dir = dir;
+    if (dir != 0 && g.pressedAt < 0.0) { g.pressedAt = e.at; }
+    readKeys(g);
+  }
+  g.bump();
+}
+
+void padUp(Pip g, ElementEvent e) {
+  if (e.pointer != g.touch.pad) { return; }
+  g.touch.pad = 0 - 1;
+  g.touch.dir = 0;
+  readKeys(g);
+  g.bump();
+}
+
+void jumpDown(Pip g, ElementEvent e) {
+  if (g.mode != PLAYING || g.touch.jump >= 0) { return; }
+  g.touch.jump = e.pointer;
+  g.keys.jumped = true;
+  if (g.pressedAt < 0.0) { g.pressedAt = e.at; }
+  readKeys(g);
+  g.bump();
+}
+
+void jumpUp(Pip g, ElementEvent e) {
+  if (e.pointer != g.touch.jump) { return; }
+  g.touch.jump = 0 - 1;
+  readKeys(g);
+  g.bump();
+}
+
+/**
+ * The controls themselves: the pad — its stick where the thumb came down, and how far it has slid — and Jump; a
+ * pause button while playing; and, watching a run, pause and back. Shown on a touch screen, by the stylesheet, or
+ * as the options say (`Touch controls`).
+ */
+Node touchControls(Pip g) {
+  Touch t = g.touch;
+  bool held = t.pad >= 0;
+  i32 knob = t.atX - t.fromX;
+  knob = knob > REACH ? REACH : (knob < 0 - REACH ? 0 - REACH : knob);
+  if (g.mode == WATCHING) {
+    Watch? v = g.sp.watch;
+    return <div class="ptouch">
+      <div class="ptbtns">
+        <button class="ptbtn" title="Pause or go on" onclick={(ElementEvent e) => { watchKey(g, " "); }}>{v is not null && v!.paused ? "▶" : "❚❚"}</button>
+        <button class="ptbtn" title="Back to the replays" onclick={(ElementEvent e) => { watchKey(g, "Escape"); }}>✕</button>
+      </div>
+    </div>;
+  }
+  // **Always this one element**, empty when there is nothing to touch: were it a `<span/>` while paused and the card
+  // over the game a `<span/>` while playing, the view would match the two, and make the card afresh as it redrew —
+  // a tap on it landing on a button already gone.
+  if (g.mode != PLAYING) { return <div class="ptouch"></div>; }
+  return <div class="ptouch">
+    <div class="ppad" prevent="* capture"
+         onpointerdown={(ElementEvent e) => { padDown(g, e); }}
+         onpointermove={(ElementEvent e) => { padMove(g, e); }}
+         onpointerup={(ElementEvent e) => { padUp(g, e); }}
+         onpointercancel={(ElementEvent e) => { padUp(g, e); }}>
+      <div class={held ? "pstick on" : "pstick"} style={held ? "left: \{t.fromX}px; top: \{t.fromY}px" : ""}>
+        <div class={"pknob" + (t.dir < 0 ? " l" : (t.dir > 0 ? " r" : ""))} style={"transform: translateX(\{knob}px)"}></div>
+      </div>
+    </div>
+    <div class={t.jump >= 0 ? "pjump on" : "pjump"} prevent="* capture"
+         onpointerdown={(ElementEvent e) => { jumpDown(g, e); }}
+         onpointerup={(ElementEvent e) => { jumpUp(g, e); }}
+         onpointercancel={(ElementEvent e) => { jumpUp(g, e); }}>Jump</div>
+    <div class="ptbtns">
+      <button class="ptbtn" title="Pause" onclick={(ElementEvent e) => { pause(g); }}>❚❚</button>
+    </div>
+  </div>;
 }
 
 void down(Pip g, ElementEvent e) {
@@ -1021,6 +1146,7 @@ Node overlay(Pip g) {
       {runsLine(g)}
       <p class="pgo">Press <b>Enter</b> to play {g.levels[g.index].name}{g.reached > 0 ? " — or choose another with the arrows" : ""}</p>
       <div class="pbtns">
+        <button class="pbtn go" onclick={(ElementEvent e) => { begin(g, g.index); }}><b>▶</b> Play</button>
         <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> Full run</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openReplays(g); }}><b>V</b> Replays</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
@@ -1037,6 +1163,8 @@ Node overlay(Pip g) {
         ? <p class="pgo">Press <b>Enter</b> or <b>P</b> to go on with {here}{g.reached > 0 ? " — or choose another level with the arrows" : ""}</p>
         : <p class="pgo">Press <b>Enter</b> to play {g.levels[g.pick].name}{g.sp.full is not null ? ", leaving the full run" : ""} · <b>P</b> goes on with {here}</p>}
       <div class="pbtns">
+        <button class="pbtn go" onclick={(ElementEvent e) => { if (g.pick == g.index) { goOn(g); } else { leaveFor(g, g.pick); } }}>
+          <b>▶</b> {g.pick == g.index ? "Go on" : "Play"}</button>
         <button class="pbtn" onclick={(ElementEvent e) => { startFull(g); }}><b>F</b> {g.sp.full is not null ? "Full run again" : "Full run"}</button>
         <button class="pbtn" onclick={(ElementEvent e) => { openOptions(g); }}><b>O</b> Options</button>
         <button class="pbtn" onclick={(ElementEvent e) => { toTitle(g); }}><b>T</b> Title</button>
@@ -1054,6 +1182,11 @@ Node overlay(Pip g) {
         {medalName(medal(w.steps, g.pars[g.index]))} — par \{clock(g.pars[g.index])}{g.newBest ? " · your ghost runs it next time" : ""}</p>
       {g.sp.full is not null ? <p>Full run {clockOf(fullTime(g.sp.full!))} {deltaNode(g.sp.full!)}</p> : <span/>}
       <p class="pgo">Press <b>Enter</b> {g.mode == DONE ? "for the title" : "for level \{g.index + 2}"}</p>
+      <div class="pbtns">
+        <button class="pbtn go" onclick={(ElementEvent e) => { if (g.mode == DONE) { toTitle(g); } else { begin(g, g.index + 1); } }}>
+          <b>▶</b> {g.mode == DONE ? "The title" : "Level \{g.index + 2}"}</button>
+        {g.mode == DONE ? <span/> : <button class="pbtn" onclick={(ElementEvent e) => { toTitle(g); }}><b>T</b> Title</button>}
+      </div>
     </div></div>;
   }
   if (g.mode == OPTIONS) { return optionsCard(g); }
@@ -1166,6 +1299,7 @@ Node optionsCard(Pip g) {
     <div class="popts">{rows.toArray()}</div>
     <p class="pfaint">A ghost chosen here runs from the next start of a level.</p>
     <p class="pgo"><b>↑</b> <b>↓</b> choose · <b>←</b> <b>→</b> change · <b>Esc</b> back</p>
+    <div class="pbtns"><button class="pbtn go" onclick={(ElementEvent e) => { optionsKey(g, "Escape"); }}><b>◀</b> Back</button></div>
   </div></div>;
 }
 
@@ -1187,6 +1321,7 @@ Node replaysCard(Pip g) {
                     : <div class="preplays">{rows.toArray()}</div>}
     {g.sp.note != "" ? <p class="pnote">{g.sp.note}</p> : <span/>}
     <p class="pgo"><b>Enter</b> watches · <b>X</b> saves it as a file · <b>Esc</b> back</p>
+    <div class="pbtns"><button class="pbtn go" onclick={(ElementEvent e) => { replaysKey(g, "Escape"); }}><b>◀</b> Back</button></div>
     <p class="pfaint">Watching: <b>Space</b> pauses · <b>←</b> <b>→</b> five seconds · <b>↑</b> <b>↓</b> speed · <b>,</b> <b>.</b> a step, paused · <b>R</b> races a run brought in</p>
   </div></div>;
 }
@@ -1216,6 +1351,10 @@ Node fullCard(Pip g, Full f) {
     <div class="pfullsplits">{rows.toArray()}</div>
     {g.sp.note != "" ? <p class="pnote">{g.sp.note}</p> : <span/>}
     <p class="pgo">Press <b>Enter</b> for the title · <b>X</b> saves the run as a file</p>
+    <div class="pbtns">
+      <button class="pbtn go" onclick={(ElementEvent e) => { toTitle(g); }}><b>▶</b> The title</button>
+      <button class="pbtn" onclick={(ElementEvent e) => { exportFull(g); }}><b>X</b> Save as a file</button>
+    </div>
   </div></div>;
 }
 
@@ -1230,12 +1369,16 @@ Node Game(Ui ui, Pip g) {
     if (g.stage is not null) { g.stage!.focus(); }
     return () => { };
   });
-  return <div class="pip" tabindex="0" ref={stage}
+  i32 touchMode = g.sp.options[TOUCH].chosen;
+  string cls = "pip" + (touchMode == 0 ? " touch-auto" : (touchMode == 1 ? " touch-on" : " touch-off"))
+             + (g.sp.options[SWAP].chosen == 1 ? " swap" : "");
+  return <div class={cls} tabindex="0" ref={stage}
               prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape Backspace a d w s z x k p m l r g f v o t . , 1 2 3 4 5 6 7 8 9"
               onkeydown={(ElementEvent e) => { down(g, e); }}
               onkeyup={(ElementEvent e) => { up(g, e); }}
               onblur={(ElementEvent e) => {
                 g.held.clear();
+                letGo(g);
                 readKeys(g);
                 if (g.mode == PLAYING) { pause(g); }
                 Watch? v = g.sp.watch;
@@ -1253,6 +1396,7 @@ Node Game(Ui ui, Pip g) {
           <div><span>frames</span><b>{"\{fixed(g.fps, 0)} a second"}</b></div>
         </div>
       : <span/>}
+    {touchControls(g)}
     {overlay(g)}
   </div>;
 }
@@ -1299,7 +1443,7 @@ export async i32 main(Page page) {
   Pip g = Pip(page, levels, reached, load(levels[reached]), Screen.create(), TITLE, Keys.none(), Vec.create(), 0.0 - 1.0,
               0.0 - 1.0, 0.0 - 1.0, Meter.create(), Meter.create(), Meter.create(), 60.0, options[LATENCY].chosen == 0,
               options[SOUND].chosen == 1, fx, Band.create(), best, reached, false, pars, runs, Vec.create(), null, 0, true, 0,
-              null, null, quiet, 0, u8[](), sp);
+              null, null, quiet, 0, u8[](), sp, Touch(0 - 1, 0, 0, 0, 0, 0 - 1));
   page.mount((Ui ui) => <div class="pippage"><style>{css() + pipCss()}</style><Game g={g}/></div>);
   g.band.fanfare = page.sound(mixed(stems(songNamed("fanfare")), LAYERS - 1), RATE);
   play(g, "title");

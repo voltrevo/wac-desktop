@@ -1,0 +1,77 @@
+// QR codes (`src/qr.wac`): the size each length takes, the longest a code holds, the patterns a camera finds first —
+// and one code whole, as an independent reader (zxing) read it back, when it was written: the address it holds, at
+// error-correction level M.
+
+import { Qr, mostBytes, qrOf, qrPixels } from "../src/qr.wac";
+
+/** **Each length takes the smallest version that holds it**, from 21 modules a side to 57, and no longer. */
+export string test_a_code_is_as_small_as_its_bytes_allow() {
+  i32[] lens = [1, 14, 15, 26, 27, 62, 63, 213];
+  i32[] sizes = [21, 21, 25, 25, 29, 33, 37, 57];
+  for (i32 i = 0; i < lens.len(); i++) {
+    Qr? q = qrOf(u8[].filled(lens[i], 104 as u8));
+    if (q is null || q!.size != sizes[i]) { return "\{lens[i]} bytes: \{q is null ? 0 : q!.size} modules, not \{sizes[i]}"; }
+  }
+  if (mostBytes() != 213 || qrOf(u8[].filled(214, 104 as u8)) is not null) { return "past the longest a code here holds"; }
+  return "";
+}
+
+/** **The three finders are where a camera looks for them**, each a dark ring around a dark core, light between. */
+export string test_the_finders_are_in_three_corners() {
+  Qr q = qrOf("https://wac.example/".toBytes())!;
+  i32 n = q.size;
+  i32[] xs = [0, n - 7, 0];
+  i32[] ys = [0, 0, n - 7];
+  for (i32 f = 0; f < 3; f++) {
+    for (i32 dy = 0; dy < 7; dy++) {
+      for (i32 dx = 0; dx < 7; dx++) {
+        bool ring = dx == 0 || dx == 6 || dy == 0 || dy == 6;
+        bool core = dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4;
+        if (q.dark[(ys[f] + dy) * n + xs[f] + dx] != (ring || core)) { return "finder \{f} at \{dx},\{dy}"; }
+      }
+    }
+  }
+  // Drawn with the light border a reader needs: four modules, light.
+  u8[] px = qrPixels(q, 2);
+  if (px.len() != (n + 8) * 2 * (n + 8) * 2 * 4 || px[0] != (255 as u8)) { return "the border"; }
+  return "";
+}
+
+/** **One code, whole**: as zxing read it back — `https://wac.example/`, level M — when it was first made here. */
+export string test_a_code_reads_back_as_written() {
+  string[] want = [
+    "#######.##.#..###.#######",
+    "#.....#......#....#.....#",
+    "#.###.#..#.#...##.#.###.#",
+    "#.###.#.####.###..#.###.#",
+    "#.###.#.#.#######.#.###.#",
+    "#.....#.####.#..#.#.....#",
+    "#######.#.#.#.#.#.#######",
+    "........#...#.##.........",
+    "#...#.###..##.##.#####..#",
+    ".###.#.##..#..###...##.#.",
+    "##...##..#...###.#.####..",
+    ".#..#...#...#.###..#..##.",
+    "..#####..##..##..##..####",
+    "#.#..#..#...#.###...#..#.",
+    "..#.#.###..#######.####..",
+    ".....#.#..##.#.##.###.##.",
+    "###.#.#.#...##.########..",
+    "........#....####...#....",
+    "#######.##......#.#.#....",
+    "#.....#..#..#.#.#...####.",
+    "#.###.#.#.##.##.#########",
+    "#.###.#..#..#..#..##..###",
+    "#.###.#..#.####.###..#.#.",
+    "#.....#....#.#.#..######.",
+    "#######.#.#.##.#......###"
+  ];
+  Qr q = qrOf("https://wac.example/".toBytes())!;
+  if (q.size != want.len()) { return "\{q.size} modules"; }
+  for (i32 y = 0; y < q.size; y++) {
+    string row = "";
+    for (i32 x = 0; x < q.size; x++) { row = row + (q.dark[y * q.size + x] ? "#" : "."); }
+    if (row != want[y]) { return "row \{y}: \{row}, not \{want[y]}"; }
+  }
+  return "";
+}

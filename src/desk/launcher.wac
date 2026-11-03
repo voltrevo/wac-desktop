@@ -12,7 +12,7 @@
 
 import { Vec } from "core";
 import { ElementEvent, Node, Ref, Ui, html.button, html.div, html.input, html.span } from "web";
-import { Desk, open } from "./wm.wac";
+import { Desk, Win, open } from "./wm.wac";
 import { TRASH } from "./trash.wac";
 import { startApp } from "./builtin.wac";
 import { icon } from "../preview.wac";
@@ -53,6 +53,7 @@ export Entry[] entries() {
     Entry("Play", "lantern", "Pip and the Lost Lanterns", "A little platformer, and how long a key takes to show", ["game", "platformer", "retro", "jump", "pip", "lanterns", "latency", "arcade", "play"], true, "pip", ""),
     Entry("Play", "fractal", "Mandelbrot", "The set, dragged and zoomed into", ["fractal", "maths", "math", "zoom", "art", "complex", "explore", "mandelbrot"], true, "mandelbrot", ""),
     Entry("Play", "stackfall", "Stackfall", "Falling blocks, fresh rolls", ["game", "blocks", "puzzle", "falling", "arcade", "play"], true, "stackfall", ""),
+    Entry("Help", "share", "Share", "A code to open this desktop on another phone", ["share", "qr", "qr code", "link", "address", "url", "send", "invite", "phone", "camera"], true, "share", ""),
     Entry("Help", "text", "Welcome", "What this is, and what to try", ["help", "about", "intro", "guide", "readme", "start"], false, "viewer", "Desktop/Welcome.md"),
   ];
 }
@@ -182,6 +183,13 @@ export void launch(Desk d, Entry e) {
   }
   if (e.app == "settings") {
     open(d, "settings", "", "Settings", "settings");
+    return;
+  }
+  if (e.app == "share") {
+    Win w = open(d, "share", "", "Share", "share");
+    // A code to scan has no need of a desktop's width.
+    w.w = 420;
+    w.h = 620;
     return;
   }
   startApp(d, e.app, e.arg);

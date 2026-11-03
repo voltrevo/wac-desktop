@@ -1,8 +1,68 @@
 // Pip's look: the screen scaled up whole and crisp, in the middle of the window, with the words over it.
 
 export string pipCss() {
+  return mainCss() + touchCss(".pip.touch-on") + "@media (pointer: coarse) {" + touchCss(".pip.touch-auto") + "}";
+}
+
+/**
+ * **The on-screen controls' look, under `p`**: the touch-mode class that shows them — always, or on a touch screen.
+ * Across a wide window they lie over the picture's lower corners, see-through; in a tall one — a phone held upright —
+ * the picture moves to the top and they take the space below it, covering nothing.
+ */
+string touchCss(string p) {
+  return everywhere("""
+    @P { touch-action: none; }
+    @P .ptouch { display: block; }
+    @P .plat { bottom: 150px; font-size: 10px; padding: 4px 7px; }
+    /* The keys are no use to a thumb: the cards' buttons and the controls say what to press. */
+    @P .pkeys { display: none; }
+    @container pip (max-aspect-ratio: 1/1) {
+      @P .pscreen { bottom: auto; height: auto; aspect-ratio: 16 / 9; }
+      @P .ppad { top: 56.25cqw; height: auto; width: 60%; background: rgba(255, 255, 255, .03); }
+      @P .pjump { bottom: calc((100cqh - 56.25cqw) / 2 - 56px); right: 9%; width: 112px; height: 112px; }
+      @P.swap .pjump { right: auto; left: 9%; }
+      @P .plat { top: calc(56.25cqw + 8px); bottom: auto; }
+      @P .pstick:not(.on) { bottom: calc((100cqh - 56.25cqw) / 2 - 44px); }
+    }
+  """, p);
+}
+
+/** `s` with every `@P` made `p`. */
+string everywhere(string s, string p) {
+  string out = "";
+  string rest = s;
+  i32 at = rest.indexOf("@P");
+  while (at >= 0) {
+    out = out + rest.slice(0, at) + p;
+    rest = rest.slice(at + 2, rest.len());
+    at = rest.indexOf("@P");
+  }
+  return out + rest;
+}
+
+string mainCss() {
   return """
     .pippage, .pip { height: 100%; }
+    .pip { container: pip / size; }
+    .ptouch { display: none; position: absolute; inset: 0; pointer-events: none; }
+    .ppad { position: absolute; left: 0; bottom: 0; width: 50%; height: 62%; pointer-events: auto; touch-action: none; }
+    .pip.swap .ppad { left: auto; right: 0; }
+    .pstick { position: absolute; left: 64px; bottom: 44px; width: 88px; height: 88px; margin: -44px 0 0 -44px; border-radius: 50%;
+              border: 2px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .06); display: grid; place-items: center;
+              pointer-events: none; }
+    .pip.swap .pstick:not(.on) { left: auto; right: 20px; }
+    .pstick.on { bottom: auto; margin: -44px 0 0 -44px; border-color: rgba(255, 255, 255, .45); }
+    .pknob { width: 40px; height: 40px; border-radius: 50%; background: rgba(255, 255, 255, .35); }
+    .pknob.l, .pknob.r { background: #ffd45c; box-shadow: 0 0 12px #ffb040; }
+    .pjump { position: absolute; right: 26px; bottom: 30px; width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center;
+             font-weight: 700; font-size: 15px; color: #ffd45c; background: rgba(255, 212, 92, .16); border: 2px solid rgba(255, 212, 92, .6);
+             pointer-events: auto; touch-action: none; }
+    .pjump.on { background: rgba(255, 212, 92, .5); color: #10122a; }
+    .pip.swap .pjump { right: auto; left: 26px; }
+    .ptbtns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; pointer-events: auto; }
+    .ptbtn { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .25); background: rgba(7, 9, 26, .6);
+             color: #f4f0e4; font: inherit; font-size: 15px; display: grid; place-items: center; touch-action: manipulation; }
+    .pbtn.go { border-color: #ffd45c; }
     .pip { position: relative; overflow: hidden; outline: 0; background: #07091a; color: #f4f0e4; user-select: none; -webkit-user-select: none;
            font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
     .pscreen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; image-rendering: crisp-edges; }
@@ -61,5 +121,16 @@ export string pipCss() {
     .pc { padding: 1px 7px; border-radius: 4px; color: #9aa0c8; cursor: pointer; }
     .pc.on { background: #ffd45c; color: #10122a; }
     .preplays { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; margin: 12px 0; font-size: 12.5px; text-align: left; }
+    /* A narrow window — a phone's — has room for two levels to a row, or one: last, so these win over the rules above. */
+    @container pip (max-width: 600px) {
+      .pcard { padding: 14px 12px; margin: 8px; max-height: calc(100% - 16px); }
+      .pcard h1 { font-size: 18px; }
+      .pcard p { font-size: 12.5px; }
+      .plevels, .preplays { grid-template-columns: 1fr 1fr; font-size: 12px; }
+      .plevel { gap: 6px; padding: 5px 6px; }
+      .pbtns { flex-wrap: wrap; }
+      .pbtn { padding: 8px 12px; }
+    }
+    @container pip (max-width: 380px) { .plevels, .preplays { grid-template-columns: 1fr; } }
   """;
 }
