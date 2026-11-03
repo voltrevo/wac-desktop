@@ -3,6 +3,7 @@
 // colours colour it again without working it out, the view is kept for the next start, and a picture is saved to the
 // desktop as a PNG.
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -55,14 +56,8 @@ const read = async (p) => {
       }, null, { timeout: 60000 });
       return await read(p);
     };
-    // **Clicked until the launcher opens.** `.dicons` is drawn before the worker's handlers are attached, so on a
-    // loaded machine the first click can land on a button that does not answer yet — seen with the browser tests run
-    // side by side (`wac task test:browser`). A click it does answer opens `.lq`, and a second would close it again.
     const launch = async () => {
-      for (let k = 0; k < 20 && !(await p.locator('.lq').isVisible()); k++) {
-        await p.locator('.tblaunch').click();
-        await p.locator('.lq').waitFor({ timeout: 1500 }).catch(() => {});
-      }
+      await openLauncher(p);
       await p.locator('.lq').fill('fractal');
       await p.keyboard.press('Enter');
     };

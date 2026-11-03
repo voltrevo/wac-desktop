@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Observe actual Web Audio sources, not mocked game cues: the desktop must carry every start and stop.
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), http = require('node:http');
 const root = path.join(__dirname, '..', 'dist');
@@ -37,7 +38,7 @@ const WATCH = `
     const loops = () => p.evaluate(() => window.__sfPlayed.filter(v => v.loop && !v.stopped && !v.ended).length);
     const silent = async () => { await p.waitForFunction(() => window.__sfPlayed.every(v => v.stopped || v.ended)); };
     const launch = async () => {
-      await p.locator('.tblaunch').click();
+      await openLauncher(p);
       await p.locator('.lq').fill('Stackfall'); await p.keyboard.press('Enter');
       await p.locator('.sf').waitFor({timeout:60000}); await settle();
     };
@@ -90,7 +91,7 @@ const WATCH = `
     assert.match(await game.locator('.sf-music').textContent(),/off/,'music preference survives reload');
     await startGame(); assert.equal(await loops(),0);
     await game.locator('.sf-music').click(); await settle(); assert.equal(await loops(),1);
-    await p.locator('.tblaunch').click(); await settle(); await silent();
+    await openLauncher(p); await settle(); await silent();
     assert.equal(await game.locator('.sf-overlay').count(),1,'leaving window pauses and silences');
     await p.keyboard.press('Escape'); await game.locator('.sf-well').click();
     await fixture('single'); n=await played(); await p.keyboard.press('Space'); await expectCue(n,0.335);

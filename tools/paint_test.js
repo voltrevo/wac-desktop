@@ -5,6 +5,7 @@
 // dropped on its window, and one chosen in the desktop's picker, opened; then a colour chosen in the colour picker,
 // a selection copied, pasted, moved and deleted, and text typed.
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -68,7 +69,7 @@ const solidPng = (w, h, [r, g, b]) => {
       assert.fail(what);
     };
     const launch = async () => {
-      await p.locator('.tblaunch').click();
+      await openLauncher(p);
       await p.locator('.lq').fill('draw');
       await p.keyboard.press('Enter');
     };

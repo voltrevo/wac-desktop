@@ -4,6 +4,7 @@
 // voices as it plays; Markdown files sent to the Markdown editor, written in — the toolbar wrapping what is selected —
 // shown beside the text as it is typed, and saved.
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -46,7 +47,7 @@ const WATCH = `
     assert.equal(await inViewer('color'), 'rgb(18, 24, 38)', 'light to begin with, as the system is');
     assert.equal(await frameBg(), 'rgb(255, 255, 255)');
 
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('dark mode');
     await p.keyboard.press('Enter');
     const settings = p.locator('.settings');
@@ -79,7 +80,7 @@ const WATCH = `
 
     // The volume, heard by every program as it plays: Pip's title music, its seven layers looping.
     await settings.locator('.seg', { hasText: 'As the system' }).click();
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('platformer');
     await p.keyboard.press('Enter');
     await p.locator('.pcard h1').waitFor({ timeout: 60000 });

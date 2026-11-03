@@ -3,6 +3,7 @@
 // title, played with the keys, heard — every sound the page starts and stops is counted by a script added before the
 // desktop's own — measured in its latency corner, paused, muted, and silenced when its window closes.
 const { chromium, devices } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -42,7 +43,7 @@ const WATCH = `
     const ok = (what) => console.log('ok   ' + what);
     const settle = (ms = 300) => p.waitForTimeout(ms);
 
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('platformer');
     await p.keyboard.press('Enter');
     const card = p.locator('.pcard h1');
@@ -134,7 +135,7 @@ const WATCH = `
     ok('closing the window silences it');
 
     // Further on: seven levels reached, written where Pip keeps them from the Terminal, and Pip started again.
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('shell');
     await p.keyboard.press('Enter');
     const cmd = p.locator('.win.focus .tcmd');
@@ -143,7 +144,7 @@ const WATCH = `
     await cmd.press('Enter');
     await p.locator('.win.focus .tout', { hasText: /\n6\n/ }).waitFor({ timeout: 10000 });
     await p.locator('.win.focus .wbtn.close').click();
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('platformer');
     await p.keyboard.press('Enter');
     await card.waitFor({ timeout: 60000 });
@@ -214,7 +215,7 @@ const WATCH = `
     await p.keyboard.press('Escape');
     await p.keyboard.press('t');
     await card.waitFor();
-    await p.locator('.tblaunch').click();
+    await openLauncher(p);
     await p.locator('.lq').fill('desktop files');
     await p.keyboard.press('Enter');
     const files = p.locator('.win.focus .files');

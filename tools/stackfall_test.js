@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Stackfall as a desktop program: controls, focus, repeat handling and persistence in a real browser.
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,7 +27,7 @@ const root = path.join(__dirname, '..', 'dist');
     const settle = () => p.waitForTimeout(300);
     await p.waitForSelector('.dicons');
     const launch = async title => {
-      await p.locator('.tblaunch').click();
+      await openLauncher(p);
       await p.locator('.litem', { has: p.locator('.lt', { hasText: new RegExp(`^${title}$`) }) }).click();
     };
     await launch('Stackfall');

@@ -9,6 +9,7 @@
 // from file://, where there is no storage: the desktop must say so, and still work.
 
 const { chromium } = require('playwright');
+const { openLauncher } = require('./launcher.js');
 const fs = require('fs'), os = require('os'), path = require('path'), http = require('http');
 const { execFileSync } = require('child_process');
 
@@ -358,7 +359,7 @@ const until = async (cond, ms = 20000) => {
 
   // **And what was allowed can be taken back**: the Permissions window lists it, Take back forgets it, and the
   // program started again is asked again — and refused, cannot read.
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Permissions' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Permissions' }).click();
   await until(async () => (await texts('.win.focus .arow')).some((g) => g.startsWith('reader.wasmmay read Desktop')));
   const grants = await texts('.win.focus .arow');
   check(grants.some((g) => g.startsWith('reader.wasmmay read Desktop')), 'Permissions lists what a program was allowed', grants);
@@ -487,7 +488,7 @@ const until = async (cond, ms = 20000) => {
   // up to is waited for.
   const cmain = () => read('.win.focus .cmain'), csub = () => read('.win.focus .csub');
   const kept = () => texts('.win.focus .chrow .cha');
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Calculator' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Calculator' }).click();
   await until(async () => (await front()) === 'Calculator' && !!(await p.$('.win.focus .ck')), 30000);
   for (const k of ['7', '×', '6', '=']) await p.locator('.win.focus .ck').filter({ hasText: new RegExp(`^${k}$`) }).click();
   await until(async () => (await cmain()) === '42');
@@ -510,13 +511,13 @@ const until = async (cond, ms = 20000) => {
   await p.keyboard.press('Escape'); await p.keyboard.type('5+5');
   await until(async () => (await csub()) === '= 10' && (await stored('.apps/calc/sum')) === '5+5');
   await p.locator('.win.focus .wbtn[title=Close]').click(); await until(async () => !(await titled('Calculator')));
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Calculator' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Calculator' }).click();
   await p.waitForFunction(() => { const e = __deep('.win.focus .program-body >>> .csub'); return e !== null && e.textContent === '= 10'; }, null, { timeout: 15000 }).catch(() => {});
   check((await p.textContent('.win.focus .csub').catch(() => '')) === '= 10', 'started again, the Calculator has the sum it had', await read('.win.focus .csub'));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await until(async () => !(await titled('Calculator')));
 
   // A new file from the Editor is saved where the desktop says: on the Desktop, under the name typed.
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Text editor' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Text editor' }).click();
   await p.waitForSelector('.win.focus .ename', { timeout: 15000 }).catch(() => {});
   await p.locator('.win.focus .ename').fill('fresh.txt');
   await p.locator('.win.focus textarea').fill('written in a new file\n');
@@ -527,7 +528,7 @@ const until = async (cond, ms = 20000) => {
   await p.locator('.win.focus .wbtn[title=Close]').click(); await until(async () => !(await titled('fresh.txt')));
 
   // `exit` ends the Terminal, and its window closes.
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Terminal' }).click();
   await p.waitForSelector('.win.focus .tcmd', { timeout: 15000 }).catch(() => {});
   const terms = (await texts('.win .tt')).filter((t) => t === 'Terminal').length;
   const termsNow = async () => (await texts('.win .tt')).filter((t) => t === 'Terminal').length;
@@ -540,19 +541,19 @@ const until = async (cond, ms = 20000) => {
   const offers = () => texts('.launcher .litem .lt');
   // A resize reaches the page's program as an event the next frame, after which what is sent to it comes after it.
   const frames = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  await p.locator('.tblaunch').click(); await until(searching);
+  await openLauncher(p); await until(searching);
   await p.keyboard.type('shell'); await until(async () => (await offers()).join() === 'Terminal');
   check((await texts('.launcher .litem .lt')).join() === 'Terminal', 'searching the launcher for "shell" finds the Terminal', await texts('.launcher .litem .lt'));
   await p.keyboard.press('Enter');
   await p.waitForSelector('.win.focus .tcmd', { timeout: 15000 }).catch(() => {});
   check((await p.textContent('.win.focus .tt').catch(() => '')) === 'Terminal', 'and Enter opens it', await texts('.win .tt'));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await until(async () => (await termsNow()) === terms - 1);
-  await p.locator('.tblaunch').click();
+  await openLauncher(p);
   // An open launcher does not redraw a group it folds or unfolds, so there is nothing to wait for there: the click
   // reaches the desktop before the Escape after it does, and the launcher opened again shows what it did.
   await p.locator('.lgroup', { hasText: 'Tools' }).click();
   await p.keyboard.press('Escape'); await until(async () => !(await p.$('.launcher')));
-  await p.locator('.tblaunch').click(); await until(async () => { const l = await offers(); return !l.includes('Calculator') && l.includes('Terminal'); });
+  await openLauncher(p); await until(async () => { const l = await offers(); return !l.includes('Calculator') && l.includes('Terminal'); });
   const shown = await texts('.launcher .litem .lt');
   check(!shown.includes('Calculator') && shown.includes('Terminal'), 'a folded group stays folded', shown);
   await p.locator('.lgroup', { hasText: 'Tools' }).click();
@@ -565,7 +566,7 @@ const until = async (cond, ms = 20000) => {
 
   // **The wac IDE is a program on the site**, its projects a folder of the desktop's disk: a new project checks in
   // the IDE's own checker process, and Build writes the module beside its source, where Files shows it.
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'wac IDE' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'wac IDE' }).click();
   await p.waitForSelector('.win.focus .home .btn.primary', { timeout: 30000 }).catch(() => {});
   await p.locator('.win.focus .home .btn.primary').click();
   // Checked once the status is neither Checking nor Not checked and the bar says how the check went: a project just
@@ -634,7 +635,7 @@ const until = async (cond, ms = 20000) => {
   await until(async () => (await ideWindows()) === 'hello,hello 2' && (await texts('.tbwin')).filter((t) => t.startsWith('hello')).length === 2);
   check(await ideWindows() === 'hello,hello 2', 'a project opens in a window of its own, beside the other', await texts('.win .tt'));
   check((await texts('.tbwin')).filter((t) => t.startsWith('hello')).length === 2, 'each with its own button on the taskbar', await texts('.tbwin'));
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'wac IDE' }).click(); await until(async () => !(await p.$('.launcher')));
+  await openLauncher(p); await p.locator('.litem', { hasText: 'wac IDE' }).click(); await until(async () => !(await p.$('.launcher')));
   // A second IDE would be a window that appears: there is nothing to wait for but time, so a second goes by first.
   await settle(1000);
   check(await ideWindows() === 'hello,hello 2' && !(await texts('.win .tt')).includes('wac IDE'), 'the launcher brings the IDE forward, not a second IDE', await texts('.win .tt'));
@@ -655,7 +656,7 @@ const until = async (cond, ms = 20000) => {
   await settle(1000);
   check(await ideWindows() === 'hello 2', 'and after a reload it stays closed', await texts('.win .tt'));
   await closeWin('hello 2'); await until(async () => (await ideWindows()) === '');
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Files' }).first().click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Files' }).first().click();
   await row('Projects').dblclick(); await until(async () => (await crumbs()).pop() === 'Projects');
   await row('hello').dblclick();
   await until(async () => { const l = await texts('.win.focus .row .t'); return (await crumbs()).pop() === 'hello' && l.includes('main.wac') && l.includes('main.wasm'); });
@@ -666,13 +667,13 @@ const until = async (cond, ms = 20000) => {
 
   // **The desktop's own site**, over http: read-only at /site, and the Archive Explorer started from it, a
   // program like any other.
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Terminal' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Terminal' }).click();
   const siteOut = await run('ls /site/apps; wc -c /site/apps/explorer.wasm; echo x > /site/x');
   const wasmSize = fs.statSync(path.join(root, 'dist', 'apps', 'explorer.wasm')).size;
   check(siteOut.includes('explorer.wasm') && siteOut.includes(String(wasmSize)), 'over http, the site is at /site', siteOut.slice(-200));
   check(/read-only/i.test(siteOut), 'and cannot be written', siteOut.slice(-200));
   await p.locator('.win.focus .wbtn[title=Close]').click(); await until(async () => !(await titled('Terminal')));
-  await p.locator('.tblaunch').click(); await p.locator('.litem', { hasText: 'Archive Explorer' }).click();
+  await openLauncher(p); await p.locator('.litem', { hasText: 'Archive Explorer' }).click();
   await p.waitForFunction(() => { const e = document.querySelector('.win.focus .program-body'); return e !== null && (e.shadowRoot ?? e).textContent.includes('Drop a file or folder'); }, null, { timeout: 15000 }).catch(() => {});
   check((await p.$eval('.win.focus .program-body', (e) => (e.shadowRoot ?? e).textContent).catch(() => '')).includes('Drop a file or folder'), 'the Archive Explorer starts from the site, in a window', await read('.win.focus'));
   check((await read('.win.focus .tt')) === 'Archive Explorer', 'titled as it titles itself', await read('.win.focus .tt'));
