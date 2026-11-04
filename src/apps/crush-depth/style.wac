@@ -43,6 +43,7 @@ export string panelCss() {
     .kc-sonar span::before { content:""; position:absolute; width:18px; height:10px;
       top:-6px; left:22px; border-radius:6px 6px 0 0; background:inherit; }
     .kc-back { margin:10px 0; }
+    .kc-missions { display:grid; gap:6px; margin-bottom:10px; }
     .kc-bank { display:grid; gap:9px; }
     .kc-bank .kc-controls { display:grid; gap:4px; }
     .kc-bank .kc-controls>div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }

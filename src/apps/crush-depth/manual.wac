@@ -12,7 +12,9 @@ export Node Manual() {
     <div class="kc-reading">E1 → 3 · E2 → 1 · E3 → 2</div>
     <p>Switch the load to <strong>Pump</strong> once the leak is sealed and the bus is live. Pump and trim share one supply. Switch off the pump as soon as floodwater is at or below 25% to save battery.</p>
     <h3>03 / Surface</h3>
-    <p>With the leak sealed, floodwater at or below 25%, and a working bus, switch the load to <strong>Trim</strong>, then <strong>Blow ballast</strong>. There is one air charge. Keep enough battery for ascent, which takes about one second per 14 m of depth.</p>
+    <p>With the leak sealed, floodwater at or below 25%, and a working bus, switch the load to <strong>Trim</strong>, then <strong>Blow ballast</strong>. There is one air charge. Trim displays the estimated battery cost and reserve. If the battery runs out during the four-second ascent, the sub stalls below the surface.</p>
+    <h3>Dive profiles</h3>
+    <p><strong>Hull Breach</strong> is the standard drill. <strong>Below the Shelf</strong> starts near crush depth. <strong>Low Reserve</strong> starts with heavy flooding and a depleted battery. Stop pumping as soon as the floodwater is safe.</p>
     <p>The boat is lost at 650 m, 100% floodwater, or 0% battery.</p>
   </div>;
 }
