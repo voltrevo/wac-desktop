@@ -1,0 +1,50 @@
+// Lantern Light's music: a night tune of its own, slow enough to think to, on Pip's sound chip (`pip/music.wac`).
+//
+// **It grows as the level is lit.** Six layers play together from one moment, each turned up as it is earned: the
+// bass and the melody always; a second voice under the melody once a third of the lanterns are lit, and high chords
+// at two thirds; a soft arpeggio once the door is open; and, whenever a ghost is near Pip in the dark, a low heartbeat.
+// D minor, eight bars round: D minor, B flat, F, C; D minor, G minor, B flat, A — and back.
+
+import { Song, echoing, pluck, pluckedArp, plainBass, times } from "../pip/music.wac";
+
+/** The layers, in the order they are earned. */
+export static i32 TUNE = 1;
+export static i32 UNDER = 2;
+export static i32 HIGH = 3;
+export static i32 OPENED = 4;
+export static i32 NEAR = 5;
+/** How many layers the song has: the bass, and those above. */
+export static i32 SONG_LAYERS = 6;
+
+/** The melody: eighths, mostly held, a lullaby's shape — up to the fifth, and home by the leading note. */
+string melody() {
+  return "D5 - - - F5 - E5 D5 | D5 - C5 - A#4 - - - | A4 - C5 - F5 - - E5 | E5 - D5 - C5 - - - | "
+       + "D5 - - - F5 - A5 - | G5 - F5 - E5 D5 - - | D5 - F5 - A#5 - A5 G5 | A5 - - - C#5 - E5 -";
+}
+
+/** Each bar's root, held the bar. */
+string bass() {
+  return "D3 - - - - - - - | A#2 - - - - - - - | F2 - - - - - - - | C3 - - - - - - - | "
+       + "D3 - - - - - - - | G2 - - - - - - - | A#2 - - - - - - - | A2 - - - - - - -";
+}
+
+/** Under the melody, in half notes: the chord's third or fifth, stepping down. */
+string second() {
+  return "A4 - - - - - - - | F4 - - - D4 - - - | C4 - - - F4 - - - | G4 - - - E4 - - - | "
+       + "A4 - - - D5 - - - | A#4 - - - G4 - - - | F4 - - - D4 - - - | E4 - - - C#4 - - -";
+}
+
+/** The chords, a bar each — D minor, B flat, F, C, D minor, G minor, B flat, A — high, a beat to a token. */
+string chords() { return "D5 . . . A#4^ . . . F5^ . . . C5^ . . . D5 . . . G4 . . . A#4^ . . . A4^ . . ."; }
+
+export Song nocturne() {
+  Song s = Song.make("nocturne", 84.0, 8, true);
+  s.add(plainBass(0.32), 0, 2, bass());
+  s.add(echoing(pluck(0.15, 0.25), 0.35, 0.36), TUNE, 2, melody());
+  s.add(pluck(0.08, 0.5), UNDER, 2, second());
+  s.add(echoing(pluck(0.055, 0.125), 0.4, 0.36), HIGH, 1, chords());
+  s.add(echoing(pluckedArp(0.05), 0.35, 0.36), OPENED, 1, chords());
+  // A heart beating, twice a bar, low.
+  s.add(pluck(0.14, 0.5), NEAR, 2, times("D2 . D2 . . . . .", 8));
+  return s;
+}

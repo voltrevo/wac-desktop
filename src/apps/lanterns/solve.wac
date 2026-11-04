@@ -2,11 +2,11 @@
 //
 // **What makes a level fit to play**: that it can be won, and what its par is — not a guess, but the fewest moves there
 // are. The rules are turn-based and nothing in them is random (`rules.wac`), so a level is a finite set of places —
-// where Pip is, which lanterns are lit, where the mirrors and ghosts are — and a breadth-first search of them finds the
+// where Pip is, which lanterns are lit, where the mirrors and ghosts are, which stones have fallen — and a breadth-first search of them finds the
 // shortest way to the door, or that there is none. The tests run it on every level (`test/lanterns_test.wac`).
 
 import { Map, Queue, Vec, hashString, stringEq } from "core";
-import { Board, copyBoard, move } from "./rules.wac";
+import { Board, STONE, copyBoard, move } from "./rules.wac";
 
 /** What a search found: the fewest moves that win, or -1 for none; and the moves, as `L` `R` `U` `D`. */
 export struct Solved {
@@ -24,6 +24,9 @@ string placeOf(Board b) {
   for (i32 i = 0; i < b.mirrors.len(); i++) { out = out + "\{b.mirrors[i]},"; }
   out = out + "|";
   for (i32 i = 0; i < b.ghosts.len(); i++) { out = out + "\{b.ghosts[i]},"; }
+  // Which stones have fallen: the stones still standing, by where they are.
+  out = out + "|";
+  for (i32 i = 0; i < b.ground.len(); i++) { if (b.ground[i] == STONE) { out = out + "\{i},"; } }
   return out;
 }
 

@@ -6,7 +6,8 @@
 // lighting one lantern can light others Pip cannot reach — across water, which light crosses and nothing else does. Pip lights a lantern by walking into it, and **pushes a
 // mirror** by walking into it, if the tile beyond is clear floor. **Ghosts move only in the dark**: after each move
 // each steps toward Pip, never onto a lit tile, and one the light reaches is gone. A ghost that reaches Pip catches
-// Pip. Every lantern lit, the door opens; Pip through it wins the level.
+// Pip. **A crumbling stone holds Pip once**: stepped off, it falls into the water — so a way across is one way, and
+// where it was, light now crosses. Every lantern lit, the door opens; Pip through it wins the level.
 
 import { Vec } from "core";
 
@@ -15,6 +16,8 @@ export static u8 WALL = '#';
 export static u8 FLOOR = '.';
 export static u8 WATER = '~';
 export static u8 DOOR = 'E';
+/** A crumbling stone: floor to Pip, once — and nothing else stands on it, nor does light cross it until it falls. */
+export static u8 STONE = 'o';
 
 /** What a move made happen, for the sounds: the first of these is none. */
 export static i32 CUE_STEP = 1;
@@ -25,11 +28,12 @@ export static i32 CUE_FADE = 5;
 export static i32 CUE_CAUGHT = 6;
 export static i32 CUE_OPEN = 7;
 export static i32 CUE_WIN = 8;
+export static i32 CUE_CRUMBLE = 9;
 
 export struct Board {
   i32 cols;
   i32 rows;
-  /** Each tile's part that never moves: `WALL`, `FLOOR`, `WATER` or `DOOR`. */
+  /** Each tile's part that does not move: `WALL`, `FLOOR`, `WATER`, `DOOR`, or a `STONE` — which falls into `WATER`. */
   u8[] ground;
   i32 pip;
   /** Which way Pip last faced, -1 left and 1 right: what the picture shows. */
@@ -50,7 +54,7 @@ export struct Board {
   Vec<i32> cues;
 }
 
-/** A level's rows as a board: `#` wall, `.` floor, `~` water, `P` Pip, `E` the door, `L` a lantern, `*` one already lit, `/` and `\` mirrors, `G` a ghost. */
+/** A level's rows as a board: `#` wall, `.` floor, `~` water, `o` a crumbling stone, `P` Pip, `E` the door, `L` a lantern, `*` one already lit, `/` and `\` mirrors, `G` a ghost. */
 export Board boardOf(string[] rows) {
   i32 h = rows.len();
   i32 w = 0;
@@ -67,7 +71,7 @@ export Board boardOf(string[] rows) {
     for (i32 x = 0; x < r.len(); x++) {
       i32 at = y * w + x;
       u8 c = r[x];
-      ground[at] = c == WALL ? WALL : (c == DOOR ? DOOR : (c == WATER ? WATER : FLOOR));
+      ground[at] = c == WALL || c == DOOR || c == WATER || c == STONE ? c : FLOOR;
       if (c == 'P') { pip = at; }
       if (c == 'L' || c == '*') {
         lanterns.push(at);
@@ -88,12 +92,18 @@ export Board boardOf(string[] rows) {
 
 /** `b` as it is, to come back to: the undo of a move, or a place a search has been. */
 export Board copyBoard(Board b) {
-  return Board(b.cols, b.rows, b.ground, b.pip, b.facing, copyI32(b.lanterns), copyBool(b.lit), copyI32(b.mirrors),
+  return Board(b.cols, b.rows, copyU8(b.ground), b.pip, b.facing, copyI32(b.lanterns), copyBool(b.lit), copyI32(b.mirrors),
                b.slants, copyI32(b.ghosts), copyBool(b.light), b.moves, b.won, b.caught, Vec.create());
 }
 
 i32[] copyI32(i32[] a) {
   i32[] out = i32[].filled(a.len(), 0);
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}
+
+u8[] copyU8(u8[] a) {
+  u8[] out = u8[].filled(a.len(), 0 as u8);
   for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
   return out;
 }
@@ -157,7 +167,7 @@ export bool shine(Board b) {
       i32 at = from;
       for (i32 n = 0; n < limit; n++) {
         at = beside(b, at, dx, dy);
-        if (at < 0 || b.ground[at] == WALL) { break; }
+        if (at < 0 || b.ground[at] == WALL || b.ground[at] == STONE) { break; }
         b.light[at] = true;
         i32 l = lanternAt(b, at);
         if (l >= 0) {
@@ -242,6 +252,7 @@ export bool move(Board b, i32 dx, i32 dy) {
     return false;
   }
   bool wasOpen = open(b);
+  i32 from = b.pip;
   i32 l = lanternAt(b, to);
   i32 m = mirrorAt(b, to);
   if (l >= 0) {
@@ -274,6 +285,11 @@ export bool move(Board b, i32 dx, i32 dy) {
     b.pip = to;
     b.cues.push(CUE_STEP);
     if (ghostAt(b, to) >= 0) { b.caught = true; }
+  }
+  // Stepped off a crumbling stone: it falls, and is water from now on.
+  if (b.pip != from && b.ground[from] == STONE) {
+    b.ground[from] = WATER;
+    b.cues.push(CUE_CRUMBLE);
   }
   b.moves++;
   if (shine(b)) { b.cues.push(CUE_LIGHT); }

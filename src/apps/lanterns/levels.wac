@@ -1,8 +1,10 @@
 // Lantern Light's levels: each its rows (`rules.wac`'s `boardOf`), its name, and its par — the fewest moves that win
 // it, which `test/lanterns_test.wac` finds again by searching every move (`solve.wac`) and holds each par to.
 //
-// Each teaches one thing, then asks for it: walking into a lantern lights it; light carries across water to lanterns
-// Pip cannot reach; a mirror pushed into the light turns it; ghosts keep to the dark, and the light sends them away.
+// The first of each kind teaches one thing, then the next asks for it: walking into a lantern lights it; light carries
+// across water to lanterns Pip cannot reach; a mirror pushed into the light turns it; ghosts keep to the dark, and the
+// light sends them away; a crumbling stone holds Pip once, and fallen, lets the light across. The last ask for them
+// all at once.
 
 export struct Level {
   string name;
@@ -64,6 +66,60 @@ export Level[] allLevels() {
       "#.L..../....G#",
       "#............#",
       "#G..........E#",
-      "##############"], 19)
+      "##############"], 19),
+    Level("Stepping Stones", "A crumbling stone holds Pip once. Fallen, it lets the light across.", [
+      "############",
+      "#P..~~~~..~#",
+      "#.L.ooo..~L#",
+      "#...~~~~..~#",
+      "#...~~~~..E#",
+      "############"], 13),
+    Level("Island Hopping", "From a stone, Pip can light a lantern; stepping off, the light can pass.", [
+      "##############",
+      "#P..~~~~~~~~.#",
+      "#...~~~L~~~~.#",
+      "#...oooooooo.#",
+      "#...~~~~~~~~.#",
+      "#...~~~L~~~~E#",
+      "##############"], 16),
+    Level("Corner Pocket", "", [
+      "#############",
+      "#P......#~~~#",
+      "#.......#~L~#",
+      "#..*....#~~~#",
+      "#.......##~##",
+      "#...\\../....#",
+      "#...........#",
+      "#..........E#",
+      "#############"], 18),
+    Level("Ghost Field", "A mirror pushed along sweeps its light across the field.", [
+      "#############",
+      "#P..#.......#",
+      "#...#....G..#",
+      "#...#.......#",
+      "#.L.\\.......#",
+      "#...#.......#",
+      "#...#..L..GE#",
+      "#############"], 18),
+    Level("Lamplighter", "", [
+      "##############",
+      "#P...........#",
+      "#.L....~~~~~.#",
+      "#......~~L~~.#",
+      "#....../~~~~.#",
+      "#............#",
+      "#..\\.......L.#",
+      "#...........E#",
+      "##############"], 19),
+    Level("Long Night", "", [
+      "###############",
+      "#P....#.~L~...#",
+      "#.....#.~~~.G.#",
+      "#.....#..~....#",
+      "#.L.../.......#",
+      "#.....#~~~~o~~#",
+      "#.....#~~~~o~~#",
+      "#.....#..G..E.#",
+      "###############"], 26)
   ];
 }

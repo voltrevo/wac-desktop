@@ -12,6 +12,18 @@ const { deep, onCanvas } = require('./canvas.js');
 const root = path.join(__dirname, '..', 'dist');
 const shots = process.env.SHOTS || '';
 
+// Every sound started, and every change of a voice's volume: what the music is doing.
+const WATCH = `
+  window.__played = [];
+  const start = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function (...a) { window.__played.push([this.buffer.length, this.loop, a[0] ?? 0]); return start.apply(this, a); };
+  window.__ramps = [];
+  const ramp = AudioParam.prototype.linearRampToValueAtTime;
+  AudioParam.prototype.linearRampToValueAtTime = function (v, t) { window.__ramps.push(Math.round(v * 100) / 100); return ramp.call(this, v, t); };
+`;
+// The song, eight bars at 84 a minute, in samples at Pip's rate.
+const SONG = Math.round(8 * 4 * 60 / 84 * 22050);
+
 // Each level's way at par, as `solve.wac` finds it (`wac run tools/lanterns_par.wac`).
 const WAYS = ['RRRRRDLRRD', 'RRRRDDLRRDDRRR', 'RRDDDDLRRRRRRDR'];
 const KEYS = { L: 'ArrowLeft', R: 'ArrowRight', U: 'ArrowUp', D: 'ArrowDown' };
@@ -27,10 +39,11 @@ const KEYS = { L: 'ArrowLeft', R: 'ArrowRight', U: 'ArrowUp', D: 'ArrowDown' };
   }).listen(0);
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
     const ok = (what) => console.log('ok   ' + what);
     const url = `http://localhost:${server.address().port}/`;
     const p = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+    await p.addInitScript(WATCH);
     const errors = [];
     p.on('pageerror', (e) => errors.push(e.message));
     const win = p.locator('.win', { has: p.locator('.lanterns') });
@@ -67,6 +80,14 @@ const KEYS = { L: 'ArrowLeft', R: 'ArrowRight', U: 'ArrowUp', D: 'ArrowDown' };
     assert.deepEqual(await onCanvas(p, deep('.lscreen'), '(c) => [c.width, c.height]'), [172, 92], 'drawn at the board\'s size');
     ok('found by "puzzle", the first level and what it teaches');
 
+    // The song: six layers, each looping, all started at one moment.
+    await p.waitForFunction((n) => window.__played.filter((x) => x[0] === n && x[1]).length === 6, SONG, { timeout: 10000 });
+    await p.waitForTimeout(500);
+    const starts = await p.evaluate((n) => window.__played.filter((x) => x[0] === n && x[1]).map((x) => x[2]), SONG);
+    assert.equal(starts.length, 6, `six voices of the song, and no more: ${starts.length}`);
+    assert.equal(new Set(starts).size, 1, `every layer from the same moment: ${starts}`);
+    ok('the song: six layers, looping, started together');
+
     // Walls take no move; Undo takes one back; Restart is itself undone.
     await win.locator('.lanterns').focus();
     await p.keyboard.press('ArrowUp');
@@ -83,8 +104,13 @@ const KEYS = { L: 'ArrowLeft', R: 'ArrowRight', U: 'ArrowUp', D: 'ArrowDown' };
     await until(async () => (await moves()) === 0, 'Restart again');
     ok('a wall takes no move; Undo, Restart, and Restart undone');
 
+    await p.evaluate('window.__ramps = []');
     for (let i = 0; i < WAYS.length; i++) {
       await play(WAYS[i]);
+      if (i === 0) {
+        // Its one lantern lit: the layers it earned came up; won, the music ducks under the card.
+        await p.waitForFunction(() => window.__ramps.includes(0.8) && window.__ramps.includes(0.3), null, { timeout: 5000 });
+      }
       await win.locator('.lcard h1', { hasText: 'The way is lit' }).waitFor({ timeout: 5000 });
       assert.match(await win.locator('.lcard').textContent(), /★ At par/);
       if (i === 0 && shots) await p.screenshot({ path: path.join(shots, 'lanterns-won.png') });
@@ -104,18 +130,27 @@ const KEYS = { L: 'ArrowLeft', R: 'ArrowRight', U: 'ArrowUp', D: 'ArrowDown' };
     await until(async () => (await win.locator('.lcard').count()) === 0 && (await moves()) === 2, 'Undo out of it');
     ok('a ghost met in the dark catches Pip; Undo, and Pip is free');
 
+    // M: the sound off, every layer down to nothing, and the button says so; M again, back.
+    await p.evaluate('window.__ramps = []');
+    await p.keyboard.press('m');
+    await p.waitForFunction(() => window.__ramps.length > 0 && window.__ramps.every((v) => v === 0), null, { timeout: 5000 });
+    assert.equal(await win.locator('.lsound').textContent(), 'Sound off');
+    await p.keyboard.press('m');
+    await p.waitForFunction(() => window.__ramps.includes(0.8), null, { timeout: 5000 });
+    ok('M turns the sound off, and on');
+
     // The levels, and the fewest moves kept: across a reload, it starts where it was left.
     await p.keyboard.press('Escape');
     const list = win.locator('.llevel');
     await list.first().waitFor();
-    assert.equal(await list.count(), 6);
+    assert.equal(await list.count(), 12);
     assert.deepEqual(await win.locator('.llevel.par .lname').allTextContents(), ['First Flame', 'Across the Water', 'Turn of the Light']);
-    assert.equal(await win.locator('.llevel.locked').count(), 2, 'two not reached yet');
+    assert.equal(await win.locator('.llevel.locked').count(), 8, 'eight not reached yet');
     await p.reload();
     await p.waitForSelector('.dicons');
     await win.locator('.lhud').waitFor({ timeout: 60000 });
     await until(async () => /^4\. Keep to the Light/.test(await hud.textContent()), 'reloaded, at the first level not yet won');
-    ok('the levels listed, three at par and two locked; reloaded, it starts at the fourth');
+    ok('the levels listed, three at par and eight locked; reloaded, it starts at the fourth');
 
     // **On a phone**: on a page of its own, a swipe on the board moves Pip, and so do the buttons for each way.
     const q = await (await browser.newContext({ ...devices['Pixel 7'] })).newPage();

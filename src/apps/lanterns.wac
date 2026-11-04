@@ -7,20 +7,28 @@
 // the same screen, sprites and sounds as Pip and the Lost Lanterns.
 //
 // **Keys**: the arrows or WASD move; Z, U or Backspace undoes; R starts the level again; Esc lists the levels; Shift+F
-// is full screen. **On a touch screen** a swipe moves, and there are buttons for each way.
+// is full screen; M is the sound. **On a touch screen** a swipe moves, and there are buttons for each way.
+//
+// **The music grows as the level is lit** (`lanterns/music.wac`): its layers play from one moment, each turned up as it
+// is earned — a voice and chords as the lanterns are lit, an arpeggio when the door opens — and a heartbeat whenever a
+// ghost is near Pip in the dark.
 
 import { Vec } from "core";
-import { Element, ElementEvent, Node, Page, Ref, Sound, Ui, html.b, html.button, html.canvas, html.div, html.h1, html.p,
+import { Element, ElementEvent, Node, Page, Ref, Sound, Ui, Voice, html.b, html.button, html.canvas, html.div, html.h1, html.p,
          html.span, html.style } from "web";
 import { css } from "../style.wac";
 import { RATE, effects } from "./pip/chip.wac";
 import { Screen } from "./pip/art.wac";
 import { cropped, drawBoard, shownOf } from "./lanterns/art.wac";
 import { Level, allLevels } from "./lanterns/levels.wac";
-import { Board, boardOf, copyBoard, move } from "./lanterns/rules.wac";
+import { Board, boardOf, copyBoard, move, open } from "./lanterns/rules.wac";
+import { HIGH, NEAR, OPENED, SONG_LAYERS, UNDER, nocturne } from "./lanterns/music.wac";
+import { stems } from "./pip/music.wac";
 
 /** Where the fewest moves of each level are kept, and how far the person has got: `reached best best …`. */
 static string KEPT = "best";
+/** Whether the sound is off: `off`, or nothing. */
+static string QUIET = "sound";
 
 static i32 PLAYING = 0;
 static i32 WON = 1;
@@ -29,9 +37,12 @@ static i32 LEVELS = 2;
 /** How far a finger must slide to be a swipe, in pixels; less is a tap. */
 static i32 SWIPE = 24;
 
-/** Each cue's sound among Pip's (`pip/chip.wac`'s `effects`): a step, a bump, a lantern, a push, a fade, caught, the door, won. */
+/**
+ * Each cue's sound among Pip's (`pip/chip.wac`'s `effects`): a step, a bump, a lantern, a push, a fade, caught, the
+ * door, won, a stone falling.
+ */
 i32 soundOf(i32 cue) {
-  i32[] sounds = [0, 10, 2, 3, 9, 6, 5, 7, 8];
+  i32[] sounds = [0, 10, 2, 3, 4, 6, 5, 7, 8, 9];
   return cue > 0 && cue < sounds.len() ? sounds[cue] : 0;
 }
 
@@ -53,6 +64,10 @@ struct Game {
   fn<void()> bump;
   Sound[] fx;
   bool muted;
+  /** The song's layers, playing together from one moment, and how loud each is now (`tuneUp`). */
+  Sound[] song;
+  Voice[] voices;
+  f64[] volumes;
   i32 frame;
   /** A finger down on the board, and where: a swipe's start. -1 when there is none. */
   i32 finger;
@@ -98,10 +113,57 @@ void keysHere(Game g) {
   if (g.stage is not null) { g.stage!.focus(); }
 }
 
+/** Whether a ghost is within three steps of Pip: when the heartbeat plays. */
+bool ghostNear(Board b) {
+  i32 px = b.pip % b.cols;
+  i32 py = b.pip / b.cols;
+  for (i32 i = 0; i < b.ghosts.len(); i++) {
+    i32 at = b.ghosts[i];
+    if (at < 0) { continue; }
+    i32 dx = at % b.cols - px;
+    i32 dy = at / b.cols - py;
+    if ((dx < 0 ? 0 - dx : dx) + (dy < 0 ? 0 - dy : dy) <= 3) { return true; }
+  }
+  return false;
+}
+
+/**
+ * How loud layer `l` of the song is now: the bass and the melody always; the voice under it from a third of the
+ * lanterns lit, the chords from two thirds; the arpeggio with the door open; the heartbeat with a ghost near. Ducked
+ * under a card, silent with the sound off.
+ */
+f64 loudnessOf(Game g, i32 l) {
+  if (g.muted) { return 0.0; }
+  Board b = g.board;
+  f64 full = g.mode == PLAYING && !b.caught ? 0.8 : 0.3;
+  i32 lit = 0;
+  for (i32 i = 0; i < b.lit.len(); i++) { if (b.lit[i]) { lit++; } }
+  i32 all = b.lit.len();
+  if (l == UNDER) { return 3 * lit >= all ? full : 0.0; }
+  if (l == HIGH) { return 3 * lit >= 2 * all ? full : 0.0; }
+  if (l == OPENED) { return open(b) ? full : 0.0; }
+  if (l == NEAR) { return g.mode == PLAYING && !b.caught && ghostNear(b) ? full : 0.0; }
+  return full;
+}
+
+/** Each layer brought to how loud it should be: up slowly, as earned, and down quickly. */
+void tuneUp(Game g) {
+  for (i32 l = 0; l < g.voices.len(); l++) {
+    f64 v = loudnessOf(g, l);
+    f64 d = v - g.volumes[l];
+    if (d < 0.001 && d > 0.0 - 0.001) { continue; }
+    g.voices[l].fade(v, d > 0.0 ? 900 : 250);
+    g.volumes[l] = v;
+  }
+}
+
+void keepQuiet(Game g) { g.page.sys.files().writeFile(QUIET, (g.muted ? "off\n" : "on\n").toBytes()); }
+
 void draw(Game g) {
   drawBoard(g.screen, g.board, g.frame);
   i32[] box = shownOf(g.board);
   if (g.canvas is not null) { g.canvas!.pixels(box[2], box[3], cropped(g.screen, box)); }
+  tuneUp(g);
 }
 
 /** Level `i`, from its start. */
@@ -162,6 +224,13 @@ void restart(Game g) {
   g.bump();
 }
 
+void toggleSound(Game g) {
+  g.muted = !g.muted;
+  keepQuiet(g);
+  tuneUp(g);
+  g.bump();
+}
+
 void toggleScreen(Game g) {
   if (g.stage is not null) { g.stage!.fullScreen(!g.screenFull); }
 }
@@ -170,8 +239,7 @@ void down(Game g, ElementEvent e) {
   string k = e.value;
   if (k == "F" && (e.mods & 1) != 0) { toggleScreen(g); return; }
   if (k == "m" || k == "M") {
-    g.muted = !g.muted;
-    g.bump();
+    toggleSound(g);
     return;
   }
   if (g.mode == LEVELS) {
@@ -311,6 +379,7 @@ Node GameView(Ui ui, Game g) {
       <button class="lbtn lundo" title="Undo (Z)" onclick={(ElementEvent e) => { undoMove(g); }}>Undo</button>
       <button class="lbtn lrestart" title="Start again (R)" onclick={(ElementEvent e) => { restart(g); }}>Restart</button>
       <button class="lbtn llist" title="Levels (Esc)" onclick={(ElementEvent e) => { g.mode = g.mode == LEVELS ? (g.board.won ? WON : PLAYING) : LEVELS; keysHere(g); g.bump(); }}>Levels</button>
+      <button class="lbtn lsound" title="Sound (M)" onclick={(ElementEvent e) => { toggleSound(g); keysHere(g); }}>{g.muted ? "Sound off" : "Sound on"}</button>
       <button class="lbtn lfull" title="Full screen (Shift+F)" onclick={(ElementEvent e) => { toggleScreen(g); keysHere(g); }}>{g.screenFull ? "Leave full screen" : "Full screen"}</button>
     </div>
   </div>;
@@ -366,6 +435,12 @@ export async i32 main(Page page) {
   f64[][] made = effects();
   Sound[] fx = Sound[].filled(made.len(), page.sound(made[0], RATE));
   for (i32 i = 1; i < made.len(); i++) { fx[i] = page.sound(made[i], RATE); }
+  auto quiet = await page.sys.files().readFile(QUIET);
+  bool muted = quiet.isOk() && string.fromBytes(quiet.ok()!).indexOf("off") == 0;
+  // The song, made once and sent a layer at a time.
+  f64[][] parts = stems(nocturne());
+  Sound[] song = Sound[].filled(SONG_LAYERS, page.sound(parts[0], RATE));
+  for (i32 l = 1; l < SONG_LAYERS; l++) { song[l] = page.sound(parts[l], RATE); }
   // The first level not yet won, or the last one open.
   i32 start = reached;
   for (i32 i = 0; i <= reached; i++) {
@@ -375,8 +450,15 @@ export async i32 main(Page page) {
     }
   }
   Game g = Game(page, levels, start, boardOf(levels[start].rows), Vec.create(), best, reached, PLAYING, false, Screen.create(),
-                null, null, () => { }, fx, false, 0, 0 - 1, 0, 0, false);
+                null, null, () => { }, fx, muted, song, Voice[](), f64[](), 0, 0 - 1, 0, 0, false);
   page.mount((Ui ui) => <div class="lpage"><style>{css() + lanternsCss()}</style><GameView g={g}/></div>);
+  // Every layer from the same moment, so they never drift apart; each as loud as it has earned (`tuneUp`).
+  f64 at = page.now() + 150.0;
+  g.volumes = f64[].filled(SONG_LAYERS, 0.0);
+  for (i32 l = 0; l < SONG_LAYERS; l++) { g.volumes[l] = loudnessOf(g, l); }
+  // The bass starts first and holds each place until its own layer is started: no voice but the song's six.
+  g.voices = Voice[].filled(SONG_LAYERS, song[0].playAt(g.volumes[0], true, at, 0.0));
+  for (i32 l = 1; l < SONG_LAYERS; l++) { g.voices[l] = song[l].playAt(g.volumes[l], true, at, 0.0); }
   // The water ripples and the flames flicker: the picture again a few times a second, whether Pip moves or not.
   while (true) {
     await page.nextFrame();

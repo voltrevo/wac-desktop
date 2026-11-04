@@ -171,12 +171,18 @@ shares, so their pages can see each other's files.
   moving unless Pip does. A lantern Pip walks into is lit, and **its light runs in straight lines** — over water, which
   nothing else crosses — lighting the lanterns it reaches, which light in turn; a mirror Pip pushes into the light
   turns it. **Ghosts keep to the dark**: each move they step toward Pip, never onto a lit tile, and one the light
-  reaches is gone. Six levels so far, each teaching one thing. **Every par is proved**: the rules are turn-based and
+  reaches is gone. **A crumbling stone holds Pip once**: stepped off, it falls into the water — a way across is one
+  way — and where it stood, the light now crosses. Twelve levels: the first of each kind teaches it, the next asks for
+  it, and the last ask for everything at once. **Every par is proved**: the rules are turn-based and
   nothing in them is random, so `src/apps/lanterns/solve.wac` searches every move from every place a level can be
   in, and the tests hold each level to the fewest moves that win it (`wac run tools/lanterns_par.wac` finds them
   again). Undo as often as it takes — Restart is itself undoable — and the fewest moves of each level are kept. The
-  arrows or WASD move, Z undoes, R restarts, Esc lists the levels, Shift+F is full screen; on a touch screen a swipe
-  moves, and there are buttons for each way. It is drawn with Pip's own sprites, ghost, lantern and sounds.
+  arrows or WASD move, Z undoes, R restarts, Esc lists the levels, M is the sound, Shift+F is full screen; on a touch
+  screen a swipe moves, and there are buttons for each way. It is drawn with Pip's own sprites, ghost, lantern and
+  sounds. **Its music grows as the level is lit** (`src/apps/lanterns/music.wac`, on Pip's sound chip): a night tune
+  in D minor whose layers play together from one moment — the bass and melody always, a second voice and high chords
+  as the lanterns are lit, an arpeggio once the door opens — and a low heartbeat whenever a ghost is near Pip in the
+  dark. `wac task lanterns:music` writes it out as WAV files.
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;
   ←/→ move, ↑/X rotate clockwise, Z anticlockwise, ↓ soft-drops, Space hard-drops, and C/Shift holds once per

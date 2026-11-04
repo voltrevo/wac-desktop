@@ -1,8 +1,10 @@
 // Lantern Light's rules, its solver, and its levels — every one won, at exactly its par.
 
-import { Board, boardOf, copyBoard, ghostAt, lanternAt, mirrorAt, move, open } from "../src/apps/lanterns/rules.wac";
+import { Board, STONE, WATER, boardOf, copyBoard, ghostAt, lanternAt, mirrorAt, move, open } from "../src/apps/lanterns/rules.wac";
 import { Level, allLevels } from "../src/apps/lanterns/levels.wac";
 import { Solved, solve } from "../src/apps/lanterns/solve.wac";
+import { SONG_LAYERS, nocturne } from "../src/apps/lanterns/music.wac";
+import { LAYERS, Song, mixed, stems } from "../src/apps/pip/music.wac";
 
 /** The tile at (`x`, `y`) of `b`. */
 i32 tile(Board b, i32 x, i32 y) { return y * b.cols + x; }
@@ -99,6 +101,43 @@ export string test_ghosts_keep_to_the_dark_and_the_light_sends_them_away() {
   return "";
 }
 
+/**
+ * **A crumbling stone holds Pip once**: stepped off, it falls into the water, and Pip cannot go back that way. Standing,
+ * it stops the light; fallen, the light crosses where it was. Nothing else stands on one, and a copy keeps it standing.
+ */
+export string test_a_crumbling_stone_holds_pip_once_and_then_lets_the_light_across() {
+  Board b = boardOf([
+    "#########",
+    "#P.o.L..#",
+    "#*......#",
+    "#..L....#",
+    "#########"]);
+  if (litAt(b, 3, 3)) { return "lit through nothing"; }
+  Board was = copyBoard(b);
+  move(b, 1, 0);
+  move(b, 1, 0);
+  if (b.pip != tile(b, 3, 1) || b.ground[tile(b, 3, 1)] != STONE) { return "Pip on the stone, still standing"; }
+  move(b, 1, 0);
+  if (b.ground[tile(b, 3, 1)] != WATER) { return "stepped off, it fell"; }
+  if (move(b, 0 - 1, 0)) { return "back onto where it was"; }
+  if (was.ground[tile(was, 3, 1)] != STONE) { return "the copy's stone fell with it"; }
+  // Standing, it stops light; fallen, the light crosses — here, from the lantern Pip lights beyond it, down to the other.
+  Board c = boardOf([
+    "#######",
+    "#.L...#",
+    "#.o...#",
+    "#.oP..#",
+    "#.L...#",
+    "#######"]);
+  move(c, 0 - 1, 0);
+  move(c, 0, 0 - 1);
+  move(c, 0, 0 - 1);
+  if (!litAt(c, 2, 1) || litAt(c, 2, 4)) { return "the top lit, its light stopped by the stone below it: \{litAt(c, 2, 4)}"; }
+  move(c, 1, 0);
+  if (!litAt(c, 2, 4)) { return "the stone fallen, the light crosses to the lantern below"; }
+  return "";
+}
+
 /** **Undo**: a board copied is a place to come back to, and moving on from it leaves the copy as it was. */
 export string test_a_copy_is_a_place_to_come_back_to() {
   Board b = boardOf(["######", "#P/.L#", "#....E", "######"]);
@@ -115,7 +154,7 @@ export string test_a_copy_is_a_place_to_come_back_to() {
  */
 export string test_every_level_is_won_at_exactly_its_par() {
   Level[] levels = allLevels();
-  if (levels.len() < 6) { return "\{levels.len()} levels"; }
+  if (levels.len() < 12) { return "\{levels.len()} levels"; }
   for (i32 i = 0; i < levels.len(); i++) {
     Board b = boardOf(levels[i].rows);
     if (b.lanterns.len() == 0) { return "\{levels[i].name}: no lantern"; }
@@ -130,6 +169,39 @@ export string test_every_level_is_won_at_exactly_its_par() {
       move(play, c == 'L' ? 0 - 1 : (c == 'R' ? 1 : 0), c == 'U' ? 0 - 1 : (c == 'D' ? 1 : 0));
     }
     if (!play.won || play.moves != levels[i].par) { return "\{levels[i].name}: its way, played, does not win"; }
+  }
+  return "";
+}
+
+/**
+ * **The song is whole, loops cleanly, and every layer is heard**: the full mix loud enough and never past full, no
+ * click where it goes round — a step there no bigger than its own steps — each of its layers playing something, and
+ * none past them.
+ */
+export string test_the_song_loops_cleanly_and_each_layer_plays() {
+  Song s = nocturne();
+  f64[][] parts = stems(s);
+  f64[] full = mixed(parts, LAYERS - 1);
+  f64 peak = 0.0;
+  f64 step = 0.0;
+  for (i32 i = 0; i < full.len(); i++) {
+    f64 a = full[i] < 0.0 ? 0.0 - full[i] : full[i];
+    if (a > peak) { peak = a; }
+    if (i > 0) {
+      f64 d = full[i] - full[i - 1];
+      if (d < 0.0) { d = 0.0 - d; }
+      if (d > step) { step = d; }
+    }
+  }
+  if (peak < 0.2 || peak > 1.0) { return "peaks at \{peak}"; }
+  f64 seam = full[full.len() - 1] - full[0];
+  if (seam < 0.0) { seam = 0.0 - seam; }
+  if (seam > step) { return "a click where it loops, \{seam} against its biggest step \{step}"; }
+  for (i32 l = 0; l < LAYERS; l++) {
+    bool any = false;
+    for (i32 i = 0; i < parts[l].len() && !any; i++) { if (parts[l][i] != 0.0) { any = true; } }
+    if (l < SONG_LAYERS && !any) { return "layer \{l} is silent"; }
+    if (l >= SONG_LAYERS && any) { return "layer \{l} plays, past the song's \{SONG_LAYERS}"; }
   }
   return "";
 }

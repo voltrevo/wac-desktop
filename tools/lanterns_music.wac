@@ -1,0 +1,60 @@
+// Lantern Light's song as WAV files, to listen to outside the game: every layer at once, and as a level earns them —
+// the bass and melody for two bars, then each layer more for two bars after, the heartbeat of a near ghost last.
+//
+//     wac run --allow-read --allow-write tools/lanterns_music.wac -- <folder>
+
+import { Sys } from "std";
+import { Vec } from "core";
+import { LAYERS, mixed, stems } from "../src/apps/pip/music.wac";
+import { RATE } from "../src/apps/pip/chip.wac";
+import { SONG_LAYERS, TUNE, nocturne } from "../src/apps/lanterns/music.wac";
+
+void littleEndian(Vec<u8> out, i32 v, i32 bytes) { for (i32 k = 0; k < bytes; k++) { out.push(((v >> (8 * k)) & 255) as@ u8); } }
+
+/** `samples` as a 16-bit mono WAV. */
+u8[] wavOf(f64[] samples) {
+  Vec<u8> out = Vec.create();
+  i32 data = samples.len() * 2;
+  u8[] riff = "RIFF".toBytes();
+  for (i32 i = 0; i < 4; i++) { out.push(riff[i]); }
+  littleEndian(out, 36 + data, 4);
+  u8[] head = "WAVEfmt ".toBytes();
+  for (i32 i = 0; i < 8; i++) { out.push(head[i]); }
+  littleEndian(out, 16, 4);
+  littleEndian(out, 1, 2);
+  littleEndian(out, 1, 2);
+  littleEndian(out, RATE, 4);
+  littleEndian(out, RATE * 2, 4);
+  littleEndian(out, 2, 2);
+  littleEndian(out, 16, 2);
+  u8[] d = "data".toBytes();
+  for (i32 i = 0; i < 4; i++) { out.push(d[i]); }
+  littleEndian(out, data, 4);
+  for (i32 i = 0; i < samples.len(); i++) {
+    f64 x = samples[i] > 1.0 ? 1.0 : (samples[i] < 0.0 - 1.0 ? 0.0 - 1.0 : samples[i]);
+    littleEndian(out, (x * 32767.0) as~ i32, 2);
+  }
+  return out.toArray();
+}
+
+export async i32 main(Sys sys) {
+  string[] args = sys.args();
+  string dir = args.len() > 0 ? args[0] : ".";
+  f64[][] parts = stems(nocturne());
+  f64[] full = mixed(parts, LAYERS - 1);
+  await sys.files().writeFile("\{dir}/nocturne.wav", wavOf(full));
+  // As a level earns it: two bars of the bass and melody, then one layer more every two bars, round the song.
+  i32 bar = full.len() / 8;
+  i32 stages = SONG_LAYERS - TUNE;
+  f64[] grow = f64[].filled(bar * 2 * stages, 0.0);
+  for (i32 k = 0; k < grow.len(); k++) {
+    i32 upTo = TUNE + k / (bar * 2);
+    i32 at = k % full.len();
+    f64 v = 0.0;
+    for (i32 l = 0; l <= upTo; l++) { v = v + parts[l][at]; }
+    grow[k] = v;
+  }
+  await sys.files().writeFile("\{dir}/nocturne-growing.wav", wavOf(grow));
+  sys.stdout().line("nocturne: \{(full.len() as f64) / (RATE as f64)} s round; growing: \{(grow.len() as f64) / (RATE as f64)} s");
+  return 0;
+}

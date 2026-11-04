@@ -5,7 +5,7 @@ import { GHOST } from "../pip/world.wac";
 import { SCREEN_H, SCREEN_W, Screen, dot, halo, mix, rect, sprite } from "../pip/art.wac";
 import { pipSprite } from "../pip/sprites.wac";
 import { enemyPalette, enemySprite } from "../pip/enemies.wac";
-import { Board, DOOR, WALL, WATER, open } from "./rules.wac";
+import { Board, DOOR, STONE, WALL, WATER, open } from "./rules.wac";
 
 export static i32 TILE = 16;
 
@@ -74,6 +74,22 @@ void waterTile(Screen s, i32 sx, i32 sy, i32 tx, i32 ty, bool lit, i32 frame) {
     i32 x = sx + (k + frame / 8 + r * 5) % 12;
     rect(s, x, y, 4, 1, lit ? 0x9FD6E0 : 0x2B4A6E);
   }
+}
+
+/** A crumbling stone, standing in the water: worn, cracked — it holds Pip once. */
+void stoneTile(Screen s, i32 sx, i32 sy, i32 tx, i32 ty, i32 frame) {
+  waterTile(s, sx, sy, tx, ty, false, frame);
+  rect(s, sx + 2, sy + 3, 12, 11, 0x5D5868);
+  rect(s, sx + 3, sy + 2, 10, 1, 0x7B7486);
+  rect(s, sx + 2, sy + 13, 12, 1, 0x3A3546);
+  rect(s, sx + 3, sy + 3, 10, 2, 0x8E879A);
+  i32 k = speckle(tx, ty);
+  // The crack, and a chip out of its edge.
+  dot(s, sx + 5 + k % 3, sy + 6, 0x2E2A38);
+  dot(s, sx + 6 + k % 3, sy + 7, 0x2E2A38);
+  dot(s, sx + 6 + k % 3, sy + 8, 0x2E2A38);
+  dot(s, sx + 7 + k % 3, sy + 9, 0x2E2A38);
+  dot(s, sx + 12, sy + 10, 0x0F2340);
 }
 
 void doorTile(Screen s, i32 sx, i32 sy, bool isOpen, bool lit) {
@@ -159,6 +175,7 @@ export void drawBoard(Screen s, Board b, i32 frame) {
       u8 g = b.ground[at];
       if (g == WALL) { wallTile(s, sx, sy, tx, ty); }
       else if (g == WATER) { waterTile(s, sx, sy, tx, ty, b.light[at], frame); }
+      else if (g == STONE) { stoneTile(s, sx, sy, tx, ty, frame); }
       else if (g == DOOR) { doorTile(s, sx, sy, isOpen, b.light[at]); }
       else { floorTile(s, sx, sy, tx, ty, b.light[at]); }
     }
