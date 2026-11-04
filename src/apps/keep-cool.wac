@@ -36,7 +36,7 @@ Node Panel(Ui ui, Page page, Console state) {
   string[] feeds = ["AMBER", "BLUE", "WHITE"];
   string[] loads = ["LOW", "MEDIUM", "HIGH"];
   string[] signals = ["STEADY / STEADY", "STEADY / PULSE", "PULSE / STEADY", "PULSE / PULSE"];
-  return <div class="kc">
+  return <div class="kc-shell"><div class="kc">
     <style>{panelCss()}</style>
     <div class="kc-head"><div><span class="kc-label">CALDER STATION / UNIT 04</span><h1>Keep It Cool</h1></div>
       <span class={remaining <= 45 ? "kc-clock critical" : "kc-clock"}>{clock}</span></div>
@@ -78,7 +78,7 @@ Node Panel(Ui ui, Page page, Console state) {
         <p class="kc-report">{run.report}</p>
       </div>}
     <p class="kc-footer">FICTIONAL TRAINING CONSOLE / TWO-PERSON CREW</p>
-  </div>;
+  </div></div>;
 }
 
 export async i32 main(Page page) {
