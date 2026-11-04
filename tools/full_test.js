@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { execFileSync } = require('node:child_process');
+const { openLauncher } = require('./launcher.js');
 const repo = path.join(__dirname, '..');
 const root = path.join(repo, 'dist');
 const shots = process.env.SHOTS || '';
@@ -160,6 +161,67 @@ const shots = process.env.SHOTS || '';
     await q.keyboard.press('Shift+F');
     await q.waitForFunction(() => document.fullscreenElement === null && document.querySelector('.pip.screenfull') === null, null, { timeout: 10000 });
     ok('Pip on a page of its own: the browser\'s full screen, and Shift+F out');
+
+    // **The whole desktop**, from Settings: Full screen now, and back; then each time it opens — at the first tap, once,
+    // so Escape is not undone by the next — and a window's full screen inside it ends on the desktop, still full.
+    const r = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+    r.on('pageerror', (e) => errors.push(e.message));
+    const wholeFull = () => r.evaluate(() => document.fullscreenElement?.classList.contains('desk') ?? false);
+    const waitFor = async (what, why) => {
+      for (let i = 0; i < 200; i++) { if (await what()) return; await r.waitForTimeout(50); }
+      assert.fail(why);
+    };
+    await r.goto(url);
+    await r.waitForSelector('.dicons');
+    await r.locator('.win.focus .md h1').first().waitFor({ timeout: 60000 });
+    await openLauncher(r);
+    await r.locator('.lq').fill('settings');
+    await r.keyboard.press('Enter');
+    const sfull = r.locator('.settings .sfull');
+    await sfull.waitFor();
+    assert.equal(await sfull.textContent(), 'Full screen now');
+    await sfull.click();
+    await waitFor(wholeFull, 'Full screen now fills the screen with the desktop');
+    await r.locator('.settings .sfull', { hasText: 'Leave full screen' }).waitFor({ timeout: 5000 });
+    assert.equal(await r.locator('.desk.full').count(), 0, 'the desktop, not a window');
+    assert.equal(await r.locator('.taskbar').isVisible(), true, 'the taskbar still there');
+    await sfull.click();
+    await waitFor(async () => !(await wholeFull()), 'and Leave full screen leaves it');
+    ok('Settings: Full screen now, the desktop and its taskbar, and back');
+
+    await r.locator('.settings .seg', { hasText: 'Each time it opens' }).click();
+    await r.waitForTimeout(1200);
+    await r.reload();
+    await r.waitForSelector('.dicons');
+    await r.waitForTimeout(1500);
+    assert.equal(await wholeFull(), false, 'opened: not until a tap');
+    await r.mouse.click(640, 300);
+    await waitFor(wholeFull, 'each time it opens: the first tap fills the screen');
+    ok('each time it opens: kept, and the first tap fills the screen');
+
+    // Pip, full screen inside it, and left by the handle: back on the desktop, which is still full screen.
+    await openLauncher(r);
+    await r.locator('.lq').fill('platformer');
+    await r.keyboard.press('Enter');
+    await r.locator('.win.focus .pscreenbtn').waitFor({ timeout: 60000 });
+    await r.locator('.win.focus .pscreenbtn').click();
+    await r.locator('.desk.full').waitFor({ timeout: 5000 });
+    await r.locator('.fullhandle').click();
+    await r.locator('.fbleave').click();
+    await waitFor(async () => (await r.locator('.desk.full').count()) === 0, 'Pip leaves its full screen');
+    await r.waitForTimeout(500);
+    assert.equal(await wholeFull(), true, 'and the desktop is still full screen');
+    ok('a window\'s full screen inside it ends on the desktop, still full screen');
+
+    // Escape — the browser leaving it — and the next tap is only a tap; Settings says so.
+    await r.evaluate(() => document.exitFullscreen());
+    await waitFor(async () => !(await wholeFull()), 'left');
+    await r.mouse.click(640, 300);
+    await r.waitForTimeout(1000);
+    assert.equal(await wholeFull(), false, 'left, a tap does not put it back');
+    await r.locator('.tbwin', { hasText: 'Settings' }).click();
+    await r.locator('.settings .sfull', { hasText: 'Full screen now' }).waitFor({ timeout: 5000 });
+    ok('left with Escape, it stays left until the desktop next opens, and Settings says so');
 
     assert.deepEqual(errors, [], 'no page errors');
     ok('no page errors');

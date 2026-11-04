@@ -26,9 +26,15 @@ export struct Prefs {
   string markdown;
   string data;
   string text;
+  /**
+   * **When the desktop fills the screen**: "ask", only when the person chooses — Settings' Full screen now — or
+   * "auto", at the first tap or key each time it opens, since a browser lets a page fill the screen only then
+   * (`full.wac`).
+   */
+  string screen;
 }
 
-export Prefs defaultPrefs() { return Prefs("auto", "indigo", "aurora", 100, false, "viewer", "viewer", "editor"); }
+export Prefs defaultPrefs() { return Prefs("auto", "indigo", "aurora", 100, false, "viewer", "viewer", "editor", "ask"); }
 
 /** A colour that is one thing in the light and another in the dark: `light-dark(…)`. */
 struct Pair {
@@ -159,6 +165,7 @@ export Prefs prefsOf(u8[] bytes) {
   p.markdown = one(member(doc!, "markdown"), openers(), p.markdown);
   p.data = one(member(doc!, "data"), ["viewer", "editor"], p.data);
   p.text = one(member(doc!, "text"), ["viewer", "editor", "markdown"], p.text);
+  p.screen = one(member(doc!, "screen"), ["ask", "auto"], p.screen);
   JsonValue? vol = doc!.member("volume");
   if (vol is not null) {
     f64 v = vol!.number() ?? 100.0;
@@ -171,5 +178,5 @@ export Prefs prefsOf(u8[] bytes) {
 /** `p`, as `prefsOf` reads it. */
 export u8[] prefsJson(Prefs p) {
   return ("{\"theme\":\"\{p.theme}\",\"accent\":\"\{p.accent}\",\"wallpaper\":\"\{p.wall}\",\"volume\":\{p.volume},"
-        + "\"muted\":\{p.muted ? "true" : "false"},\"markdown\":\"\{p.markdown}\",\"data\":\"\{p.data}\",\"text\":\"\{p.text}\"}\n").toBytes();
+        + "\"muted\":\{p.muted ? "true" : "false"},\"markdown\":\"\{p.markdown}\",\"data\":\"\{p.data}\",\"text\":\"\{p.text}\",\"screen\":\"\{p.screen}\"}\n").toBytes();
 }

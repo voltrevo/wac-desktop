@@ -189,6 +189,10 @@ shares, so their pages can see each other's files.
   phone's Back, which leaves for the home screen; and anything that puts the window away. A program that has stopped
   answering is no obstacle, since it runs in a worker of its own. As full screen begins, the person is told how to
   leave it. `samples/hostile.wac` tries everything a program could, and `test:full` checks the way out against it.
+  **The whole desktop can fill the screen too**, taskbar and all, without the browser's bars: Settings' Full screen
+  now, or, chosen there, each time the desktop opens — at the first tap or key, the moment a browser allows it, and
+  only then, so leaving it with Escape or Back is not undone by the next tap. A window's full screen inside it ends
+  back on the desktop, still full screen.
 - **On a phone** — narrower than 700 pixels, or a phone on its side, under 500 high and 1000 wide — the desktop is a phone's: a
   home screen of every app in its groups and what is on the Desktop, a tap starting or opening one; each app the whole
   screen, with only Close; and a taskbar of the apps, home, and what is open — listed over everything, to go back to
@@ -264,7 +268,8 @@ shares, so their pages can see each other's files.
   (and Ctrl+B, Ctrl+I, Ctrl+K) that wraps what is selected or starts the line, a count of words and minutes to read,
   and saving as the Editor saves. The text field is never redrawn as it is typed into, so the caret is the browser's.
 - **Settings** (in the launcher) sets light, dark or as the system is, an accent and a wallpaper; a volume and Mute for
-  every program; and which app opens Markdown, JSON and CSV, and other text. Each choice takes effect as it is made
+  every program; full screen for the whole desktop, now or each time it opens; and which app opens Markdown, JSON and
+  CSV, and other text. Each choice takes effect as it is made
   and is kept in `.desktop/settings.json`. **The look reaches every window**: each colour is a `light-dark()` pair
   chosen by the `color-scheme`, which a program's window — a shadow root that declares no colours of its own —
   inherits from the desktop, accent and all. **The volume reaches every sound**: the desktop's `PageServer` for each

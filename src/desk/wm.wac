@@ -176,6 +176,12 @@ export struct Full {
   bool bar;
   /** The browser's full screen asked for and not yet begun: what it says of an earlier one meanwhile is out of date. */
   bool asking;
+  /** **The desktop as a whole fills the screen**, as the person chose in Settings — windows, taskbar and all. */
+  bool whole;
+  /** Whether the browser's full screen was last asked for or left: the desktop as a whole, or a window, wants it. */
+  bool shown;
+  /** Settings' "every time" has had its turn since the desktop opened: once left, it waits for the next opening. */
+  bool autoTried;
   /** The browser's own full screen for the desktop's page, asked for or left — set by the desktop's view. */
   fn<void(bool)>? screen;
 }
@@ -397,7 +403,7 @@ static i32 MIN_H = 200;
 export Desk newDesk(Vfs fs) {
   return Desk(Vec.create(), 1, 1, -1, fs, 0, null, false, false, "", "", "", null, string[](), false, string[](), "",
               Vec.create(), null, null, Vec.create(), 1, null, false, false, "", 0, Vec.create(), defaultPrefs(), false, 0 - 1,
-              false, "", Full(0 - 1, 0 - 1, 0.0 - 1.0, 0.0, 0.0, false, false, null));
+              false, "", Full(0 - 1, 0 - 1, 0.0 - 1.0, 0.0, 0.0, false, false, false, false, false, null));
 }
 
 export Win? find(Desk d, i32 id) {

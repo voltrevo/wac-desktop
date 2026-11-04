@@ -13,6 +13,7 @@ import { builtin } from "../src/desk/builtin.wac";
 import { Entry, entries, found } from "../src/desk/launcher.wac";
 import { Prefs, defaultPrefs, deskClasses, loudnessOf, prefsCss, prefsJson, prefsOf } from "../src/desk/prefs.wac";
 import { appFor } from "../src/desk/files.wac";
+import { browserSaid, firstTouch, wholeScreen } from "../src/desk/full.wac";
 
 /** Run `t` to completion: the memory disk answers at once, so draining the runner finishes it. */
 T run<T>(Runner r, Ticket<T> t) {
@@ -296,6 +297,37 @@ export string test_the_clock_keeps_one_timer_as_it_ticks() {
  * and read, and anything not understood — a wallpaper there is no longer, a volume past full — is as it would be
  * without the file, not an error.
  */
+/**
+ * **The desktop as a whole fills the screen when the person says so**: Full screen now, or — chosen — at the first tap
+ * or key after it opens, once, so leaving it with Escape or Back is not undone by the next tap. The browser is asked
+ * only when what the desktop wants changes, and a late word of an earlier full screen's end changes nothing.
+ */
+export string test_the_whole_desktop_fills_the_screen_as_chosen_and_once_left_stays_left(Sys sys) {
+  Desk d = desk(sys);
+  string asked = "";
+  d.full.screen = (bool on) => { asked = asked + (on ? "on;" : "off;"); };
+  if (firstTouch(d, 1.0) || asked != "") { return "with Never chosen, a tap is only a tap: \{asked}"; }
+  wholeScreen(d, true, 2.0);
+  if (!d.full.whole || asked != "on;") { return "Full screen now: \{asked}"; }
+  wholeScreen(d, false, 3.0);
+  if (d.full.whole || asked != "on;off;") { return "and left: \{asked}"; }
+  Desk e = desk(sys);
+  string got = "";
+  e.full.screen = (bool on) => { got = got + (on ? "on;" : "off;"); };
+  e.prefs.screen = "auto";
+  if (!firstTouch(e, 1.0) || !e.full.whole || got != "on;") { return "each time it opens: the first tap \{got}"; }
+  if (firstTouch(e, 2.0) || got != "on;") { return "and only the first: \{got}"; }
+  browserSaid(e, true, 3.0);
+  if (!e.full.whole || got != "on;") { return "begun, as asked: \{got}"; }
+  // Escape: the browser says it ended, and nothing puts it back.
+  if (!browserSaid(e, false, 4.0) || e.full.whole) { return "Escape leaves it"; }
+  if (firstTouch(e, 5.0) || e.full.whole || got != "on;") { return "a tap after leaving it is only a tap: \{got}"; }
+  // Asked again, then the browser's late word of the last one's end: out of date, nothing left.
+  wholeScreen(e, true, 6.0);
+  if (browserSaid(e, false, 6.5) || !e.full.whole) { return "a late end ended the new one"; }
+  return "";
+}
+
 export string test_settings_are_kept_and_a_damaged_file_is_the_defaults() {
   Prefs p = defaultPrefs();
   p.theme = "dark";
@@ -306,6 +338,7 @@ export string test_settings_are_kept_and_a_damaged_file_is_the_defaults() {
   p.markdown = "markdown";
   p.data = "editor";
   p.text = "viewer";
+  p.screen = "auto";
   Prefs back = prefsOf(prefsJson(p));
   string was = string.fromBytes(prefsJson(p));
   if (string.fromBytes(prefsJson(back)) != was) { return "read back as \{string.fromBytes(prefsJson(back))}, not \{was}"; }

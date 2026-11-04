@@ -16,7 +16,7 @@ import { Desk, Drag, FileDrag, Win, SESSION, close, dragFilesTo, dragging, dropK
 import { TRASH, restoreFromTrash, toTrash, trashCount } from "./trash.wac";
 import { FilesApp, openPath } from "./files.wac";
 import { ProgramApp, launch } from "./program.wac";
-import { browserSaid, keptFull, leaveFull, touched } from "./full.wac";
+import { browserSaid, firstTouch, keptFull, leaveFull, touched } from "./full.wac";
 import { AllowedApp } from "./allowed.wac";
 import { SETTINGS, deskClasses, prefsCss, prefsOf } from "./prefs.wac";
 import { SettingsApp } from "./settings.wac";
@@ -729,7 +729,9 @@ export Node Desktop(Ui ui, Page page) {
                 endDrag(d);
                 bump();
               } : null}
-              onfullscreenchange={(ElementEvent e) => { if (browserSaid(d, e.value == "1", page.now())) { bump(); } }}>
+              onfullscreenchange={(ElementEvent e) => { if (browserSaid(d, e.value == "1", page.now())) { bump(); } }}
+              onpointerdown={(ElementEvent e) => { if (firstTouch(d, page.now())) { bump(); } }}
+              onkeydown={(ElementEvent e) => { if (firstTouch(d, page.now())) { bump(); } }}>
     <style>{css()}</style>
     <style>{deskCss() + prefsCss()}</style>
     <div class="sizer" ref={sizer}></div>

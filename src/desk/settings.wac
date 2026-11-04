@@ -8,6 +8,7 @@
 import { ElementEvent, Node, Page, Ui, html.button, html.div, html.h3, html.input, html.p, html.section, html.span } from "web";
 import { Accent, Prefs, SETTINGS, Wallpaper, accents, defaultPrefs, loudnessOf, openerTitle, prefsJson, wallpapers } from "./prefs.wac";
 import { Desk, Running, Win, open } from "./wm.wac";
+import { wholeScreen } from "./full.wac";
 import { icon } from "../preview.wac";
 
 /** Keep `d`'s preferences, and hand every running program the volume they now say. */
@@ -106,6 +107,18 @@ export Node SettingsApp(Ui ui, Desk d, Win w, Page page, fn<void()> bumpDesk, i3
         </div>
       </div>
       <p class="snote">For every program, as it plays: Stackfall's and Pip's own switches still work under it.</p>
+    </section>
+    <section class="sgroup">
+      <h3>Screen</h3>
+      <div class="srow">
+        <span class="slabel">Full screen</span>
+        <button class="btn sfull" onclick={(ElementEvent e) => { wholeScreen(d, !d.full.whole, page.now()); changed(); }}>
+          {icon(d.full.whole ? "restore" : "max", "sm")}<span class="label">{d.full.whole ? "Leave full screen" : "Full screen now"}</span></button>
+      </div>
+      {choices("Automatically", ["ask", "auto"], ["Never", "Each time it opens"], p.screen, (string v) => { p.screen = v; changed(); })}
+      <p class="snote">The desktop, taskbar and all, without the browser's bars. Each time it opens means at your first tap or key,
+        which is when a browser allows it. Esc, or Back on a phone, leaves it. An iPhone's browser has none: add the
+        desktop to the Home Screen instead.</p>
     </section>
     <section class="sgroup">
       <h3>Opening files</h3>
