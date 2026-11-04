@@ -62,8 +62,7 @@ export Start builtin(string app, string arg) {
     w = 900;
     h = 620;
     ic = "fractal";
-  } else if (app == "keep-cool") {
-    args = ["apps/keep-cool/manual.html"];
+  } else if (app == "crush-depth") {
     w = 690;
     h = 540;
     ic = "beam";
@@ -115,7 +114,7 @@ export void startPlaced(Desk d, string app, string arg, Vec<Placed> places) {
     }
     return;
   }
-  if (app == "calc" || app == "ide" || app == "stackfall" || app == "pip" || app == "lanterns" || app == "keep-cool") {
+  if (app == "calc" || app == "ide" || app == "stackfall" || app == "pip" || app == "lanterns" || app == "crush-depth") {
     i32 open = windowOf(d, app);
     if (open >= 0) {
       focus(d, open);

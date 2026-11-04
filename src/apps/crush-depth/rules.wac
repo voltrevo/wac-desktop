@@ -1,0 +1,85 @@
+// Fictional research sub. The manual describes these game systems.
+export struct Dive {
+  i32 leak;
+  i32 fault;
+  i32 hatch;
+  i32 bus;
+  i32 load;
+  i32 outcome;
+  bool air;
+  bool rising;
+  f64 depth;
+  f64 water;
+  f64 battery;
+  f64 last;
+  string report;
+}
+
+export Dive dive(i32 seed, f64 now) {
+  return Dive(seed % 3, seed / 3 % 3, -1, -1, 0, 0, true, false,
+    420.0, 29.0, 100.0, now, "Hull breach. Main bus offline.");
+}
+
+export bool sealed(Dive d) { return d.hatch == (d.leak + 1) % 3; }
+export bool powered(Dive d) { return d.bus == (d.fault + 2) % 3; }
+export bool pumping(Dive d) { return powered(d) && sealed(d) && d.load == 1; }
+
+export void advance(Dive d, f64 now) {
+  if (d.outcome != 0 || now <= d.last) { return; }
+  f64 elapsed = (now - d.last) / 1000.0;
+  d.last = now;
+  // Small steps keep threshold crossings consistent after a suspended tab.
+  while (elapsed > 0.0 && d.outcome == 0) {
+    f64 dt = elapsed > 0.25 ? 0.25 : elapsed;
+    elapsed -= dt;
+    d.water += (pumping(d) ? -2.5 : sealed(d) ? 0.0 : 0.85) * dt;
+    if (d.water < 0.0) { d.water = 0.0; }
+    d.battery -= (d.load == 1 ? 1.4 : d.load == 2 ? 0.52 : 0.24) * dt;
+    d.depth += (d.rising ? -14.0 : 0.65 + d.water * 0.025) * dt;
+    if (d.depth >= 650.0) { d.outcome = 2; d.report = "Crush depth exceeded."; }
+    else if (d.water >= 100.0) { d.outcome = 2; d.report = "Floodwater overwhelmed the boat."; }
+    else if (d.battery <= 0.0) { d.outcome = 2; d.report = "Battery exhausted. Life support offline."; }
+    else if (d.depth <= 0.0) { d.depth = 0.0; d.outcome = 1; d.report = "On the surface. All hands safe."; }
+  }
+}
+
+// Controls 0–2 are hatches, 3–5 are buses, 6–8 are load selectors, 9 spends the air charge.
+export i32 operate(Dive d, i32 id, f64 now) {
+  advance(d, now);
+  if (d.outcome != 0 || d.rising) { return 0; }
+  if (id < 3) {
+    d.hatch = id;
+    d.report = sealed(d) ? "Inflow stopped. Sump route available." : "Inflow continues. Sump route blocked.";
+  } else if (id < 6) {
+    d.bus = id - 3;
+    if (!powered(d)) {
+      d.load = 0;
+      d.battery -= 8.0;
+      d.report = "Breaker tripped. Lost 8% battery.";
+      if (d.battery <= 0.0) { d.outcome = 2; d.report = "Battery exhausted. Life support offline."; }
+      return 2;
+    }
+    d.report = "Backup bus online. Select a load.";
+  } else if (id < 9) {
+    if (id != 6 && !powered(d)) { d.report = "Select a working backup bus first."; return 2; }
+    d.load = id - 6;
+    d.report = d.load == 1 ? (sealed(d) ? "Pump running. Watch floodwater." : "Pump blocked. Check the bulkhead.") :
+      d.load == 2 ? "Trim servos ready. Check ascent conditions." : "Loads shed. Battery drain reduced.";
+  } else if (d.air) {
+    d.air = false;
+    if (!sealed(d) || d.water > 25.0 || !powered(d) || d.load != 2) {
+      d.outcome = 2;
+      d.report = "Air spent. The boat could not establish ascent.";
+      return 2;
+    }
+    d.rising = true;
+    d.report = "Ascent established. Hold for the surface.";
+    return 3;
+  }
+  return 1;
+}
+
+export i32 margin(Dive d) {
+  if (d.rising) { return 45; }
+  return (2.0 * (650.0 - d.depth) / (0.65 + d.water * 0.025)).ceil() as~ i32;
+}

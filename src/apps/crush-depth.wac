@@ -1,0 +1,135 @@
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.div, html.h1, html.h2, html.p, html.span, html.style } from "web";
+import { Dive, advance, dive, margin, operate, powered, sealed } from "./crush-depth/rules.wac";
+import { Manual } from "./crush-depth/manual.wac";
+import { panelCss } from "./crush-depth/style.wac";
+import { ConsoleSound, SWITCH, ONLINE, ALARM, PUMP, STABLE, LOST } from "./crush-depth/sound.wac";
+
+struct Console {
+  Dive run;
+  i32 seed;
+  i32 screen;
+  ConsoleSound? audio;
+}
+
+void updateSound(Console state, i32 previous, i32 cue) {
+  if (state.audio is null) { return; }
+  ConsoleSound audio = state.audio!;
+  Dive run = state.run;
+  audio.background(margin(run), state.screen == 3 && run.outcome == 0);
+  if (previous == 0 && run.outcome != 0) { audio.play(run.outcome == 1 ? STABLE : LOST); }
+  else if (cue != 0) { audio.play(cue == 3 ? PUMP : cue == 2 ? ALARM : SWITCH); }
+}
+
+Node Control(string label, i32 id, bool active, Console state, Page page, fn<void()> refresh) {
+  return <button class={active ? "selected" : ""} onclick={(ElementEvent e) => {
+    i32 previous = state.run.outcome;
+    i32 cue = operate(state.run, id, page.now());
+    updateSound(state, previous, cue);
+    refresh();
+  }}>{label}</button>;
+}
+
+Node Gauge(string name, string value, i32 fill) {
+  return <span>{name} <b>{value}</b><span class="kc-meter"><span style={"width:\{fill}%"}></span></span></span>;
+}
+
+Node Panel(Ui ui, Page page, Console state) {
+  auto revision = ui.state(0);
+  fn<void()> refresh = () => { revision.update((i32 n) => n + 1); };
+  ui.effect("", () => { return () => { if (state.audio is not null) { state.audio!.stop(); } }; });
+  ui.effect("", () => ui.every(200, () => {
+    if (state.screen != 3 || state.run.outcome != 0) { return; }
+    advance(state.run, page.now());
+    updateSound(state, 0, 0);
+    refresh();
+  }));
+  Dive d = state.run;
+  i32 depth = d.depth.ceil() as~ i32;
+  i32 water = d.water.ceil() as~ i32;
+  i32 battery = d.battery.floor() as~ i32;
+  string[] sensors = ["BOW", "MID", "STERN"];
+  return <div class="kc-shell"><div class="kc">
+    <style>{panelCss()}</style>
+    <div class="kc-head"><div><span class="kc-label">R/V NEREID / DEEP SURVEY</span><h1>Crush Depth</h1></div>
+      {state.screen == 3 ? <span class={depth >= 570 ? "kc-clock critical" : "kc-clock"}>{"\{depth} m"}</span> : Node.Text("")}
+    </div>
+    {state.screen != 0 ? <button class="kc-back" onclick={(ElementEvent e) => {
+      if (state.audio is not null) { state.audio!.stop(); }
+      state.screen = 0;
+      refresh();
+    }}>{state.screen == 3 && d.outcome == 0 ? "End dive and return home" : "Back to home"}</button> : Node.Text("")}
+    {state.screen == 0 ? <div class="kc-panel kc-home">
+      <div class="kc-sonar"><span></span></div>
+      <h2>Bring the crew home</h2>
+      <p>Two players, two screens. The operator reads the instruments. The expert uses the manual to talk them through the emergency.</p>
+      <div class="kc-controls">
+        <button onclick={(ElementEvent e) => { state.screen = 2; refresh(); }}>Operate the sub</button>
+        <button onclick={(ElementEvent e) => { state.screen = 1; refresh(); }}>Read the manual</button>
+      </div>
+    </div> : Node.Text("")}
+    {state.screen == 1 ? <Manual/> : Node.Text("")}
+    {state.screen == 2 || (state.screen == 3 && d.outcome != 0) ? <div class="kc-panel">
+      <h2>{state.screen == 2 ? "Operator briefing" : d.outcome == 1 ? "Surfaced" : "Sub lost"}</h2>
+      <p>{state.screen == 2 ? "Ask the expert to open the manual on their device. The sub starts sinking when you begin the dive." : d.report}</p>
+      <button onclick={(ElementEvent e) => {
+        if (state.audio is null) { state.audio = ConsoleSound.create(page); }
+        state.run = dive(state.seed, page.now());
+        state.seed = (state.seed + 4) % 9;
+        state.screen = 3;
+        state.audio!.background(margin(state.run), true);
+        state.audio!.play(ONLINE);
+        refresh();
+      }}>{state.screen == 2 ? "Begin dive" : "New dive"}</button>
+    </div> : Node.Text("")}
+    {state.screen == 3 && d.outcome == 0 ? <div class="kc-panel">
+      <div class="kc-mimic">
+        <div class={sealed(d) ? "kc-unit live" : "kc-unit"}><span class="kc-symbol valve"></span>HULL</div>
+        <div class={powered(d) ? "kc-unit live" : "kc-unit"}><span class="kc-symbol bus"></span>BUS</div>
+        <div class={d.rising ? "kc-unit live" : "kc-unit"}><span class="kc-symbol core"></span>ASCENT</div>
+      </div>
+      <p class="kc-reading">{"WET SENSOR: \{sensors[d.leak]}  /  FAULT E\{d.fault + 1}"}</p>
+      <div class="kc-meters">
+        <Gauge name="FLOODWATER" value={"\{water}%"} fill={water}/>
+        <Gauge name="BATTERY" value={"\{battery}%"} fill={battery}/>
+        <Gauge name="AIR CHARGE" value={d.air ? "READY" : "SPENT"} fill={d.air ? 100 : 0}/>
+      </div>
+      {!d.rising ? <div class="kc-bank">
+        <div class="kc-controls"><span class="kc-label">BULKHEAD</span><div>
+          <Control label="Seal A" id={0} active={d.hatch == 0} state={state} page={page} refresh={refresh}/>
+          <Control label="Seal B" id={1} active={d.hatch == 1} state={state} page={page} refresh={refresh}/>
+          <Control label="Seal C" id={2} active={d.hatch == 2} state={state} page={page} refresh={refresh}/>
+        </div></div>
+        <div class="kc-controls"><span class="kc-label">BACKUP BUS</span><div>
+          <Control label="Bus 1" id={3} active={d.bus == 0} state={state} page={page} refresh={refresh}/>
+          <Control label="Bus 2" id={4} active={d.bus == 1} state={state} page={page} refresh={refresh}/>
+          <Control label="Bus 3" id={5} active={d.bus == 2} state={state} page={page} refresh={refresh}/>
+        </div></div>
+        <div class="kc-controls"><span class="kc-label">LOAD</span><div>
+          <Control label="Off" id={6} active={d.load == 0} state={state} page={page} refresh={refresh}/>
+          <Control label="Pump" id={7} active={d.load == 1} state={state} page={page} refresh={refresh}/>
+          <Control label="Trim" id={8} active={d.load == 2} state={state} page={page} refresh={refresh}/>
+        </div></div>
+        <Control label="Blow ballast" id={9} active={false} state={state} page={page} refresh={refresh}/>
+      </div> : Node.Text("")}
+      <p class="kc-report">{d.report}</p>
+    </div> : Node.Text("")}
+    {state.audio is not null ? <div class="kc-footer"><span>NEREID / EMERGENCY SYSTEMS</span>
+      <button onclick={(ElementEvent e) => {
+        ConsoleSound audio = state.audio!;
+        audio.enabled = !audio.enabled;
+        if (audio.enabled) { updateSound(state, d.outcome, 1); } else { audio.stop(); }
+        refresh();
+      }}>{state.audio!.enabled ? "Sound on" : "Sound off"}</button>
+    </div> : Node.Text("")}
+  </div></div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Crush Depth");
+  i32 seed = 0;
+  auto random = await page.sys.random().bytes(1);
+  if (random.isOk()) { seed = (random.ok()![0] as i32) % 9; }
+  Console state = Console(dive(seed, page.now()), seed, 0, null);
+  page.mount((Ui ui) => <Panel page={page} state={state}/>);
+  return 0;
+}

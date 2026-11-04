@@ -1,0 +1,40 @@
+import { Dive, advance, dive, operate, pumping } from "../src/apps/crush-depth/rules.wac";
+
+export string test_crush_depth_manual_surfaces_every_dive() {
+  i32[] hatch = [1, 2, 0];
+  i32[] bus = [5, 3, 4];
+  for (i32 seed = 0; seed < 9; seed++) {
+    Dive d = dive(seed, 0.0);
+    operate(d, hatch[d.leak], 10000.0);
+    operate(d, bus[d.fault], 14000.0);
+    operate(d, 7, 17000.0);
+    if (!pumping(d)) { return "manual could not start pump"; }
+    operate(d, 8, 23000.0);
+    if (pumping(d) || d.water > 25.0) { return "trim and pump should be exclusive"; }
+    operate(d, 9, 25000.0);
+    if (!d.rising || d.air) { return "could not establish ascent"; }
+    advance(d, 65000.0);
+    if (d.outcome != 1 || d.depth != 0.0) { return "failed to surface"; }
+  }
+  return "";
+}
+
+export string test_crush_depth_distinct_failure_paths() {
+  Dive d = dive(0, 0.0);
+  advance(d, 90000.0);
+  if (d.outcome != 2 || d.water < 100.0) { return "untended leak should flood the sub"; }
+
+  d = dive(0, 0.0);
+  operate(d, 1, 0.0);
+  advance(d, 180000.0);
+  if (d.outcome != 2 || d.depth < 650.0) { return "isolating the leak alone cannot prevent crush depth"; }
+
+  d = dive(0, 0.0);
+  for (i32 i = 0; i < 13; i++) { operate(d, 3, 0.0); }
+  if (d.outcome != 2 || d.battery > 0.0) { return "wrong bus should drain the battery"; }
+
+  d = dive(0, 0.0);
+  operate(d, 9, 0.0);
+  if (d.outcome != 2 || d.air) { return "premature blow should spend the only charge"; }
+  return "";
+}
