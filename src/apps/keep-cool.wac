@@ -1,0 +1,97 @@
+import { ElementEvent, Node, Page, Ui, html.a, html.b, html.button, html.div, html.h1, html.h2, html.p, html.span, html.style } from "web";
+import { Incident, command, incident, seconds, update } from "./keep-cool/rules.wac";
+import { panelCss } from "./keep-cool/style.wac";
+
+struct Console {
+  Incident run;
+  i32 seed;
+  bool started;
+  string manual;
+}
+
+Node control(string label, i32 id, Console state, Page page, fn<void()> refresh) {
+  return <button onclick={(ElementEvent e) => { command(state.run, id, page.now()); refresh(); }}>{label}</button>;
+}
+
+Node Panel(Ui ui, Page page, Console state) {
+  auto revision = ui.state(0);
+  fn<void()> refresh = () => { revision.update((i32 n) => n + 1); };
+  ui.effect("", () => ui.every(200, () => {
+    if (!state.started || state.run.stage >= 4) { return; }
+    update(state.run, page.now());
+    refresh();
+  }));
+  Incident run = state.run;
+  f64 now = page.now();
+  i32 remaining = state.started ? seconds(run, now) : 300;
+  if (run.stage == 4) { remaining = seconds(run, run.cooling); }
+  i32 mins = remaining / 60;
+  i32 secs = remaining % 60;
+  string clock = "\{mins}:" + (secs < 10 ? "0" : "") + "\{secs}";
+  i32 heat = 100 - remaining / 4;
+  if (run.stage == 3) {
+    i32 coolingSeconds = ((now - (run.cooling - 5000.0)) / 1000.0).trunc() as~ i32;
+    heat = 100 - seconds(run, run.cooling - 5000.0) / 4 - 3 * coolingSeconds;
+  }
+  string[] feeds = ["AMBER", "BLUE", "WHITE"];
+  string[] loads = ["LOW", "MEDIUM", "HIGH"];
+  string[] signals = ["STEADY / STEADY", "STEADY / PULSE", "PULSE / STEADY", "PULSE / PULSE"];
+  return <div class="kc">
+    <style>{panelCss()}</style>
+    <div class="kc-head"><div><span class="kc-label">CALDER STATION / UNIT 04</span><h1>Keep It Cool</h1></div>
+      <span class={remaining <= 45 ? "kc-clock critical" : "kc-clock"}>{clock}</span></div>
+    <div class="kc-strip">
+      <span class={state.started && run.stage == 0 ? "active" : ""}>01 / POWER</span>
+      <span class={state.started && run.stage == 1 ? "active" : ""}>02 / ROUTING</span>
+      <span class={state.started && (run.stage == 2 || run.stage == 3) ? "active" : ""}>03 / COOLING</span>
+    </div>
+    {!state.started || run.stage >= 4 ?
+      <div class="kc-panel">
+        <h2>{!state.started ? "Emergency drill" : run.stage == 4 ? "Unit stable" : "Incident lost"}</h2>
+        <p>{!state.started ? "One player operates this panel. The other uses the field manual on a separate screen or on paper. Read the instruments aloud before touching the controls." : run.report}</p>
+        <p>{!state.started ? "Restore cooling within five minutes. Each interlock costs 15 seconds." : "Interlocks tripped: \{run.faults}"}</p>
+        <div class="kc-controls">
+          <button onclick={(ElementEvent e) => {
+            state.run = incident(state.seed, page.now());
+            state.seed = (state.seed + 37) % 72;
+            state.started = true;
+            refresh();
+          }}>{state.started ? "Start another incident" : "Begin incident"}</button>
+          <a href={state.manual} target="_blank" rel="noopener noreferrer">Expert field manual ↗</a>
+        </div>
+      </div> :
+      <div class="kc-panel">
+        <span class="kc-label">LIVE TELEMETRY</span>
+        <h2>{run.stage == 0 ? "Emergency power" : run.stage == 1 ? "Coolant routing" : run.stage == 2 ? "Heat removal" : "Confirming cooling"}</h2>
+        <p class="kc-reading">{run.stage == 0 ? "FEED  \{feeds[run.feed]}  ·  LOAD  \{loads[run.load]}" :
+          run.stage == 1 ? (run.loop == 0 ? "LOOP N AVAILABLE" : "LOOP S AVAILABLE") :
+          run.stage == 2 ? "PROBE A / B  ·  \{signals[run.signal]}" : "FLOW RESTORED  ·  TEMPERATURE FALLING"}</p>
+        <div class="kc-meters">
+          <span>THERMAL INDEX <b>{heat}</b></span>
+          <span>COOLANT FLOW <b>{run.stage == 3 ? "NOMINAL" : "OFFLINE"}</b></span>
+        </div>
+        <div class="kc-controls">
+          {run.stage == 0 ? <div>{control("Isolator", 3, state, page, refresh)}{control("Reserve R1", 0, state, page, refresh)}{control("Reserve R2", 1, state, page, refresh)}{control("Reserve R3", 2, state, page, refresh)}</div> : Node.Text("")}
+          {run.stage == 1 ? <div>{control("V-12", 0, state, page, refresh)}{control("V-31", 1, state, page, refresh)}{control("V-24", 2, state, page, refresh)}{control("V-43", 3, state, page, refresh)}</div> : Node.Text("")}
+          {run.stage == 2 ? <div>{control("Start pump K", 0, state, page, refresh)}{control("Start pump M", 1, state, page, refresh)}</div> : Node.Text("")}
+        </div>
+        <p class="kc-report">{run.report}</p>
+      </div>}
+    <p class="kc-footer">FICTIONAL TRAINING CONSOLE / TWO-PERSON CREW</p>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("Keep It Cool");
+  i32 seed = 0;
+  auto random = await page.sys.random().bytes(2);
+  if (random.isOk()) {
+    u8[] bytes = random.ok()!;
+    seed = ((bytes[0] as i32) * 256 + (bytes[1] as i32)) % 72;
+  }
+  string[] args = page.sys.args();
+  string manual = args.len() == 0 ? "manual.html" : args[0];
+  Console state = Console(incident(seed, page.now()), seed, false, manual);
+  page.mount((Ui ui) => <Panel page={page} state={state}/>);
+  return 0;
+}
