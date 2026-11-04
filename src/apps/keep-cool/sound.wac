@@ -1,4 +1,4 @@
-// Short synthesized console cues. No network assets or continuous background audio.
+// Synthesized console cues and a countdown score, generated locally.
 import { Page, Sound, Voice } from "web";
 
 export static i32 SWITCH = 0;
@@ -26,10 +26,46 @@ Sound sequence(Page page, f64[] notes, i32 beatMs, bool rough) {
   return page.sound(pcm, rate);
 }
 
+f64 oscillator(f64 phase) {
+  f64 x = 2.0 * (phase - phase.floor()) - 1.0;
+  return 4.0 * x * (1.0 - x.abs());
+}
+
+// An eight-beat loop. The higher layers enter as the clock runs down.
+Sound score(Page page, i32 beatMs, i32 intensity) {
+  i32 rate = 11025;
+  i32 beat = rate * beatMs / 1000;
+  f64[] pcm = f64[].filled(beat * 8, 0.0);
+  f64[] bass = [55.0, 55.0, 65.4, 55.0, 58.3, 58.3, 49.0, 55.0];
+  for (i32 i = 0; i < pcm.len(); i++) {
+    f64 loopPhase = (i as f64) / (pcm.len() as f64);
+    f64 t = ((i % beat) as f64) / (beat as f64);
+    f64 elapsed = ((i % beat) as f64) / (rate as f64);
+    f64 hz = bass[i / beat];
+    f64 envelope = 4.0 * t * (1.0 - t);
+    f64 pulse = envelope * (1.0 - t);
+    f64 mix = 0.11 * oscillator(loopPhase * (55.0 * (pcm.len() as f64) / (rate as f64)).floor());
+    mix += 0.18 * pulse * oscillator(elapsed * hz);
+    if (intensity >= 1) { mix += 0.09 * envelope * oscillator(elapsed * hz * 3.0); }
+    if (intensity >= 2) { mix += 0.06 * pulse * oscillator(elapsed * hz * 6.0); }
+    if (intensity >= 3) {
+      f64 offbeat = t * 2.0 - 1.0;
+      if (offbeat > 0.0) { mix += 0.1 * 4.0 * offbeat * (1.0 - offbeat) * oscillator(elapsed * 174.6); }
+    }
+    // Fade to zero at the splice and when this loop first starts.
+    f64 edge = i < pcm.len() / 2 ? i as f64 : (pcm.len() - 1 - i) as f64;
+    pcm[i] = mix * (edge < 120.0 ? edge / 120.0 : 1.0);
+  }
+  return page.sound(pcm, rate);
+}
+
 export struct ConsoleSound {
   Sound[] cues;
   Voice? voice;
   bool enabled;
+  Sound[] tracks;
+  Voice? music;
+  i32 intensity;
 
   ConsoleSound create(Page page) {
     return ConsoleSound([
@@ -39,16 +75,32 @@ export struct ConsoleSound {
       sequence(page, [105.0, 145.0, 220.0], 135, false),
       sequence(page, [392.0, 494.0, 587.0, 784.0], 145, false),
       sequence(page, [330.0, 247.0, 165.0], 210, true),
-    ], null, true);
+    ], null, true, [score(page, 760, 0), score(page, 600, 1), score(page, 445, 2), score(page, 325, 3)], null, -1);
+  }
+
+  void background(this, i32 remaining, bool active) {
+    i32 next = -1;
+    if (active && this.enabled) {
+      next = remaining <= 45 ? 3 : remaining <= 90 ? 2 : remaining <= 180 ? 1 : 0;
+    }
+    if (next == this.intensity) { return; }
+    if (this.music is not null) { this.music!.stop(); this.music = null; }
+    this.intensity = next;
+    if (next >= 0) { this.music = this.tracks[next].loop(0.38); }
   }
 
   void stop(this) {
+    this.background(0, false);
+    this.stopCue();
+  }
+
+  void stopCue(this) {
     if (this.voice is not null) { this.voice!.stop(); this.voice = null; }
   }
 
   void play(this, i32 cue) {
     if (!this.enabled) { return; }
-    this.stop();
+    this.stopCue();
     this.voice = this.cues[cue].play(0.7);
   }
 }

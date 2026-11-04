@@ -16,7 +16,9 @@ struct Console {
 Node control(string label, i32 id, Console state, Page page, fn<void()> refresh) {
   return <button onclick={(ElementEvent e) => { i32 before = state.run.stage;
     i32 faults = state.run.faults;
-    command(state.run, id, page.now());
+    f64 now = page.now();
+    command(state.run, id, now);
+    state.audio.background(seconds(state.run, now), state.run.stage < 4);
     if (state.run.stage == 5) { state.audio.play(LOST); }
     else if (state.run.faults != faults) { state.audio.play(ALARM); }
     else if (state.run.stage == 3) { state.audio.play(PUMP); }
@@ -32,6 +34,7 @@ Node Panel(Ui ui, Page page, Console state) {
     if (!state.started || state.run.stage >= 4) { return; }
     f64 now = page.now();
     update(state.run, now);
+    state.audio.background(seconds(state.run, now), state.run.stage < 4);
     if (state.run.stage == 4) { state.audio.play(STABLE); }
     else if (state.run.stage == 5) { state.audio.play(LOST); }
     else if (!state.warned && seconds(state.run, now) <= 45) {
@@ -80,6 +83,7 @@ Node Panel(Ui ui, Page page, Console state) {
             state.seed = (state.seed + 37) % 72;
             state.started = true;
             state.warned = false;
+            state.audio.background(300, true);
             state.audio.play(ONLINE);
             refresh();
           }}>{state.started ? "Start another incident" : "Begin incident"}</button>
@@ -106,7 +110,10 @@ Node Panel(Ui ui, Page page, Console state) {
     <div class="kc-footer"><span>CALDER STATION / TRAINING SYSTEM</span>
       <button onclick={(ElementEvent e) => {
         state.audio.enabled = !state.audio.enabled;
-        if (state.audio.enabled) { state.audio.play(SWITCH); } else { state.audio.stop(); }
+        if (state.audio.enabled) {
+          state.audio.background(seconds(state.run, page.now()), state.started && state.run.stage < 4);
+          state.audio.play(SWITCH);
+        } else { state.audio.stop(); }
         refresh();
       }}>{state.audio.enabled ? "Sound on" : "Sound off"}</button>
     </div>
