@@ -1,4 +1,4 @@
-import { Dive, advance, ascentCost, dive, operate, pumping } from "../src/apps/crush-depth/rules.wac";
+import { Dive, advance, ascentCost, dive, liveGauge, operate, pumpRate, pumping, reading } from "../src/apps/crush-depth/rules.wac";
 
 export string test_crush_depth_manual_surfaces_every_dive() {
   i32[] hatch = [1, 2, 0];
@@ -8,9 +8,10 @@ export string test_crush_depth_manual_surfaces_every_dive() {
       Dive d = dive(seed, 0.0, mission);
       operate(d, hatch[d.leak], 5000.0);
       operate(d, bus[d.fault], 7000.0);
-      operate(d, 7, 9000.0);
+      if (mission == 1) { operate(d, 11 + liveGauge(d), 8000.0); }
+      operate(d, mission == 2 && seed % 3 != 2 ? 10 : 7, 9000.0);
       if (!pumping(d)) { return "manual could not start pump"; }
-      f64 trimAt = 9000.0 + (d.water - 25.0) / 2.5 * 1000.0 + 100.0;
+      f64 trimAt = 9000.0 + (d.water - 25.0) / pumpRate(d) * 1000.0 + 100.0;
       operate(d, 8, trimAt);
       if (pumping(d) || d.water > 25.0) { return "trim and pump should be exclusive"; }
       operate(d, 9, trimAt);
@@ -59,6 +60,45 @@ export string test_crush_depth_low_battery_stalls_ascent() {
   advance(d, 2100.0);
   if (d.outcome != 2 || d.battery != 0.0 || (d.depth - 210.0).abs() > 0.00001) {
     return "insufficient battery should stop ascent halfway";
+  }
+  return "";
+}
+
+export string test_crush_depth_only_live_gauge_tracks_depth() {
+  for (i32 fault = 0; fault < 3; fault++) {
+    Dive d = dive(fault * 3, 0.0, 1);
+    i32 dead = fault == 1 ? 1 : 0;
+    f64 frozen = reading(d, dead);
+    f64 live = reading(d, 1 - dead);
+    advance(d, 1000.0);
+    if (reading(d, dead) != frozen || reading(d, 1 - dead) <= live) {
+      return "fault wiring should freeze only the manual's listed gauge";
+    }
+    operate(d, 9, 1000.0);
+    if (!d.air) { return "missing depth reference should preserve air"; }
+    operate(d, 11 + dead, 1000.0);
+    operate(d, 9, 1000.0);
+    if (d.air || d.outcome != 2) { return "frozen reference should fail the dive"; }
+  }
+  return "";
+}
+
+export string test_crush_depth_pump_tradeoffs() {
+  Dive lowBattery = dive(0, 0.0, 2);
+  operate(lowBattery, 1, 5000.0);
+  operate(lowBattery, 5, 7000.0);
+  operate(lowBattery, 7, 9000.0);
+  operate(lowBattery, 8, 17200.0);
+  if (lowBattery.water > 25.0 || lowBattery.battery >= ascentCost(lowBattery)) {
+    return "main pump should drain fast but leave too little power";
+  }
+  Dive nearCrush = dive(2, 0.0, 2);
+  operate(nearCrush, 0, 5000.0);
+  operate(nearCrush, 5, 7000.0);
+  operate(nearCrush, 10, 9000.0);
+  advance(nearCrush, 40000.0);
+  if (nearCrush.depth < 650.0 || nearCrush.water <= 25.0) {
+    return "aux pump should be too slow near crush depth";
   }
   return "";
 }

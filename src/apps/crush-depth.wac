@@ -1,5 +1,5 @@
 import { ElementEvent, Node, Page, Ui, html.b, html.br, html.button, html.div, html.h1, html.h2, html.p, html.span, html.style } from "web";
-import { Dive, advance, ascentCost, dive, margin, operate, powered, sealed } from "./crush-depth/rules.wac";
+import { Dive, advance, ascentCost, dive, margin, operate, powered, reading, sealed } from "./crush-depth/rules.wac";
 import { Manual } from "./crush-depth/manual.wac";
 import { panelCss } from "./crush-depth/style.wac";
 import { ConsoleSound, SWITCH, ONLINE, ALARM, PUMP, STABLE, LOST } from "./crush-depth/sound.wac";
@@ -48,15 +48,19 @@ Node Panel(Ui ui, Page page, Console state) {
   i32 depth = d.depth.ceil() as~ i32;
   i32 water = d.water.ceil() as~ i32;
   i32 battery = d.battery.floor() as~ i32;
-  i32 cost = ascentCost(d).ceil() as~ i32;
-  i32 reserve = (d.battery - ascentCost(d)).floor() as~ i32;
+  bool diagnose = d.mission == 1 && !d.rising && d.outcome == 0;
+  i32 gaugeA = reading(d, 0).ceil() as~ i32;
+  i32 gaugeB = reading(d, 1).ceil() as~ i32;
+  f64 estimate = diagnose && d.gauge >= 0 ? reading(d, d.gauge) * (0.52 / 14.0) : ascentCost(d);
+  i32 cost = estimate.ceil() as~ i32;
+  i32 reserve = (d.battery - estimate).floor() as~ i32;
   string[] missions = ["01 / Hull Breach", "02 / Below the Shelf", "03 / Low Reserve"];
-  string[] briefing = ["Standard response drill.", "Already near crush depth. Isolate the leak quickly.", "Heavy flooding and a depleted battery. Pump only as long as needed."];
+  string[] briefing = ["Standard response drill.", "Depth gauges disagree. Diagnose the live instrument.", "Choose between a fast main pump and a slower, efficient auxiliary pump."];
   string[] sensors = ["BOW", "MID", "STERN"];
   return <div class="kc-shell"><div class="kc">
     <style>{panelCss()}</style>
     <div class="kc-head"><div><span class="kc-label">R/V NEREID / DEEP SURVEY</span><h1>Crush Depth</h1></div>
-      {state.screen == 3 ? <span class={depth >= 570 ? "kc-clock critical" : "kc-clock"}>{"\{depth} m"}</span> : Node.Text("")}
+      {state.screen == 3 && !diagnose ? <span class={depth >= 570 ? "kc-clock critical" : "kc-clock"}>{"\{depth} m"}</span> : Node.Text("")}
     </div>
     {state.screen != 0 ? <button class="kc-back" onclick={(ElementEvent e) => {
       if (state.audio is not null) { state.audio!.stop(); }
@@ -99,12 +103,16 @@ Node Panel(Ui ui, Page page, Console state) {
         <div class={d.rising ? "kc-unit live" : "kc-unit"}><span class="kc-symbol core"></span>ASCENT</div>
       </div>
       <p class="kc-reading">{"WET SENSOR: \{sensors[d.leak]}  /  FAULT E\{d.fault + 1}"}</p>
+      {diagnose ? <div class="kc-controls"><span class="kc-label">TRIM DEPTH REFERENCE</span><div>
+        <Control label={"Gauge A · \{gaugeA} m"} id={11} active={d.gauge == 0} state={state} page={page} refresh={refresh}/>
+        <Control label={"Gauge B · \{gaugeB} m"} id={12} active={d.gauge == 1} state={state} page={page} refresh={refresh}/>
+      </div></div> : Node.Text("")}
       <div class="kc-meters">
         <Gauge name="FLOODWATER" value={"\{water}%"} fill={water}/>
         <Gauge name="BATTERY" value={"\{battery}%"} fill={battery}/>
         <Gauge name="AIR CHARGE" value={d.air ? "READY" : "SPENT"} fill={d.air ? 100 : 0}/>
       </div>
-      {d.load == 2 ? <p class="kc-reading">{d.rising ? "ASCENDING" : "ASCENT ESTIMATE"}<br/>
+      {d.load == 2 && (!diagnose || d.gauge >= 0) ? <p class="kc-reading">{d.rising ? "ASCENDING" : "ASCENT ESTIMATE"}<br/>
         {"Needs \{cost}% · Projected reserve \{reserve}%"}
         {reserve <= 0 ? <span class="kc-label"><br/>LOW RESERVE · SURFACE AT RISK</span> : Node.Text("")}</p> : Node.Text("")}
       {!d.rising ? <div class="kc-bank">
@@ -120,7 +128,8 @@ Node Panel(Ui ui, Page page, Console state) {
         </div></div>
         <div class="kc-controls"><span class="kc-label">LOAD</span><div>
           <Control label="Off" id={6} active={d.load == 0} state={state} page={page} refresh={refresh}/>
-          <Control label="Pump" id={7} active={d.load == 1} state={state} page={page} refresh={refresh}/>
+          <Control label={d.mission == 2 ? "Main pump" : "Pump"} id={7} active={d.load == 1} state={state} page={page} refresh={refresh}/>
+          {d.mission == 2 ? <Control label="Aux pump" id={10} active={d.load == 3} state={state} page={page} refresh={refresh}/> : Node.Text("")}
           <Control label="Trim" id={8} active={d.load == 2} state={state} page={page} refresh={refresh}/>
         </div></div>
         <Control label="Blow ballast" id={9} active={false} state={state} page={page} refresh={refresh}/>
