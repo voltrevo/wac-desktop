@@ -1,0 +1,61 @@
+// The fewest moves that win a level, found by trying every move from every place a level can be in.
+//
+// **What makes a level fit to play**: that it can be won, and what its par is — not a guess, but the fewest moves there
+// are. The rules are turn-based and nothing in them is random (`rules.wac`), so a level is a finite set of places —
+// where Pip is, which lanterns are lit, where the mirrors and ghosts are — and a breadth-first search of them finds the
+// shortest way to the door, or that there is none. The tests run it on every level (`test/lanterns_test.wac`).
+
+import { Map, Queue, Vec, hashString, stringEq } from "core";
+import { Board, copyBoard, move } from "./rules.wac";
+
+/** What a search found: the fewest moves that win, or -1 for none; and the moves, as `L` `R` `U` `D`. */
+export struct Solved {
+  i32 moves;
+  string path;
+  /** How many places it looked at. */
+  i32 seen;
+}
+
+/** Where everything that moves is: two boards alike in this are the same place. */
+string placeOf(Board b) {
+  string out = "\{b.pip}|";
+  for (i32 i = 0; i < b.lit.len(); i++) { out = out + (b.lit[i] ? "1" : "0"); }
+  out = out + "|";
+  for (i32 i = 0; i < b.mirrors.len(); i++) { out = out + "\{b.mirrors[i]},"; }
+  out = out + "|";
+  for (i32 i = 0; i < b.ghosts.len(); i++) { out = out + "\{b.ghosts[i]},"; }
+  return out;
+}
+
+struct Visit {
+  Board board;
+  string path;
+}
+
+/** The fewest moves that win `start`, looking at no more than `most` places. */
+export Solved solve(Board start, i32 most) {
+  Map<string, bool> seen = Map.create(hashString, stringEq);
+  Queue<Visit> next;
+  seen.set(placeOf(start), true);
+  next.push(Visit(copyBoard(start), ""));
+  i32[] dxs = [0 - 1, 1, 0, 0];
+  i32[] dys = [0, 0, 0 - 1, 1];
+  string[] names = ["L", "R", "U", "D"];
+  i32 looked = 0;
+  while (looked < most) {
+    Visit? v = next.pop();
+    if (v is null) { break; }
+    looked++;
+    for (i32 d = 0; d < 4; d++) {
+      Board b = copyBoard(v!.board);
+      if (!move(b, dxs[d], dys[d]) || b.caught) { continue; }
+      string path = v!.path + names[d];
+      if (b.won) { return Solved(b.moves, path, looked); }
+      string at = placeOf(b);
+      if (seen.get(at) is not null) { continue; }
+      seen.set(at, true);
+      next.push(Visit(b, path));
+    }
+  }
+  return Solved(0 - 1, "", looked);
+}

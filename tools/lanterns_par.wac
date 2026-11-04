@@ -1,0 +1,20 @@
+// Each Lantern Light level searched for its fewest moves: what to write as its par, and a way it is won.
+//
+//     wac run tools/lanterns_par.wac
+//
+// For making levels: `test/lanterns_test.wac` holds every level to the par written, so a level changed is searched
+// again here and its par written anew.
+
+import { Sys } from "std";
+import { Level, allLevels } from "../src/apps/lanterns/levels.wac";
+import { boardOf } from "../src/apps/lanterns/rules.wac";
+import { Solved, solve } from "../src/apps/lanterns/solve.wac";
+
+export i32 main(Sys sys) {
+  Level[] levels = allLevels();
+  for (i32 i = 0; i < levels.len(); i++) {
+    Solved s = solve(boardOf(levels[i].rows), 2000000);
+    sys.stdout().line("\{i + 1} \{levels[i].name}: par \{s.moves} (written \{levels[i].par}), \{s.seen} places — \{s.path}");
+  }
+  return 0;
+}

@@ -51,6 +51,7 @@ export Entry[] entries() {
     Entry("Programming", "code", "wac IDE", "Write wac, checked as you type, in Projects", ["code", "programming", "compiler", "develop", "build", "run", "test", "wac", "ide"], true, "ide", "Projects"),
     Entry("Programming", "terminal", "Terminal", "A shell on this desktop's disk", ["shell", "console", "command line", "cli", "sh", "bash", "prompt", "commands", "tty"], true, "terminal", "Desktop"),
     Entry("Play", "lantern", "Pip and the Lost Lanterns", "A little platformer, and how long a key takes to show", ["game", "platformer", "retro", "jump", "pip", "lanterns", "latency", "arcade", "play"], true, "pip", ""),
+    Entry("Play", "beam", "Lantern Light", "Pip's puzzles: light every lantern, one move at a time", ["game", "puzzle", "pip", "lanterns", "light", "mirror", "ghost", "turn-based", "sokoban", "play"], true, "lanterns", ""),
     Entry("Play", "fractal", "Mandelbrot", "The set, dragged and zoomed into", ["fractal", "maths", "math", "zoom", "art", "complex", "explore", "mandelbrot"], true, "mandelbrot", ""),
     Entry("Play", "stackfall", "Stackfall", "Falling blocks, fresh rolls", ["game", "blocks", "puzzle", "falling", "arcade", "play"], true, "stackfall", ""),
     Entry("Help", "share", "Share", "A code to open this desktop on another phone", ["share", "qr", "qr code", "link", "address", "url", "send", "invite", "phone", "camera"], true, "share", ""),

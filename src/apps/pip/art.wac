@@ -57,7 +57,7 @@ export i32 mix(i32 a, i32 b, f64 t) {
   return out;
 }
 
-void dot(Screen s, i32 x, i32 y, i32 c) {
+export void dot(Screen s, i32 x, i32 y, i32 c) {
   if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) { return; }
   i32 at = (y * SCREEN_W + x) * 4;
   s.px[at] = ((c >> 16) & 255) as@ u8;
@@ -66,7 +66,7 @@ void dot(Screen s, i32 x, i32 y, i32 c) {
 }
 
 /** Light added to a pixel, `amount` of `c`. */
-void glow(Screen s, i32 x, i32 y, i32 c, f64 amount) {
+export void glow(Screen s, i32 x, i32 y, i32 c, f64 amount) {
   if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) { return; }
   i32 at = (y * SCREEN_W + x) * 4;
   for (i32 k = 0; k < 3; k++) {
@@ -76,14 +76,14 @@ void glow(Screen s, i32 x, i32 y, i32 c, f64 amount) {
   }
 }
 
-void rect(Screen s, i32 x, i32 y, i32 w, i32 h, i32 c) {
+export void rect(Screen s, i32 x, i32 y, i32 w, i32 h, i32 c) {
   for (i32 j = y < 0 ? 0 : y; j < y + h && j < SCREEN_H; j++) {
     for (i32 i = x < 0 ? 0 : x; i < x + w && i < SCREEN_W; i++) { dot(s, i, j, c); }
   }
 }
 
 /** A warm glow of radius `r` about (`cx`, `cy`), strongest in the middle. */
-void halo(Screen s, i32 cx, i32 cy, i32 r, i32 c, f64 strength) {
+export void halo(Screen s, i32 cx, i32 cy, i32 r, i32 c, f64 strength) {
   for (i32 y = cy - r; y <= cy + r; y++) {
     for (i32 x = cx - r; x <= cx + r; x++) {
       i32 d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
@@ -123,10 +123,10 @@ i32 paint(u8 ch) {
 }
 
 /** Draw `rows` at (`x`, `y`), mirrored when `flip`. */
-void sprite(Screen s, string[] rows, i32 x, i32 y, bool flip) { seeThrough(s, rows, x, y, flip, 1.0); }
+export void sprite(Screen s, string[] rows, i32 x, i32 y, bool flip) { seeThrough(s, rows, x, y, flip, 1.0); }
 
 /** The same, `alpha` of the way over what is there: a ghost's sheet, or the ghost of Pip's best run. */
-void seeThrough(Screen s, string[] rows, i32 x, i32 y, bool flip, f64 alpha) {
+export void seeThrough(Screen s, string[] rows, i32 x, i32 y, bool flip, f64 alpha) {
   for (i32 j = 0; j < rows.len(); j++) {
     u8[] r = rows[j].toBytes();
     for (i32 i = 0; i < r.len(); i++) {

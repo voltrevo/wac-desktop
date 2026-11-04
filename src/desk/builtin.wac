@@ -46,6 +46,11 @@ export Start builtin(string app, string arg) {
     w = 964;
     h = 584;
     ic = "lantern";
+  } else if (app == "lanterns") {
+    // Two of the board's pixels to one of the screen's, with the moves above it and the buttons below.
+    w = 760;
+    h = 560;
+    ic = "beam";
   } else if (app == "paint") {
     // **Paint is handed the picture it is opened on**, to change; Open asks the desktop's picker for another, and a
     // new picture is saved where the desktop says.
@@ -105,7 +110,7 @@ export void startPlaced(Desk d, string app, string arg, Vec<Placed> places) {
     }
     return;
   }
-  if (app == "calc" || app == "ide" || app == "stackfall" || app == "pip") {
+  if (app == "calc" || app == "ide" || app == "stackfall" || app == "pip" || app == "lanterns") {
     i32 open = windowOf(d, app);
     if (open >= 0) {
       focus(d, open);

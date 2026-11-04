@@ -1,0 +1,387 @@
+// Lantern Light: Pip's puzzles. Light every lantern, then reach the door — one tile at a time, nothing moving unless
+// Pip does, with as many undos as it takes.
+//
+// **The rules are `lanterns/rules.wac`**: light in straight lines, across water, turned by mirrors Pip pushes; ghosts
+// that keep to the dark. Each level's par is the fewest moves that win it, found by searching every move
+// (`lanterns/solve.wac`), and the fewest Pip has taken is kept in the program's own folder. The picture is Pip's —
+// the same screen, sprites and sounds as Pip and the Lost Lanterns.
+//
+// **Keys**: the arrows or WASD move; Z, U or Backspace undoes; R starts the level again; Esc lists the levels; Shift+F
+// is full screen. **On a touch screen** a swipe moves, and there are buttons for each way.
+
+import { Vec } from "core";
+import { Element, ElementEvent, Node, Page, Ref, Sound, Ui, html.b, html.button, html.canvas, html.div, html.h1, html.p,
+         html.span, html.style } from "web";
+import { css } from "../style.wac";
+import { RATE, effects } from "./pip/chip.wac";
+import { Screen } from "./pip/art.wac";
+import { cropped, drawBoard, shownOf } from "./lanterns/art.wac";
+import { Level, allLevels } from "./lanterns/levels.wac";
+import { Board, boardOf, copyBoard, move } from "./lanterns/rules.wac";
+
+/** Where the fewest moves of each level are kept, and how far the person has got: `reached best best …`. */
+static string KEPT = "best";
+
+static i32 PLAYING = 0;
+static i32 WON = 1;
+static i32 LEVELS = 2;
+
+/** How far a finger must slide to be a swipe, in pixels; less is a tap. */
+static i32 SWIPE = 24;
+
+/** Each cue's sound among Pip's (`pip/chip.wac`'s `effects`): a step, a bump, a lantern, a push, a fade, caught, the door, won. */
+i32 soundOf(i32 cue) {
+  i32[] sounds = [0, 10, 2, 3, 9, 6, 5, 7, 8];
+  return cue > 0 && cue < sounds.len() ? sounds[cue] : 0;
+}
+
+struct Game {
+  Page page;
+  Level[] levels;
+  i32 index;
+  Board board;
+  /** The boards before each move, the last last: what Undo goes back to. */
+  Vec<Board> undo;
+  /** The fewest moves each level has been won in, 0 for none; and the furthest level open. */
+  i32[] best;
+  i32 reached;
+  i32 mode;
+  bool newBest;
+  Screen screen;
+  Element? canvas;
+  Element? stage;
+  fn<void()> bump;
+  Sound[] fx;
+  bool muted;
+  i32 frame;
+  /** A finger down on the board, and where: a swipe's start. -1 when there is none. */
+  i32 finger;
+  i32 fromX;
+  i32 fromY;
+  /** Whether the game fills the screen: as the host says (`fullscreenchange`). */
+  bool screenFull;
+}
+
+/** What was kept: how far the person has got, onto `best`. */
+i32 restoreKept(string text, i32[] best) {
+  i32 reached = 0;
+  i32 n = 0 - 1;
+  i32 v = 0;
+  bool inNumber = false;
+  u8[] b = (text + " ").toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] >= '0' && b[i] <= '9') {
+      v = v * 10 + (b[i] - '0') as i32;
+      inNumber = true;
+      continue;
+    }
+    if (!inNumber) { continue; }
+    if (n < 0) { reached = v; } else if (n < best.len()) { best[n] = v; }
+    n++;
+    v = 0;
+    inNumber = false;
+  }
+  return reached >= best.len() ? best.len() - 1 : reached;
+}
+
+void keep(Game g) {
+  string text = "\{g.reached}";
+  for (i32 i = 0; i < g.best.len(); i++) { text = text + " \{g.best[i]}"; }
+  g.page.sys.files().writeFile(KEPT, (text + "\n").toBytes());
+}
+
+/**
+ * The keys back on the game, after a button: a card's button goes with the card, and the keys would go to whatever is
+ * around the game — in a window of the desktop, the desktop.
+ */
+void keysHere(Game g) {
+  if (g.stage is not null) { g.stage!.focus(); }
+}
+
+void draw(Game g) {
+  drawBoard(g.screen, g.board, g.frame);
+  i32[] box = shownOf(g.board);
+  if (g.canvas is not null) { g.canvas!.pixels(box[2], box[3], cropped(g.screen, box)); }
+}
+
+/** Level `i`, from its start. */
+void begin(Game g, i32 i) {
+  g.index = i;
+  g.board = boardOf(g.levels[i].rows);
+  g.undo.clear();
+  g.mode = PLAYING;
+  g.newBest = false;
+  draw(g);
+  keysHere(g);
+  g.bump();
+}
+
+void sounds(Game g) {
+  if (g.muted) { return; }
+  for (i32 i = 0; i < g.board.cues.len(); i++) {
+    i32 s = soundOf(g.board.cues.get(i));
+    if (s > 0 && s < g.fx.len()) { g.fx[s].play(0.6); }
+  }
+}
+
+/** **One move**, kept for Undo if it was made; won, the level's best is kept and the next one opened. */
+void step(Game g, i32 dx, i32 dy) {
+  if (g.mode != PLAYING) { return; }
+  Board before = copyBoard(g.board);
+  if (move(g.board, dx, dy)) { g.undo.push(before); }
+  sounds(g);
+  if (g.board.won) {
+    g.mode = WON;
+    i32 was = g.best[g.index];
+    g.newBest = was == 0 || g.board.moves < was;
+    if (g.newBest) { g.best[g.index] = g.board.moves; }
+    if (g.index + 1 < g.levels.len() && g.reached < g.index + 1) { g.reached = g.index + 1; }
+    keep(g);
+  }
+  draw(g);
+  g.bump();
+}
+
+void undoMove(Game g) {
+  Board? was = g.undo.pop();
+  if (was is null) { return; }
+  g.board = was!;
+  g.mode = PLAYING;
+  draw(g);
+  keysHere(g);
+  g.bump();
+}
+
+/** The level from its start — itself undoable, so a restart by mistake is one Undo away. */
+void restart(Game g) {
+  if (g.board.moves > 0) { g.undo.push(copyBoard(g.board)); }
+  g.board = boardOf(g.levels[g.index].rows);
+  g.mode = PLAYING;
+  draw(g);
+  keysHere(g);
+  g.bump();
+}
+
+void toggleScreen(Game g) {
+  if (g.stage is not null) { g.stage!.fullScreen(!g.screenFull); }
+}
+
+void down(Game g, ElementEvent e) {
+  string k = e.value;
+  if (k == "F" && (e.mods & 1) != 0) { toggleScreen(g); return; }
+  if (k == "m" || k == "M") {
+    g.muted = !g.muted;
+    g.bump();
+    return;
+  }
+  if (g.mode == LEVELS) {
+    if (k == "Escape") { g.mode = g.board.won ? WON : PLAYING; g.bump(); }
+    return;
+  }
+  if (k == "Escape") {
+    g.mode = LEVELS;
+    g.bump();
+    return;
+  }
+  if (k == "z" || k == "Z" || k == "u" || k == "U" || k == "Backspace") { undoMove(g); return; }
+  if (k == "r" || k == "R") { restart(g); return; }
+  if (g.mode == WON) {
+    if (k == "Enter" || k == " ") { next(g); }
+    return;
+  }
+  if (k == "ArrowLeft" || k == "a" || k == "A") { step(g, 0 - 1, 0); }
+  if (k == "ArrowRight" || k == "d" || k == "D") { step(g, 1, 0); }
+  if (k == "ArrowUp" || k == "w" || k == "W") { step(g, 0, 0 - 1); }
+  if (k == "ArrowDown" || k == "s" || k == "S") { step(g, 0, 1); }
+}
+
+/** After a level won: the next, or — the last won — the list of levels. */
+void next(Game g) {
+  if (g.index + 1 < g.levels.len()) { begin(g, g.index + 1); } else { g.mode = LEVELS; g.bump(); }
+}
+
+/** A swipe on the board: the way it went furthest, if it went far enough to be one. */
+void swiped(Game g, ElementEvent e) {
+  if (e.pointer != g.finger) { return; }
+  g.finger = 0 - 1;
+  i32 dx = e.x - g.fromX;
+  i32 dy = e.y - g.fromY;
+  i32 ax = dx < 0 ? 0 - dx : dx;
+  i32 ay = dy < 0 ? 0 - dy : dy;
+  if (ax < SWIPE && ay < SWIPE) { return; }
+  if (ax >= ay) { step(g, dx < 0 ? 0 - 1 : 1, 0); } else { step(g, 0, dy < 0 ? 0 - 1 : 1); }
+}
+
+Node levelList(Game g) {
+  Vec<Node> items = Vec.create();
+  for (i32 i = 0; i < g.levels.len(); i++) {
+    Level l = g.levels[i];
+    bool locked = i > g.reached;
+    i32 n = i;
+    string best = g.best[i] > 0 ? "\{g.best[i]} moves" : (locked ? "locked" : "–");
+    string cls = "llevel" + (locked ? " locked" : "") + (i == g.index ? " on" : "") + (g.best[i] > 0 && g.best[i] <= l.par ? " par" : "");
+    items.push(<button class={cls} disabled={locked ? "" : null} onclick={(ElementEvent e) => { begin(g, n); }}>
+      <b>{"\{i + 1}"}</b><span class="lname">{l.name}</span><span class="lbest">{best}</span></button>);
+  }
+  return <div class="llevels">{items.toArray()}</div>;
+}
+
+/** What is over the board: always this one element, so the view never makes a card afresh under a tap. */
+Node overlay(Game g) {
+  if (g.mode == LEVELS) {
+    return <div class="lover"><div class="lcard">
+      <h1>Lantern Light</h1>
+      <p>Light every lantern, then reach the door. A level at par is starred.</p>
+      {levelList(g)}
+      <p class="lgo"><b>Esc</b> goes back</p>
+    </div></div>;
+  }
+  if (g.mode == WON) {
+    Level l = g.levels[g.index];
+    bool last = g.index + 1 >= g.levels.len();
+    bool atPar = g.board.moves <= l.par;
+    return <div class="lover"><div class="lcard">
+      <h1>{last ? "Every lantern is lit" : "The way is lit"}</h1>
+      <p>{"\{l.name} in \{g.board.moves} moves"}</p>
+      <p class={atPar ? "lpar" : "lfaint"}>{atPar ? "★ At par" : "Par is \{l.par} — it can be done in fewer"}</p>
+      <p class="lfaint">{g.newBest ? "Your best yet" : "Your best: \{g.best[g.index]} moves"}</p>
+      <div class="lbtns">
+        <button class="lbtn go" onclick={(ElementEvent e) => { next(g); }}>{last ? "The levels" : "Next level"}</button>
+        <button class="lbtn" onclick={(ElementEvent e) => { begin(g, g.index); }}>Again</button>
+      </div>
+    </div></div>;
+  }
+  if (g.board.caught) {
+    return <div class="lover"><div class="lcard">
+      <h1>A ghost caught Pip</h1>
+      <p>Ghosts keep to the dark: light the way first.</p>
+      <div class="lbtns">
+        <button class="lbtn go" onclick={(ElementEvent e) => { undoMove(g); }}>Undo</button>
+        <button class="lbtn" onclick={(ElementEvent e) => { restart(g); }}>Start again</button>
+      </div>
+    </div></div>;
+  }
+  return <div class="lover"></div>;
+}
+
+Node GameView(Ui ui, Game g) {
+  auto tick = ui.state(0);
+  g.bump = () => { tick.set(tick.get() + 1); };
+  Ref stage = ui.ref();
+  Ref cv = ui.ref();
+  ui.effect("", () => {
+    g.canvas = cv.element();
+    g.stage = stage.element();
+    if (g.stage is not null) { g.stage!.focus(); }
+    draw(g);
+    return () => { };
+  });
+  Level l = g.levels[g.index];
+  return <div class={"lanterns" + (g.screenFull ? " screenfull" : "")} tabindex="0" ref={stage}
+              prevent="ArrowLeft ArrowRight ArrowUp ArrowDown Space Enter Escape Backspace a d w s z u r m f"
+              onkeydown={(ElementEvent e) => { down(g, e); }}
+              onfullscreenchange={(ElementEvent e) => {
+                g.screenFull = e.value == "1";
+                g.bump();
+              }}>
+    <div class="lhud">
+      <span>{"\{g.index + 1}. \{l.name}"}</span>
+      <span class="num">{"Moves \{g.board.moves} · Par \{l.par}"}</span>
+    </div>
+    <div class="lstage" prevent="* capture"
+         onpointerdown={(ElementEvent e) => {
+           if (g.stage is not null) { g.stage!.focus(); }
+           g.finger = e.pointer;
+           g.fromX = e.x;
+           g.fromY = e.y;
+         }}
+         onpointerup={(ElementEvent e) => { swiped(g, e); }}
+         onpointercancel={(ElementEvent e) => { g.finger = 0 - 1; }}>
+      <canvas class="lscreen" ref={cv} width="320" height="180"/>
+    </div>
+    {overlay(g)}
+    <p class="lhint">{g.board.moves == 0 && l.hint != "" ? l.hint : ""}</p>
+    <div class="lbar">
+      <div class="ldpad">
+        <button class="lbtn lup" title="Up" onclick={(ElementEvent e) => { step(g, 0, 0 - 1); }}>▲</button>
+        <button class="lbtn lleft" title="Left" onclick={(ElementEvent e) => { step(g, 0 - 1, 0); }}>◀</button>
+        <button class="lbtn ldown" title="Down" onclick={(ElementEvent e) => { step(g, 0, 1); }}>▼</button>
+        <button class="lbtn lright" title="Right" onclick={(ElementEvent e) => { step(g, 1, 0); }}>▶</button>
+      </div>
+      <button class="lbtn lundo" title="Undo (Z)" onclick={(ElementEvent e) => { undoMove(g); }}>Undo</button>
+      <button class="lbtn lrestart" title="Start again (R)" onclick={(ElementEvent e) => { restart(g); }}>Restart</button>
+      <button class="lbtn llist" title="Levels (Esc)" onclick={(ElementEvent e) => { g.mode = g.mode == LEVELS ? (g.board.won ? WON : PLAYING) : LEVELS; keysHere(g); g.bump(); }}>Levels</button>
+      <button class="lbtn lfull" title="Full screen (Shift+F)" onclick={(ElementEvent e) => { toggleScreen(g); keysHere(g); }}>{g.screenFull ? "Leave full screen" : "Full screen"}</button>
+    </div>
+  </div>;
+}
+
+string lanternsCss() {
+  return """
+    .lpage { height: 100%; }
+    .lanterns { height: 100%; display: flex; flex-direction: column; position: relative; outline: 0; background: #0b0d22;
+                color: #f4f0e4; font: 14px/1.4 system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+    .lhud { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; font-weight: 600; }
+    .lstage { position: relative; flex: 1; min-height: 0; touch-action: none; }
+    .lscreen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
+               image-rendering: crisp-edges; }
+    .lhint { min-height: 1.4em; margin: 0; padding: 2px 12px; text-align: center; font-size: 13px; color: #c9c3e0; }
+    .lbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
+            padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+    .lbtn { height: 40px; min-width: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .22);
+            background: rgba(255, 255, 255, .06); color: inherit; font: inherit; cursor: pointer; touch-action: manipulation; }
+    .lbtn.go { border-color: #ffd45c; }
+    .ldpad { display: none; }
+    @media (pointer: coarse) {
+      .ldpad { display: grid; grid-template-columns: repeat(3, 52px); grid-template-rows: 44px 44px; gap: 4px; }
+      .ldpad .lbtn { width: 52px; padding: 0; }
+      .lup { grid-column: 2; grid-row: 1; } .lleft { grid-column: 1; grid-row: 2; }
+      .ldown { grid-column: 2; grid-row: 2; } .lright { grid-column: 3; grid-row: 2; }
+    }
+    .lover { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; pointer-events: none; }
+    .lover:empty { display: none; }
+    .lcard { pointer-events: auto; max-width: min(440px, 100%); max-height: 100%; overflow: auto; padding: 18px 22px; border-radius: 14px;
+             text-align: center; background: rgba(11, 13, 34, .94); border: 1px solid rgba(255, 212, 92, .4); }
+    .lcard h1 { margin: 0 0 8px; font-size: 20px; color: #ffd45c; }
+    .lcard p { margin: 6px 0; }
+    .lpar { color: #ffd45c; font-weight: 700; } .lfaint { color: #a9a3c3; }
+    .lbtns { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
+    .llevels { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+    .llevel { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border-radius: 10px; text-align: left;
+              border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .05); color: inherit; font: inherit; cursor: pointer; }
+    .llevel.on { border-color: #ffd45c; } .llevel.locked { opacity: .45; cursor: default; }
+    .llevel .lname { flex: 1; } .llevel .lbest { color: #a9a3c3; font-size: 12.5px; }
+    .llevel.par .lbest::before { content: "★ "; color: #ffd45c; }
+    .lgo { color: #a9a3c3; font-size: 12.5px; }
+  """;
+}
+
+export async i32 main(Page page) {
+  page.title("Lantern Light");
+  Level[] levels = allLevels();
+  i32[] best = i32[].filled(levels.len(), 0);
+  i32 reached = 0;
+  auto kept = await page.sys.files().readFile(KEPT);
+  if (kept.isOk()) { reached = restoreKept(string.fromBytes(kept.ok()!), best); }
+  f64[][] made = effects();
+  Sound[] fx = Sound[].filled(made.len(), page.sound(made[0], RATE));
+  for (i32 i = 1; i < made.len(); i++) { fx[i] = page.sound(made[i], RATE); }
+  // The first level not yet won, or the last one open.
+  i32 start = reached;
+  for (i32 i = 0; i <= reached; i++) {
+    if (best[i] == 0) {
+      start = i;
+      break;
+    }
+  }
+  Game g = Game(page, levels, start, boardOf(levels[start].rows), Vec.create(), best, reached, PLAYING, false, Screen.create(),
+                null, null, () => { }, fx, false, 0, 0 - 1, 0, 0, false);
+  page.mount((Ui ui) => <div class="lpage"><style>{css() + lanternsCss()}</style><GameView g={g}/></div>);
+  // The water ripples and the flames flicker: the picture again a few times a second, whether Pip moves or not.
+  while (true) {
+    await page.nextFrame();
+    g.frame++;
+    if (g.frame % 4 == 0) { draw(g); }
+  }
+  return 0;
+}

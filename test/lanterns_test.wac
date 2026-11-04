@@ -1,0 +1,135 @@
+// Lantern Light's rules, its solver, and its levels — every one won, at exactly its par.
+
+import { Board, boardOf, copyBoard, ghostAt, lanternAt, mirrorAt, move, open } from "../src/apps/lanterns/rules.wac";
+import { Level, allLevels } from "../src/apps/lanterns/levels.wac";
+import { Solved, solve } from "../src/apps/lanterns/solve.wac";
+
+/** The tile at (`x`, `y`) of `b`. */
+i32 tile(Board b, i32 x, i32 y) { return y * b.cols + x; }
+
+/** Whether the lantern at (`x`, `y`) of `b` is lit. */
+bool litAt(Board b, i32 x, i32 y) { return b.lit[lanternAt(b, tile(b, x, y))]; }
+
+/**
+ * **Walking into a lantern lights it, and its light runs in straight lines** — across water, which nothing else
+ * crosses, to the lanterns it reaches, which light in turn. The door opens only with every lantern lit; a move into a
+ * wall, water or the shut door takes no time.
+ */
+export string test_a_lantern_walked_into_is_lit_and_its_light_reaches_across_water() {
+  Board b = boardOf([
+    "#########",
+    "#P.L.~~L#",
+    "#.......E",
+    "#########"]);
+  if (open(b)) { return "open with no lantern lit"; }
+  if (move(b, 0, 0 - 1) || b.moves != 0) { return "a wall took a move"; }
+  move(b, 1, 0);
+  if (!move(b, 1, 0) || b.pip != tile(b, 2, 1) || b.moves != 2) { return "walking into the lantern: Pip stays where Pip is"; }
+  if (!b.lit[0] || !b.lit[1]) { return "both lit: the one walked into, and the one its light reached across the water"; }
+  if (!b.light[tile(b, 5, 1)] || !b.light[tile(b, 3, 2)]) { return "the water and the floor below, lit"; }
+  if (!open(b)) { return "every lantern lit and the door shut"; }
+  Board shut = boardOf(["#####", "#PE.#", "#.L.#", "#####"]);
+  if (move(shut, 1, 0) || shut.pip != tile(shut, 1, 1)) { return "through a shut door"; }
+  Board wet = boardOf(["#####", "#P~.#", "#####"]);
+  if (move(wet, 1, 0)) { return "into the water"; }
+  return "";
+}
+
+/**
+ * **A mirror pushed into the light turns it**: `/` sends light going right up, `\` down. A mirror goes only onto clear
+ * floor — not water, a lantern or another mirror — and one that cannot go is a wall.
+ */
+export string test_a_mirror_pushed_into_the_light_turns_it() {
+  Board b = boardOf([
+    "########",
+    "#~~L~..#",
+    "#......#",
+    "#*.P/..#",
+    "########"]);
+  if (litAt(b, 3, 1)) { return "lit before its time"; }
+  move(b, 1, 0);
+  if (mirrorAt(b, tile(b, 5, 3)) < 0 || b.pip != tile(b, 4, 3)) { return "the mirror pushed along"; }
+  if (litAt(b, 3, 1)) { return "turned up the wrong column"; }
+  Board c = boardOf([
+    "#######",
+    "#~~L..#",
+    "#.....#",
+    "#*P/..#",
+    "#######"]);
+  if (!litAt(c, 3, 1)) { return "`/` at the foot of the lantern's column: the light goes up it"; }
+  Board d = boardOf(["#######", "#*.\\..#", "#.....#", "#..L..#", "#######"]);
+  if (!litAt(d, 3, 3)) { return "`\\` sends light going right down"; }
+  Board e = boardOf(["######", "#P/~.#", "######"]);
+  if (move(e, 1, 0) || mirrorAt(e, tile(e, 2, 1)) < 0) { return "a mirror pushed into water"; }
+  Board f = boardOf(["######", "#P//.#", "######"]);
+  if (move(f, 1, 0)) { return "a mirror pushed into a mirror"; }
+  return "";
+}
+
+/**
+ * **Ghosts keep to the dark**: each move, each steps toward Pip — the longer way first — onto a dark tile only, and
+ * one the light reaches is gone. One that reaches Pip catches Pip, and nothing moves after.
+ */
+export string test_ghosts_keep_to_the_dark_and_the_light_sends_them_away() {
+  Board b = boardOf([
+    "#########",
+    "#P.....G#",
+    "#.......#",
+    "#########"]);
+  move(b, 0, 1);
+  if (ghostAt(b, tile(b, 6, 1)) < 0) { return "the ghost stepped toward Pip, across first"; }
+  for (i32 i = 0; i < 6 && !b.caught; i++) { move(b, 0, 0 - 1); move(b, 0, 1); }
+  if (!b.caught) { return "a ghost that reaches Pip catches Pip"; }
+  if (move(b, 1, 0)) { return "caught, and still moving"; }
+  Board c = boardOf([
+    "#########",
+    "#P.L...G#",
+    "#.......#",
+    "#########"]);
+  move(c, 1, 0);
+  move(c, 1, 0);
+  if (c.ghosts[0] != 0 - 1) { return "the lantern's light reached the ghost, and it stayed"; }
+  Board d = boardOf([
+    "#######",
+    "#P...G#",
+    "#*....#",
+    "#######"]);
+  move(d, 1, 0);
+  if (d.light[d.ghosts[0]]) { return "a ghost stepped into the light"; }
+  return "";
+}
+
+/** **Undo**: a board copied is a place to come back to, and moving on from it leaves the copy as it was. */
+export string test_a_copy_is_a_place_to_come_back_to() {
+  Board b = boardOf(["######", "#P/.L#", "#....E", "######"]);
+  Board was = copyBoard(b);
+  move(b, 1, 0);
+  if (was.pip != tile(was, 1, 1) || mirrorAt(was, tile(was, 2, 1)) < 0 || was.moves != 0) { return "the copy moved"; }
+  if (lanternAt(was, tile(was, 4, 1)) < 0) { return "the copy lost its lantern"; }
+  return "";
+}
+
+/**
+ * **Every level can be won, and its par is the fewest moves that do it**: searched for, every move from every place
+ * the level can be in (`solve.wac`), not guessed — so a level changed without its par is caught here.
+ */
+export string test_every_level_is_won_at_exactly_its_par() {
+  Level[] levels = allLevels();
+  if (levels.len() < 6) { return "\{levels.len()} levels"; }
+  for (i32 i = 0; i < levels.len(); i++) {
+    Board b = boardOf(levels[i].rows);
+    if (b.lanterns.len() == 0) { return "\{levels[i].name}: no lantern"; }
+    Solved s = solve(b, 500000);
+    if (s.moves < 0) { return "\{levels[i].name}: no way to win it"; }
+    if (s.moves != levels[i].par) { return "\{levels[i].name}: par \{levels[i].par}, but it can be won in \{s.moves}: \{s.path}"; }
+    // And the way found does win, played move by move as a person would.
+    Board play = boardOf(levels[i].rows);
+    u8[] path = s.path.toBytes();
+    for (i32 k = 0; k < path.len(); k++) {
+      u8 c = path[k];
+      move(play, c == 'L' ? 0 - 1 : (c == 'R' ? 1 : 0), c == 'U' ? 0 - 1 : (c == 'D' ? 1 : 0));
+    }
+    if (!play.won || play.moves != levels[i].par) { return "\{levels[i].name}: its way, played, does not win"; }
+  }
+  return "";
+}

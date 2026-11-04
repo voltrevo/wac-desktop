@@ -1,0 +1,285 @@
+// Lantern Light's rules: a board of tiles, Pip on it, and what one move does. Nothing else moves unless Pip does, and
+// nothing in them is random, so a level is a puzzle with answers a search can find (`solve.wac`).
+//
+// **A lit lantern lights its rows and columns** — every tile in a straight line from it until a wall — and a mirror on
+// the way turns the light a quarter turn. Light reaching an unlit lantern lights it too, which lights its own lines: so
+// lighting one lantern can light others Pip cannot reach — across water, which light crosses and nothing else does. Pip lights a lantern by walking into it, and **pushes a
+// mirror** by walking into it, if the tile beyond is clear floor. **Ghosts move only in the dark**: after each move
+// each steps toward Pip, never onto a lit tile, and one the light reaches is gone. A ghost that reaches Pip catches
+// Pip. Every lantern lit, the door opens; Pip through it wins the level.
+
+import { Vec } from "core";
+
+/** What one tile is, of what never moves: wall, floor, water — which only light crosses — or the door. */
+export static u8 WALL = '#';
+export static u8 FLOOR = '.';
+export static u8 WATER = '~';
+export static u8 DOOR = 'E';
+
+/** What a move made happen, for the sounds: the first of these is none. */
+export static i32 CUE_STEP = 1;
+export static i32 CUE_BUMP = 2;
+export static i32 CUE_LIGHT = 3;
+export static i32 CUE_PUSH = 4;
+export static i32 CUE_FADE = 5;
+export static i32 CUE_CAUGHT = 6;
+export static i32 CUE_OPEN = 7;
+export static i32 CUE_WIN = 8;
+
+export struct Board {
+  i32 cols;
+  i32 rows;
+  /** Each tile's part that never moves: `WALL`, `FLOOR`, `WATER` or `DOOR`. */
+  u8[] ground;
+  i32 pip;
+  /** Which way Pip last faced, -1 left and 1 right: what the picture shows. */
+  i32 facing;
+  i32[] lanterns;
+  bool[] lit;
+  i32[] mirrors;
+  /** Each mirror's slant, `/` or `\`, in the order of `mirrors`. */
+  u8[] slants;
+  /** Each ghost's tile, or -1 once the light has reached it. */
+  i32[] ghosts;
+  /** Which tiles are lit now: worked out after every move (`shine`). */
+  bool[] light;
+  i32 moves;
+  bool won;
+  bool caught;
+  /** What the last move made happen (`CUE_STEP` …), for the page to play. */
+  Vec<i32> cues;
+}
+
+/** A level's rows as a board: `#` wall, `.` floor, `~` water, `P` Pip, `E` the door, `L` a lantern, `*` one already lit, `/` and `\` mirrors, `G` a ghost. */
+export Board boardOf(string[] rows) {
+  i32 h = rows.len();
+  i32 w = 0;
+  for (i32 y = 0; y < h; y++) { if (rows[y].len() > w) { w = rows[y].len(); } }
+  u8[] ground = u8[].filled(w * h, WALL);
+  Vec<i32> lanterns = Vec.create();
+  Vec<bool> lit = Vec.create();
+  Vec<i32> mirrors = Vec.create();
+  Vec<u8> slants = Vec.create();
+  Vec<i32> ghosts = Vec.create();
+  i32 pip = 0;
+  for (i32 y = 0; y < h; y++) {
+    u8[] r = rows[y].toBytes();
+    for (i32 x = 0; x < r.len(); x++) {
+      i32 at = y * w + x;
+      u8 c = r[x];
+      ground[at] = c == WALL ? WALL : (c == DOOR ? DOOR : (c == WATER ? WATER : FLOOR));
+      if (c == 'P') { pip = at; }
+      if (c == 'L' || c == '*') {
+        lanterns.push(at);
+        lit.push(c == '*');
+      }
+      if (c == '/' || c == '\\') {
+        mirrors.push(at);
+        slants.push(c);
+      }
+      if (c == 'G') { ghosts.push(at); }
+    }
+  }
+  Board b = Board(w, h, ground, pip, 1, lanterns.toArray(), lit.toArray(), mirrors.toArray(), slants.toArray(),
+                  ghosts.toArray(), bool[].filled(w * h, false), 0, false, false, Vec.create());
+  shine(b);
+  return b;
+}
+
+/** `b` as it is, to come back to: the undo of a move, or a place a search has been. */
+export Board copyBoard(Board b) {
+  return Board(b.cols, b.rows, b.ground, b.pip, b.facing, copyI32(b.lanterns), copyBool(b.lit), copyI32(b.mirrors),
+               b.slants, copyI32(b.ghosts), copyBool(b.light), b.moves, b.won, b.caught, Vec.create());
+}
+
+i32[] copyI32(i32[] a) {
+  i32[] out = i32[].filled(a.len(), 0);
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}
+
+bool[] copyBool(bool[] a) {
+  bool[] out = bool[].filled(a.len(), false);
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}
+
+/** The lantern on tile `at`, or -1. */
+export i32 lanternAt(Board b, i32 at) {
+  for (i32 i = 0; i < b.lanterns.len(); i++) { if (b.lanterns[i] == at) { return i; } }
+  return 0 - 1;
+}
+
+/** The mirror on tile `at`, or -1. */
+export i32 mirrorAt(Board b, i32 at) {
+  for (i32 i = 0; i < b.mirrors.len(); i++) { if (b.mirrors[i] == at) { return i; } }
+  return 0 - 1;
+}
+
+/** The ghost on tile `at`, or -1. */
+export i32 ghostAt(Board b, i32 at) {
+  for (i32 i = 0; i < b.ghosts.len(); i++) { if (b.ghosts[i] == at) { return i; } }
+  return 0 - 1;
+}
+
+/** Every lantern lit: the door is open. */
+export bool open(Board b) {
+  for (i32 i = 0; i < b.lit.len(); i++) { if (!b.lit[i]) { return false; } }
+  return true;
+}
+
+/** The tile one step from `at` toward (`dx`, `dy`), or -1 off the board. */
+i32 beside(Board b, i32 at, i32 dx, i32 dy) {
+  i32 x = at % b.cols + dx;
+  i32 y = at / b.cols + dy;
+  if (x < 0 || y < 0 || x >= b.cols || y >= b.rows) { return 0 - 1; }
+  return y * b.cols + x;
+}
+
+/**
+ * **The light, worked out again**: from each lit lantern along its four lines, turned by mirrors, stopped by walls
+ * and lanterns — an unlit lantern reached is lit, and shines in turn. Whether a lantern was lit by it.
+ */
+export bool shine(Board b) {
+  for (i32 i = 0; i < b.light.len(); i++) { b.light[i] = false; }
+  bool newly = false;
+  Vec<i32> shining = Vec.create();
+  for (i32 i = 0; i < b.lanterns.len(); i++) { if (b.lit[i]) { shining.push(i); } }
+  i32 limit = b.cols * b.rows * 4;
+  for (i32 q = 0; q < shining.len(); q++) {
+    i32 from = b.lanterns[shining.get(q)];
+    b.light[from] = true;
+    i32[] dxs = [1, 0, 0 - 1, 0];
+    i32[] dys = [0, 1, 0, 0 - 1];
+    for (i32 d = 0; d < 4; d++) {
+      i32 dx = dxs[d];
+      i32 dy = dys[d];
+      i32 at = from;
+      for (i32 n = 0; n < limit; n++) {
+        at = beside(b, at, dx, dy);
+        if (at < 0 || b.ground[at] == WALL) { break; }
+        b.light[at] = true;
+        i32 l = lanternAt(b, at);
+        if (l >= 0) {
+          if (!b.lit[l]) {
+            b.lit[l] = true;
+            shining.push(l);
+            newly = true;
+          }
+          break;
+        }
+        i32 m = mirrorAt(b, at);
+        if (m >= 0) {
+          // `/` turns right to up, `\` right to down: each swaps across and down, `/` turning them round.
+          i32 was = dx;
+          if (b.slants[m] == '/') {
+            dx = 0 - dy;
+            dy = 0 - was;
+          } else {
+            dx = dy;
+            dy = was;
+          }
+        }
+      }
+    }
+  }
+  return newly;
+}
+
+/** Whether a ghost may stand on `at`: dark floor with nothing on it. */
+bool haunts(Board b, i32 at) {
+  return at >= 0 && b.ground[at] == FLOOR && !b.light[at] && lanternAt(b, at) < 0 && mirrorAt(b, at) < 0
+      && ghostAt(b, at) < 0;
+}
+
+i32 sign(i32 v) { return v > 0 ? 1 : (v < 0 ? 0 - 1 : 0); }
+
+/** The ghosts' turn: each steps toward Pip, the longer way first — across, if they are as long — and only in the dark. */
+void haunt(Board b) {
+  i32 px = b.pip % b.cols;
+  i32 py = b.pip / b.cols;
+  for (i32 i = 0; i < b.ghosts.len(); i++) {
+    i32 g = b.ghosts[i];
+    if (g < 0) { continue; }
+    i32 dx = px - g % b.cols;
+    i32 dy = py - g / b.cols;
+    bool across = (dx < 0 ? 0 - dx : dx) >= (dy < 0 ? 0 - dy : dy);
+    i32 first = across ? beside(b, g, sign(dx), 0) : beside(b, g, 0, sign(dy));
+    i32 then = across ? (dy == 0 ? 0 - 1 : beside(b, g, 0, sign(dy))) : (dx == 0 ? 0 - 1 : beside(b, g, sign(dx), 0));
+    b.ghosts[i] = 0 - 2;
+    i32 to = g;
+    if (first >= 0 && first != g && (first == b.pip ? !b.light[first] : haunts(b, first))) { to = first; }
+    else if (then >= 0 && then != g && (then == b.pip ? !b.light[then] : haunts(b, then))) { to = then; }
+    b.ghosts[i] = to;
+    if (to == b.pip) { b.caught = true; }
+  }
+}
+
+/** The ghosts the light has reached are gone. Whether any were. */
+bool fade(Board b) {
+  bool gone = false;
+  for (i32 i = 0; i < b.ghosts.len(); i++) {
+    if (b.ghosts[i] >= 0 && b.light[b.ghosts[i]]) {
+      b.ghosts[i] = 0 - 1;
+      gone = true;
+    }
+  }
+  return gone;
+}
+
+/**
+ * **Pip tries to move** one tile toward (`dx`, `dy`). Into a wall, a lit lantern, a mirror that cannot go further, or
+ * the shut door, nothing happens and no time passes: whether the move was made. Otherwise the light is worked out
+ * again, the ghosts it reaches fade, and the rest take their turn.
+ */
+export bool move(Board b, i32 dx, i32 dy) {
+  b.cues.clear();
+  if (b.won || b.caught) { return false; }
+  if (dx != 0) { b.facing = dx; }
+  i32 to = beside(b, b.pip, dx, dy);
+  if (to < 0 || b.ground[to] == WALL || b.ground[to] == WATER) {
+    b.cues.push(CUE_BUMP);
+    return false;
+  }
+  bool wasOpen = open(b);
+  i32 l = lanternAt(b, to);
+  i32 m = mirrorAt(b, to);
+  if (l >= 0) {
+    if (b.lit[l]) {
+      b.cues.push(CUE_BUMP);
+      return false;
+    }
+    b.lit[l] = true;
+    b.cues.push(CUE_LIGHT);
+  } else if (m >= 0) {
+    i32 past = beside(b, to, dx, dy);
+    if (past < 0 || b.ground[past] != FLOOR || lanternAt(b, past) >= 0 || mirrorAt(b, past) >= 0 || ghostAt(b, past) >= 0) {
+      b.cues.push(CUE_BUMP);
+      return false;
+    }
+    b.mirrors[m] = past;
+    b.pip = to;
+    b.cues.push(CUE_PUSH);
+  } else if (b.ground[to] == DOOR) {
+    if (!wasOpen) {
+      b.cues.push(CUE_BUMP);
+      return false;
+    }
+    b.pip = to;
+    b.won = true;
+    b.moves++;
+    b.cues.push(CUE_WIN);
+    return true;
+  } else {
+    b.pip = to;
+    b.cues.push(CUE_STEP);
+    if (ghostAt(b, to) >= 0) { b.caught = true; }
+  }
+  b.moves++;
+  if (shine(b)) { b.cues.push(CUE_LIGHT); }
+  if (fade(b)) { b.cues.push(CUE_FADE); }
+  if (!b.caught) { haunt(b); }
+  if (b.caught) { b.cues.push(CUE_CAUGHT); }
+  if (!wasOpen && open(b)) { b.cues.push(CUE_OPEN); }
+  return true;
+}

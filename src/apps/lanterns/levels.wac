@@ -1,0 +1,69 @@
+// Lantern Light's levels: each its rows (`rules.wac`'s `boardOf`), its name, and its par — the fewest moves that win
+// it, which `test/lanterns_test.wac` finds again by searching every move (`solve.wac`) and holds each par to.
+//
+// Each teaches one thing, then asks for it: walking into a lantern lights it; light carries across water to lanterns
+// Pip cannot reach; a mirror pushed into the light turns it; ghosts keep to the dark, and the light sends them away.
+
+export struct Level {
+  string name;
+  /** What it says as it starts: the one thing it is teaching, or nothing. */
+  string hint;
+  string[] rows;
+  i32 par;
+}
+
+export Level[] allLevels() {
+  return [
+    Level("First Flame", "Walk into the lantern to light it. Every lantern lit, the door opens.", [
+      "##########",
+      "#P.......#",
+      "#....L...#",
+      "#.......E#",
+      "##########"], 10),
+    Level("Across the Water", "Light travels in straight lines, over water, and lights the lanterns it reaches.", [
+      "############",
+      "#P.........#",
+      "#.......~~~#",
+      "#...L...~L~#",
+      "#.......~~~#",
+      "#.........E#",
+      "############"], 14),
+    Level("Turn of the Light", "Walk into a mirror to push it. A mirror in the light turns it.", [
+      "############",
+      "#P.....~~~.#",
+      "#......~L~.#",
+      "#......~~~.#",
+      "#..........#",
+      "#.L.../....#",
+      "#.........E#",
+      "############"], 15),
+    Level("Keep to the Light", "Ghosts move when Pip does, only in the dark. The light sends them away.", [
+      "############",
+      "#..........#",
+      "#.P.....G..#",
+      "#..........#",
+      "#....L.....#",
+      "#..........#",
+      "#.........E#",
+      "############"], 13),
+    Level("Two Turns", "A lantern already lit. Light can turn more than once.", [
+      "##############",
+      "#P.......~~~.#",
+      "#........~L~.#",
+      "#........~~~.#",
+      "#....../..#..#",
+      "#............#",
+      "#.*../.......#",
+      "#...........E#",
+      "##############"], 23),
+    Level("Night Watch", "", [
+      "##############",
+      "#P...#...~~~.#",
+      "#....#...~L~.#",
+      "#....#...~~~.#",
+      "#.L..../....G#",
+      "#............#",
+      "#G..........E#",
+      "##############"], 19)
+  ];
+}

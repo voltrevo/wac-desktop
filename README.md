@@ -3,7 +3,7 @@
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
-**Editor**, a **Markdown editor**, **Paint**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Stackfall**, and the **wac IDE** —
+**Editor**, a **Markdown editor**, **Paint**, a **Terminal**, which is wac's own shell on the desktop's disk, a **Calculator**, **Mandelbrot**, **Pip and the Lost Lanterns**, **Lantern Light**, **Stackfall**, and the **wac IDE** —
 each a program of its own on the site the desktop is served from, started in windows it opens itself — and
 **Settings**. Deleting moves things to a **Trash**. Nothing is uploaded: the page has no network access, and its files live in the browser.
 
@@ -43,6 +43,7 @@ That installs `wac` in `~/.wac/bin` (`. ~/.wac/env` puts it on `PATH`). Then, in
     wac task test:pip       # Pip played, heard, measured, paused, another level chosen, muted and silenced, in Chromium
     wac task test:settings  # Settings reaching every window and a game's sound; the Markdown editor, in Chromium
     wac task test:phone     # the desktop on a phone: its home screen, Back, what is open, Files by tap — as an iPhone
+    wac task test:lanterns  # Lantern Light played: levels at par, Undo, a ghost, the levels kept, a swipe on a phone
     wac task test:full      # full screen given only after a tap, and left whatever a hostile program does; Pip's
     wac task test:mandelbrot # Mandelbrot drawn, dragged, zoomed, recoloured, saved and kept, in Chromium
     wac task test:paint  # Paint drawn in, filled, undone, saved, reopened, dropped on, coloured, selected, pasted and typed in
@@ -166,6 +167,16 @@ shares, so their pages can see each other's files.
   walking, a frog's crouch and hop, bat roosting and wing strokes, a ghost freezing or pursuing, and a spiny
   crawler whose picture turns to match its floor, wall or ceiling. The original 12 × 12 enemy rule boxes remain.
 
+- **Lantern Light** is Pip's puzzles: light every lantern, then reach the door, one tile at a time, with nothing
+  moving unless Pip does. A lantern Pip walks into is lit, and **its light runs in straight lines** — over water, which
+  nothing else crosses — lighting the lanterns it reaches, which light in turn; a mirror Pip pushes into the light
+  turns it. **Ghosts keep to the dark**: each move they step toward Pip, never onto a lit tile, and one the light
+  reaches is gone. Six levels so far, each teaching one thing. **Every par is proved**: the rules are turn-based and
+  nothing in them is random, so `src/apps/lanterns/solve.wac` searches every move from every place a level can be
+  in, and the tests hold each level to the fewest moves that win it (`wac run tools/lanterns_par.wac` finds them
+  again). Undo as often as it takes — Restart is itself undoable — and the fewest moves of each level are kept. The
+  arrows or WASD move, Z undoes, R restarts, Esc lists the levels, Shift+F is full screen; on a touch screen a swipe
+  moves, and there are buttons for each way. It is drawn with Pip's own sprites, ghost, lantern and sounds.
 - **Stackfall** is an endless falling-block game in the launcher. Every piece is an independent, equally likely
   choice from seven shapes, with replacement: repeats and long gaps are part of play. Enter starts or resumes;
   ←/→ move, ↑/X rotate clockwise, Z anticlockwise, ↓ soft-drops, Space hard-drops, and C/Shift holds once per
@@ -292,6 +303,7 @@ shares, so their pages can see each other's files.
 | `src/apps/paint.wac`, `src/apps/paint/` | Paint: its page; the picture, strokes, shapes, fills, selections, text and history (`image.wac`); colours, and hue, saturation and value (`colour.wac`); the font (`font16.wac`, copied from wac — `docs/wac-proposal.md` item 11); its stylesheet |
 | `src/png.wac` | PNG written (Mandelbrot and Paint) and read, every kind |
 | `src/apps/mandelbrot.wac`, `src/apps/maths.wac` | Mandelbrot, on core's `math`; and decimals read and written as people write them |
+| `src/apps/lanterns.wac`, `src/apps/lanterns/` | Lantern Light: its page, rules, levels, the solver that proves each par, and its picture |
 | `src/apps/pip.wac`, `src/apps/pip/` | Pip: its page, its rules (`world.wac`), levels, pictures (`art.wac`), sounds (`chip.wac`) and stylesheet |
 | `src/apps/stackfall.wac`, `src/apps/stackfall/` | Stackfall: its page, independent game rules, versioned saves and stylesheet |
 | `src/apps/ide.wac` | the wac IDE, from the pinned `ide` package, with its checker as `--spawn checker` |
