@@ -13,16 +13,23 @@ export struct Dive {
   f64 battery;
   f64 last;
   string report;
+  f64 ascentSpeed;
 }
 
-export Dive dive(i32 seed, f64 now) {
+export Dive dive(i32 seed, f64 now, i32 mission) {
+  f64 depth = mission == 1 ? 570.0 : mission == 2 ? 470.0 : 420.0;
+  f64 water = mission == 1 ? 34.0 : mission == 2 ? 49.0 : 29.0;
+  f64 battery = mission == 1 ? 82.0 : mission == 2 ? 46.0 : 100.0;
   return Dive(seed % 3, seed / 3 % 3, -1, -1, 0, 0, true, false,
-    420.0, 29.0, 100.0, now, "Hull breach. Main bus offline.");
+    depth, water, battery, now, "Hull breach. Main bus offline.", 0.0);
 }
 
 export bool sealed(Dive d) { return d.hatch == (d.leak + 1) % 3; }
 export bool powered(Dive d) { return d.bus == (d.fault + 2) % 3; }
 export bool pumping(Dive d) { return powered(d) && sealed(d) && d.load == 1; }
+
+// Preserve the original climb energy of 0.52 percentage points per 14 m.
+export f64 ascentCost(Dive d) { return d.depth * (0.52 / 14.0); }
 
 export void advance(Dive d, f64 now) {
   if (d.outcome != 0 || now <= d.last) { return; }
@@ -32,14 +39,32 @@ export void advance(Dive d, f64 now) {
   while (elapsed > 0.0 && d.outcome == 0) {
     f64 dt = elapsed > 0.25 ? 0.25 : elapsed;
     elapsed -= dt;
+    if (d.rising) {
+      f64 travel = d.ascentSpeed * dt;
+      f64 energy = ascentCost(d);
+      if (d.battery <= energy && d.battery <= travel * (0.52 / 14.0)) {
+        d.depth -= d.battery / (0.52 / 14.0);
+        d.battery = 0.0;
+        d.outcome = 2;
+        d.report = "Battery exhausted during ascent.";
+      } else if (travel >= d.depth - 0.000001) {
+        d.battery -= energy;
+        d.depth = 0.0;
+        d.outcome = 1;
+        d.report = "On the surface. All hands safe.";
+      } else {
+        d.depth -= travel;
+        d.battery -= travel * (0.52 / 14.0);
+      }
+      continue;
+    }
     d.water += (pumping(d) ? -2.5 : sealed(d) ? 0.0 : 0.85) * dt;
     if (d.water < 0.0) { d.water = 0.0; }
     d.battery -= (d.load == 1 ? 1.4 : d.load == 2 ? 0.52 : 0.24) * dt;
-    d.depth += (d.rising ? -14.0 : 0.65 + d.water * 0.025) * dt;
+    d.depth += (0.65 + d.water * 0.025) * dt;
     if (d.depth >= 650.0) { d.outcome = 2; d.report = "Crush depth exceeded."; }
     else if (d.water >= 100.0) { d.outcome = 2; d.report = "Floodwater overwhelmed the boat."; }
     else if (d.battery <= 0.0) { d.outcome = 2; d.report = "Battery exhausted. Life support offline."; }
-    else if (d.depth <= 0.0) { d.depth = 0.0; d.outcome = 1; d.report = "On the surface. All hands safe."; }
   }
 }
 
@@ -73,6 +98,7 @@ export i32 operate(Dive d, i32 id, f64 now) {
       return 2;
     }
     d.rising = true;
+    d.ascentSpeed = d.depth / 4.0;
     d.report = "Ascent established. Hold for the surface.";
     return 3;
   }

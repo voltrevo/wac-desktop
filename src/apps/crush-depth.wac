@@ -1,5 +1,5 @@
-import { ElementEvent, Node, Page, Ui, html.b, html.button, html.div, html.h1, html.h2, html.p, html.span, html.style } from "web";
-import { Dive, advance, dive, margin, operate, powered, sealed } from "./crush-depth/rules.wac";
+import { ElementEvent, Node, Page, Ui, html.b, html.br, html.button, html.div, html.h1, html.h2, html.p, html.span, html.style } from "web";
+import { Dive, advance, ascentCost, dive, margin, operate, powered, sealed } from "./crush-depth/rules.wac";
 import { Manual } from "./crush-depth/manual.wac";
 import { panelCss } from "./crush-depth/style.wac";
 import { ConsoleSound, SWITCH, ONLINE, ALARM, PUMP, STABLE, LOST } from "./crush-depth/sound.wac";
@@ -9,6 +9,7 @@ struct Console {
   i32 seed;
   i32 screen;
   ConsoleSound? audio;
+  i32 mission;
 }
 
 void updateSound(Console state, i32 previous, i32 cue) {
@@ -47,6 +48,10 @@ Node Panel(Ui ui, Page page, Console state) {
   i32 depth = d.depth.ceil() as~ i32;
   i32 water = d.water.ceil() as~ i32;
   i32 battery = d.battery.floor() as~ i32;
+  i32 cost = ascentCost(d).ceil() as~ i32;
+  i32 reserve = (d.battery - ascentCost(d)).floor() as~ i32;
+  string[] missions = ["01 / Hull Breach", "02 / Below the Shelf", "03 / Low Reserve"];
+  string[] briefing = ["Standard response drill.", "Already near crush depth. Isolate the leak quickly.", "Heavy flooding and a depleted battery. Pump only as long as needed."];
   string[] sensors = ["BOW", "MID", "STERN"];
   return <div class="kc-shell"><div class="kc">
     <style>{panelCss()}</style>
@@ -71,9 +76,15 @@ Node Panel(Ui ui, Page page, Console state) {
     {state.screen == 2 || (state.screen == 3 && d.outcome != 0) ? <div class="kc-panel">
       <h2>{state.screen == 2 ? "Operator briefing" : d.outcome == 1 ? "Surfaced" : "Sub lost"}</h2>
       <p>{state.screen == 2 ? "Ask the expert to open the manual on their device. The sub starts sinking when you begin the dive." : d.report}</p>
+      {state.screen == 2 ? <div class="kc-missions">
+        <button class={state.mission == 0 ? "selected" : ""} onclick={(ElementEvent e) => { state.mission = 0; refresh(); }}>{missions[0]}</button>
+        <button class={state.mission == 1 ? "selected" : ""} onclick={(ElementEvent e) => { state.mission = 1; refresh(); }}>{missions[1]}</button>
+        <button class={state.mission == 2 ? "selected" : ""} onclick={(ElementEvent e) => { state.mission = 2; refresh(); }}>{missions[2]}</button>
+        <p>{briefing[state.mission]}</p>
+      </div> : Node.Text("")}
       <button onclick={(ElementEvent e) => {
         if (state.audio is null) { state.audio = ConsoleSound.create(page); }
-        state.run = dive(state.seed, page.now());
+        state.run = dive(state.seed, page.now(), state.mission);
         state.seed = (state.seed + 4) % 9;
         state.screen = 3;
         state.audio!.background(margin(state.run), true);
@@ -93,6 +104,9 @@ Node Panel(Ui ui, Page page, Console state) {
         <Gauge name="BATTERY" value={"\{battery}%"} fill={battery}/>
         <Gauge name="AIR CHARGE" value={d.air ? "READY" : "SPENT"} fill={d.air ? 100 : 0}/>
       </div>
+      {d.load == 2 ? <p class="kc-reading">{d.rising ? "ASCENDING" : "ASCENT ESTIMATE"}<br/>
+        {"Needs \{cost}% · Projected reserve \{reserve}%"}
+        {reserve <= 0 ? <span class="kc-label"><br/>LOW RESERVE · SURFACE AT RISK</span> : Node.Text("")}</p> : Node.Text("")}
       {!d.rising ? <div class="kc-bank">
         <div class="kc-controls"><span class="kc-label">BULKHEAD</span><div>
           <Control label="Seal A" id={0} active={d.hatch == 0} state={state} page={page} refresh={refresh}/>
@@ -129,7 +143,7 @@ export async i32 main(Page page) {
   i32 seed = 0;
   auto random = await page.sys.random().bytes(1);
   if (random.isOk()) { seed = (random.ok()![0] as i32) % 9; }
-  Console state = Console(dive(seed, page.now()), seed, 0, null);
+  Console state = Console(dive(seed, page.now(), 0), seed, 0, null, 0);
   page.mount((Ui ui) => <Panel page={page} state={state}/>);
   return 0;
 }
