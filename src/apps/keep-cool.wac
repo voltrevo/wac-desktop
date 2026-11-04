@@ -2,23 +2,42 @@ import { ElementEvent, Node, Page, Ui, html.a, html.b, html.button, html.div, ht
 import { Incident, command, incident, seconds, update } from "./keep-cool/rules.wac";
 import { panelCss } from "./keep-cool/style.wac";
 
+import { ConsoleSound, SWITCH, ONLINE, ALARM, PUMP, STABLE, LOST } from "./keep-cool/sound.wac";
+
 struct Console {
   Incident run;
   i32 seed;
   bool started;
   string manual;
+  ConsoleSound audio;
+  bool warned;
 }
 
 Node control(string label, i32 id, Console state, Page page, fn<void()> refresh) {
-  return <button onclick={(ElementEvent e) => { command(state.run, id, page.now()); refresh(); }}>{label}</button>;
+  return <button onclick={(ElementEvent e) => { i32 before = state.run.stage;
+    i32 faults = state.run.faults;
+    command(state.run, id, page.now());
+    if (state.run.stage == 5) { state.audio.play(LOST); }
+    else if (state.run.faults != faults) { state.audio.play(ALARM); }
+    else if (state.run.stage == 3) { state.audio.play(PUMP); }
+    else { state.audio.play(state.run.stage != before ? ONLINE : SWITCH); }
+    refresh(); }}>{label}</button>;
 }
 
 Node Panel(Ui ui, Page page, Console state) {
   auto revision = ui.state(0);
   fn<void()> refresh = () => { revision.update((i32 n) => n + 1); };
+  ui.effect("", () => { return () => { state.audio.stop(); }; });
   ui.effect("", () => ui.every(200, () => {
     if (!state.started || state.run.stage >= 4) { return; }
-    update(state.run, page.now());
+    f64 now = page.now();
+    update(state.run, now);
+    if (state.run.stage == 4) { state.audio.play(STABLE); }
+    else if (state.run.stage == 5) { state.audio.play(LOST); }
+    else if (!state.warned && seconds(state.run, now) <= 45) {
+      state.warned = true;
+      state.audio.play(ALARM);
+    }
     refresh();
   }));
   Incident run = state.run;
@@ -40,6 +59,11 @@ Node Panel(Ui ui, Page page, Console state) {
     <style>{panelCss()}</style>
     <div class="kc-head"><div><span class="kc-label">CALDER STATION / UNIT 04</span><h1>Keep It Cool</h1></div>
       <span class={remaining <= 45 ? "kc-clock critical" : "kc-clock"}>{clock}</span></div>
+    <div class="kc-mimic" role="presentation">
+      <div class={state.started && run.stage >= 1 && run.stage < 5 ? "kc-unit live" : "kc-unit"}><span class="kc-symbol bus"></span>BUS</div>
+      <div class={state.started && run.stage >= 2 && run.stage < 5 ? "kc-unit live" : "kc-unit"}><span class="kc-symbol valve"></span>LOOP</div>
+      <div class={state.started && run.stage >= 3 && run.stage < 5 ? "kc-unit live" : "kc-unit"}><span class="kc-symbol core"></span>CORE</div>
+    </div>
     <div class="kc-strip">
       <span class={state.started && run.stage == 0 ? "active" : ""}>01 / POWER</span>
       <span class={state.started && run.stage == 1 ? "active" : ""}>02 / ROUTING</span>
@@ -55,6 +79,8 @@ Node Panel(Ui ui, Page page, Console state) {
             state.run = incident(state.seed, page.now());
             state.seed = (state.seed + 37) % 72;
             state.started = true;
+            state.warned = false;
+            state.audio.play(ONLINE);
             refresh();
           }}>{state.started ? "Start another incident" : "Begin incident"}</button>
           <a href={state.manual} target="_blank" rel="noopener noreferrer">Expert field manual ↗</a>
@@ -67,8 +93,8 @@ Node Panel(Ui ui, Page page, Console state) {
           run.stage == 1 ? (run.loop == 0 ? "LOOP N AVAILABLE" : "LOOP S AVAILABLE") :
           run.stage == 2 ? "PROBE A / B  ·  \{signals[run.signal]}" : "FLOW RESTORED  ·  TEMPERATURE FALLING"}</p>
         <div class="kc-meters">
-          <span>THERMAL INDEX <b>{heat}</b></span>
-          <span>COOLANT FLOW <b>{run.stage == 3 ? "NOMINAL" : "OFFLINE"}</b></span>
+          <span>THERMAL INDEX <b>{heat}</b><span class="kc-meter"><span style={"width:\{heat}%"}></span></span></span>
+          <span>COOLANT FLOW <b>{run.stage == 3 ? "NOMINAL" : "OFFLINE"}</b><span class="kc-meter flow"><span style={run.stage == 3 ? "width:100%" : "width:0%"}></span></span></span>
         </div>
         <div class="kc-controls">
           {run.stage == 0 ? <div>{control("Isolator", 3, state, page, refresh)}{control("Reserve R1", 0, state, page, refresh)}{control("Reserve R2", 1, state, page, refresh)}{control("Reserve R3", 2, state, page, refresh)}</div> : Node.Text("")}
@@ -77,7 +103,13 @@ Node Panel(Ui ui, Page page, Console state) {
         </div>
         <p class="kc-report">{run.report}</p>
       </div>}
-    <p class="kc-footer">FICTIONAL TRAINING CONSOLE / TWO-PERSON CREW</p>
+    <div class="kc-footer"><span>CALDER STATION / TRAINING SYSTEM</span>
+      <button onclick={(ElementEvent e) => {
+        state.audio.enabled = !state.audio.enabled;
+        if (state.audio.enabled) { state.audio.play(SWITCH); } else { state.audio.stop(); }
+        refresh();
+      }}>{state.audio.enabled ? "Sound on" : "Sound off"}</button>
+    </div>
   </div></div>;
 }
 
@@ -91,7 +123,7 @@ export async i32 main(Page page) {
   }
   string[] args = page.sys.args();
   string manual = args.len() == 0 ? "manual.html" : args[0];
-  Console state = Console(incident(seed, page.now()), seed, false, manual);
+  Console state = Console(incident(seed, page.now()), seed, false, manual, ConsoleSound.create(page), false);
   page.mount((Ui ui) => <Panel page={page} state={state}/>);
   return 0;
 }
