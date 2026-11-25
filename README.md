@@ -1,5 +1,7 @@
 # Desktop (and the Archive Explorer)
 
+> **This moved into [voltrevo/wac](https://github.com/voltrevo/wac) as [`projects/desktop`](https://github.com/voltrevo/wac/tree/master/projects/desktop) on 2026-11-24, with its whole history — including commits that never reached this copy.** Work happens there now. This repository is left as it is, for the older pins that still name its commits.
+
 A desktop that runs in a browser tab: windows you can move, resize, snap and minimise, a taskbar, and a
 disk of its own that survives a reload. Its apps are **Files** — which browses the disk and opens any zip,
 tar, gzip or zstd archive in place, with **Extract here** to unpack one — a **Viewer**, a text
